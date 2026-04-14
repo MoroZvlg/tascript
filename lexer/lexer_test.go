@@ -9,9 +9,16 @@ import (
 
 func TestLexer_NextToken(t *testing.T) {
 	input := `let five= 5 ;
-  const ten = 10;
-  function add(x, y) { x + y; }
-  sma(close, 14)`
+// some comment
+let empty = "";
+let filled_str = "filled";
+const ten = 10.0;
+function add(x, y) { x + y; }
+if (sma(close, 14) > 50.0) {
+	five = 10
+} else {
+	five = 5.0
+}`
 	expectedOut := []struct {
 		expectedType    token.TokenType
 		expectedLiteral string
@@ -22,10 +29,22 @@ func TestLexer_NextToken(t *testing.T) {
 		{token.INT, "5"},
 		{token.SEMICOLON, ";"},
 
+		{token.LET, "let"},
+		{token.IDENT, "empty"},
+		{token.ASSIGN, "="},
+		{token.STRING, ""},
+		{token.SEMICOLON, ";"},
+
+		{token.LET, "let"},
+		{token.IDENT, "filled_str"},
+		{token.ASSIGN, "="},
+		{token.STRING, "filled"},
+		{token.SEMICOLON, ";"},
+
 		{token.CONST, "const"},
 		{token.IDENT, "ten"},
 		{token.ASSIGN, "="},
-		{token.INT, "10"},
+		{token.FLOAT, "10.0"},
 		{token.SEMICOLON, ";"},
 
 		{token.FUNCTION, "function"},
@@ -42,12 +61,28 @@ func TestLexer_NextToken(t *testing.T) {
 		{token.SEMICOLON, ";"},
 		{token.RBRACE, "}"},
 
+		{token.IF, "if"},
+		{token.LPAREN, "("},
 		{token.IDENT, "sma"},
 		{token.LPAREN, "("},
 		{token.IDENT, "close"},
 		{token.COMMA, ","},
 		{token.INT, "14"},
 		{token.RPAREN, ")"},
+		{token.GT, ">"},
+		{token.FLOAT, "50.0"},
+		{token.RPAREN, ")"},
+		{token.LBRACE, "{"},
+		{token.IDENT, "five"},
+		{token.ASSIGN, "="},
+		{token.INT, "10"},
+		{token.RBRACE, "}"},
+		{token.ELSE, "else"},
+		{token.LBRACE, "{"},
+		{token.IDENT, "five"},
+		{token.ASSIGN, "="},
+		{token.FLOAT, "5.0"},
+		{token.RBRACE, "}"},
 
 		{token.EOF, ""},
 	}
