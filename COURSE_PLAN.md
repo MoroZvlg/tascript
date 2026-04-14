@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 1.1
-**Last Session Date:** —
-**Notes:** —
+**Current Lesson:** 2.1
+**Last Session Date:** 2026-04-15
+**Notes:** Module 1 complete — lexer handles all tokens (incl. `=>`, `&&`, `||`, floats, strings, `//` comments), unterminated strings emit `ILLEGAL`, REPL runs with `io.Reader`/`io.Writer` decoupling and has substring-based tests.
 
 ---
 
@@ -32,7 +32,7 @@
 
 The lexer turns raw source code into tokens — the smallest meaningful pieces of the language.
 
-- [ ] **1.1 — Hello Tokens**
+- [x] **1.1 — Hello Tokens**
   - What tokens are, why we need them
   - Define the token types for our language
   - Task: Define the `Token` struct and `TokenType` constants
@@ -41,17 +41,17 @@ The lexer turns raw source code into tokens — the smallest meaningful pieces o
   - Punctuation: `(`, `)`, `{`, `}`, `[`, `]`, `,`, `;`, `:`
   - Domain identifiers (plain idents, not keywords): `signal`, `sma`, `ema`, `rsi`, `close`, `open`, `high`, `low`, `volume`
 
-- [ ] **1.2 — The Lexer**
+- [x] **1.2 — The Lexer**
   - Build a lexer that reads source code character by character
   - Task: Implement `Lexer` struct with `NextToken()` method
   - Lex simple expressions: `sma(close, 14)`
 
-- [ ] **1.3 — Extending the Lexer**
+- [x] **1.3 — Extending the Lexer**
   - Support numbers (integers and floats), strings, comparison operators
   - Task: Lex full expressions like `sma(close, 14) > 50.0`
   - Challenge: Lex a multi-line strategy definition
 
-- [ ] **1.4 — The REPL (Read-Eval-Print Loop), Part 1**
+- [x] **1.4 — The REPL (Read-Eval-Print Loop), Part 1**
   - Build a simple REPL that tokenizes input and prints tokens
   - Task: Create `main.go` with a working token REPL
 
@@ -154,7 +154,8 @@ Make the language useful for computing indicators and emitting signals.
 
 ## Session Log
 
-| Session | Date | Lessons Covered | Notes |
-|---------|------|-----------------|-------|
-| 1       |      |                 |       |
+| Session | Date       | Lessons Covered | Notes |
+|---------|------------|-----------------|-------|
+| 1       | 2026-04-14 | 1.1, 1.2        | Token types defined; lexer handles single-char tokens, identifiers, keywords, ints. |
+| 2       | 2026-04-15 | 1.3, 1.4        | Extended lexer (floats, strings, `==`/`!=`/`<=`/`>=`/`=>`/`&&`/`||`, `//` comments). REPL built with I/O decoupling + tests. |
 
