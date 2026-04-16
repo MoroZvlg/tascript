@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 2.1
-**Last Session Date:** 2026-04-15
-**Notes:** Module 1 complete — lexer handles all tokens (incl. `=>`, `&&`, `||`, floats, strings, `//` comments), unterminated strings emit `ILLEGAL`, REPL runs with `io.Reader`/`io.Writer` decoupling and has substring-based tests.
+**Current Lesson:** 2.3
+**Last Session Date:** 2026-04-17
+**Notes:** Parser handles `let`, `const`, `return` statements. AST defined with `Program`, `LetStatement`, `ConstStatement`, `ReturnStatement`, `ExpressionStatement`, `Identifier`. Expression parsing is stubbed — next up is Pratt parsing.
 
 ---
 
@@ -61,12 +61,12 @@ The lexer turns raw source code into tokens — the smallest meaningful pieces o
 
 The parser turns a flat list of tokens into a tree (AST) that represents the structure of the code.
 
-- [ ] **2.1 — AST Foundations**
+- [x] **2.1 — AST Foundations**
   - What an AST is, node types (expressions vs statements)
   - Task: Define AST node interfaces and basic node types
   - Trading twist: `let signal = sma(close, 14) > ema(close, 21)`
 
-- [ ] **2.2 — The Parser, Part 1: Statements**
+- [x] **2.2 — The Parser, Part 1: Statements**
   - Recursive descent parsing, `let`/`const` and `return` statements
   - Task: Parse `let`/`const` statements and `return` statements
   - Example: `const entry = rsi(close, 14) < 30;`
@@ -158,4 +158,5 @@ Make the language useful for computing indicators and emitting signals.
 |---------|------------|-----------------|-------|
 | 1       | 2026-04-14 | 1.1, 1.2        | Token types defined; lexer handles single-char tokens, identifiers, keywords, ints. |
 | 2       | 2026-04-15 | 1.3, 1.4        | Extended lexer (floats, strings, `==`/`!=`/`<=`/`>=`/`=>`/`&&`/`||`, `//` comments). REPL built with I/O decoupling + tests. |
+| 3       | 2026-04-17 | 2.1, 2.2        | AST foundations + parser for `let`/`const`/`return` statements. Expression parsing stubbed. |
 
