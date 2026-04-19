@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/lexer"
@@ -13,12 +14,17 @@ type Parser struct {
 	currentToken token.Token
 	peekToken    token.Token
 	errors       []error
+	prefixFns    map[token.TokenType]func() ast.Expression
 }
 
 func New(l *lexer.Lexer) *Parser {
 	p := &Parser{l: l}
 	p.nextToken()
 	p.nextToken()
+	p.prefixFns = map[token.TokenType]func() ast.Expression{
+		token.INT:   p.parseIntegerLiteral,
+		token.IDENT: p.parseIdentifier,
+	}
 	return p
 }
 
@@ -71,7 +77,7 @@ func (p *Parser) parseLetStatement() *ast.LetStatement {
 	}
 	p.nextToken() // skip '='
 
-	stmt.Value = p.parseExpression()
+	stmt.Value = p.parseExpression(LOWEST)
 
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken() // skip ';' if exists. optional
@@ -93,7 +99,7 @@ func (p *Parser) parseConstStatement() *ast.ConstStatement {
 	}
 	p.nextToken() // skip '='
 
-	stmt.Value = p.parseExpression()
+	stmt.Value = p.parseExpression(LOWEST)
 
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken() // skip ';' if exists. optional
@@ -105,7 +111,7 @@ func (p *Parser) parseConstStatement() *ast.ConstStatement {
 func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	stmt := &ast.ReturnStatement{Token: p.currentToken}
 	p.nextToken()
-	stmt.Value = p.parseExpression()
+	stmt.Value = p.parseExpression(LOWEST)
 
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken() // skip ';' if exists. optional
@@ -113,18 +119,37 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	return stmt
 }
 
-func (p *Parser) parseExpression() ast.Expression {
-	for !p.currentTokenIs(token.EOF) && !p.currentTokenIs(token.SEMICOLON) {
-		p.nextToken()
+func (p *Parser) parseExpression(prec precedence) ast.Expression {
+	fn, ok := p.prefixFns[p.currentToken.Type]
+	if !ok {
+		p.errors = append(p.errors, fmt.Errorf("no prefix parse function for %s",
+			p.currentToken.Type))
+		return nil
 	}
-	return nil
+	return fn()
 }
 
-func (p *Parser) parseExpressionStatement() ast.Statement {
-	for !p.currentTokenIs(token.EOF) && !p.currentTokenIs(token.SEMICOLON) {
-		p.nextToken()
+func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
+	stmt := &ast.ExpressionStatement{Token: p.currentToken}
+	stmt.Expression = p.parseExpression(LOWEST)
+	if p.peekTokenIs(token.SEMICOLON) {
+		p.nextToken() // skip ';' if exists. optional
 	}
-	return nil
+
+	return stmt
+}
+
+func (p *Parser) parseIdentifier() ast.Expression {
+	return &ast.Identifier{Token: p.currentToken, Value: p.currentToken.Literal}
+}
+
+func (p *Parser) parseIntegerLiteral() ast.Expression {
+	i, err := strconv.ParseInt(p.currentToken.Literal, 0, 64)
+	if err != nil {
+		p.errors = append(p.errors, fmt.Errorf("invalid integer literal: %s", p.currentToken.Literal))
+		return nil
+	}
+	return &ast.IntegerLiteral{Token: p.currentToken, Value: i}
 }
 
 func (p *Parser) expectPeek(tokenType token.TokenType) bool {

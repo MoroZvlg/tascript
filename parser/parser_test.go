@@ -77,3 +77,72 @@ func Test_ParseProgram_Return(t *testing.T) {
 		}
 	}
 }
+
+func Test_ParseProgram_ExpressionIntLiteral(t *testing.T) {
+	input := `5;`
+	l := lexer.New(input)
+	program := parser.New(l)
+	resultAST := program.ParseProgram()
+
+	if len(program.Errors()) != 0 {
+		t.Errorf("expected 0 errors, got %d", len(program.Errors()))
+	}
+
+	if len(resultAST.Statements) != 1 {
+		t.Errorf("expected at least 1 statements, got %d", len(resultAST.Statements))
+	}
+
+	for _, stmt := range resultAST.Statements {
+		exprStmt, ok := stmt.(*ast.ExpressionStatement)
+		if !ok {
+			t.Errorf("expected expression statement, got %T", stmt)
+		}
+		expExpression, ok := exprStmt.Expression.(*ast.IntegerLiteral)
+		if !ok {
+			t.Errorf("expected INT expression, got %T", exprStmt.Expression)
+		}
+		if expExpression.Value != 5 {
+			t.Errorf("expected value of 5, got %d", expExpression.Value)
+		}
+	}
+}
+
+func Test_ParseProgram_ExpressionIdent(t *testing.T) {
+	input := `foobar;`
+	l := lexer.New(input)
+	program := parser.New(l)
+	resultAST := program.ParseProgram()
+
+	if len(program.Errors()) != 0 {
+		t.Errorf("expected 0 errors, got %d", len(program.Errors()))
+	}
+
+	if len(resultAST.Statements) != 1 {
+		t.Errorf("expected at least 1 statements, got %d", len(resultAST.Statements))
+	}
+
+	for _, stmt := range resultAST.Statements {
+		exprStmt, ok := stmt.(*ast.ExpressionStatement)
+		if !ok {
+			t.Errorf("expected expression statement, got %T", stmt)
+		}
+		expExpression, ok := exprStmt.Expression.(*ast.Identifier)
+		if !ok {
+			t.Errorf("expected IDENT expression, got %T", exprStmt.Expression)
+		}
+		if expExpression.Value != "foobar" {
+			t.Errorf("expected value of foobar, got %s", expExpression.Value)
+		}
+	}
+}
+
+func Test_ParseProgram_ExpressionWrong(t *testing.T) {
+	input := `@;`
+	l := lexer.New(input)
+	program := parser.New(l)
+	_ = program.ParseProgram()
+
+	if len(program.Errors()) != 1 {
+		t.Errorf("expected 1 errors, got %d", len(program.Errors()))
+	}
+}

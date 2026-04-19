@@ -2,6 +2,7 @@ package ast
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/MoroZvlg/tascript/token"
 )
@@ -109,8 +110,6 @@ func (rs *ReturnStatement) TokenLiteral() string {
 
 func (rs *ReturnStatement) statementNode() {}
 
-// TODO: not clear what it is
-
 type ExpressionStatement struct {
 	Token      token.Token
 	Expression Expression
@@ -143,3 +142,18 @@ func (id *Identifier) TokenLiteral() string {
 }
 
 func (id *Identifier) expressionNode() {}
+
+type IntegerLiteral struct {
+	Token token.Token
+	Value int64
+}
+
+func (il *IntegerLiteral) TokenLiteral() string {
+	return il.Token.Literal
+}
+
+func (il *IntegerLiteral) String() string {
+	return fmt.Sprintf("%d", il.Value)
+}
+
+func (il *IntegerLiteral) expressionNode() {}
