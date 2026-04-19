@@ -146,3 +146,157 @@ func Test_ParseProgram_ExpressionWrong(t *testing.T) {
 		t.Errorf("expected 1 errors, got %d", len(program.Errors()))
 	}
 }
+
+func Test_ParseProgram_PrefixExpressions(t *testing.T) {
+	tests := []struct {
+		input    string
+		operator string
+		rightVal any
+	}{
+		{"-5;", "-", int64(5)},
+		{"!foobar;", "!", "foobar"},
+		{"-42;", "-", int64(42)},
+		{"!x;", "!", "x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.ParseProgram()
+			assertNoErrors(t, p)
+
+			if len(prog.Statements) != 1 {
+				t.Fatalf("expected 1 statement, got %d", len(prog.Statements))
+			}
+			exprStmt, ok := prog.Statements[0].(*ast.ExpressionStatement)
+			if !ok {
+				t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+			}
+			prefix, ok := exprStmt.Expression.(*ast.PrefixExpression)
+			if !ok {
+				t.Fatalf("expected PrefixExpression, got %T", exprStmt.Expression)
+			}
+			if prefix.Operator != tt.operator {
+				t.Errorf("expected operator %q, got %q", tt.operator, prefix.Operator)
+			}
+			assertLiteral(t, prefix.Right, tt.rightVal)
+		})
+	}
+}
+
+func Test_ParseProgram_InfixExpressions(t *testing.T) {
+	tests := []struct {
+		input    string
+		leftVal  any
+		operator string
+		rightVal any
+	}{
+		{"5 + 5;", int64(5), "+", int64(5)},
+		{"5 - 5;", int64(5), "-", int64(5)},
+		{"5 * 5;", int64(5), "*", int64(5)},
+		{"5 / 5;", int64(5), "/", int64(5)},
+		{"5 > 5;", int64(5), ">", int64(5)},
+		{"5 < 5;", int64(5), "<", int64(5)},
+		{"5 >= 5;", int64(5), ">=", int64(5)},
+		{"5 <= 5;", int64(5), "<=", int64(5)},
+		{"5 == 5;", int64(5), "==", int64(5)},
+		{"5 != 5;", int64(5), "!=", int64(5)},
+		{"a && b;", "a", "&&", "b"},
+		{"a || b;", "a", "||", "b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.ParseProgram()
+			assertNoErrors(t, p)
+
+			if len(prog.Statements) != 1 {
+				t.Fatalf("expected 1 statement, got %d", len(prog.Statements))
+			}
+			exprStmt, ok := prog.Statements[0].(*ast.ExpressionStatement)
+			if !ok {
+				t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+			}
+			infix, ok := exprStmt.Expression.(*ast.InfixExpression)
+			if !ok {
+				t.Fatalf("expected InfixExpression, got %T", exprStmt.Expression)
+			}
+			assertLiteral(t, infix.Left, tt.leftVal)
+			if infix.Operator != tt.operator {
+				t.Errorf("expected operator %q, got %q", tt.operator, infix.Operator)
+			}
+			assertLiteral(t, infix.Right, tt.rightVal)
+		})
+	}
+}
+
+func Test_ParseProgram_OperatorPrecedence(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"-a * b", "((-a) * b)"},
+		{"!-a", "(!(-a))"},
+		{"a + b + c", "((a + b) + c)"},
+		{"a + b - c", "((a + b) - c)"},
+		{"a * b * c", "((a * b) * c)"},
+		{"a * b / c", "((a * b) / c)"},
+		{"a + b / c", "(a + (b / c))"},
+		{"a + b * c + d / e - f", "(((a + (b * c)) + (d / e)) - f)"},
+		{"3 + 4; -5 * 5", "(3 + 4)((-5) * 5)"},
+		{"5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"},
+		{"5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"},
+		{"3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"},
+		{"a && b || c", "((a && b) || c)"},
+		{"a || b && c", "(a || (b && c))"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.ParseProgram()
+			assertNoErrors(t, p)
+
+			got := prog.String()
+			if got != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, got)
+			}
+		})
+	}
+}
+
+func assertNoErrors(t *testing.T, p *parser.Parser) {
+	t.Helper()
+	if len(p.Errors()) == 0 {
+		return
+	}
+	for _, e := range p.Errors() {
+		t.Logf("parser error: %s", e)
+	}
+	t.Fatalf("expected 0 errors, got %d", len(p.Errors()))
+}
+
+func assertLiteral(t *testing.T, expr ast.Expression, expected any) {
+	t.Helper()
+	switch v := expected.(type) {
+	case int64:
+		lit, ok := expr.(*ast.IntegerLiteral)
+		if !ok {
+			t.Fatalf("expected IntegerLiteral, got %T", expr)
+		}
+		if lit.Value != v {
+			t.Errorf("expected value %d, got %d", v, lit.Value)
+		}
+	case string:
+		ident, ok := expr.(*ast.Identifier)
+		if !ok {
+			t.Fatalf("expected Identifier, got %T", expr)
+		}
+		if ident.Value != v {
+			t.Errorf("expected value %q, got %q", v, ident.Value)
+		}
+	default:
+		t.Fatalf("unhandled literal type %T", expected)
+	}
+}

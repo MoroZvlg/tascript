@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 2.3
-**Last Session Date:** 2026-04-17
-**Notes:** Parser handles `let`, `const`, `return` statements. AST defined with `Program`, `LetStatement`, `ConstStatement`, `ReturnStatement`, `ExpressionStatement`, `Identifier`. Expression parsing is stubbed — next up is Pratt parsing.
+**Current Lesson:** 2.4
+**Last Session Date:** 2026-04-20
+**Notes:** Pratt parser complete. Prefix (`-`, `!`), 12 infix operators with precedence table, `ExpressionStatement`, `IntegerLiteral`, `PrefixExpression`, `InfixExpression` AST nodes. 30+ test cases covering prefix/infix/operator-precedence string form. Booleans (`true`/`false`) not yet parseable — comes in 2.4.
 
 ---
 
@@ -71,7 +71,7 @@ The parser turns a flat list of tokens into a tree (AST) that represents the str
   - Task: Parse `let`/`const` statements and `return` statements
   - Example: `const entry = rsi(close, 14) < 30;`
 
-- [ ] **2.3 — The Parser, Part 2: Expressions (Pratt Parsing)**
+- [x] **2.3 — The Parser, Part 2: Expressions (Pratt Parsing)**
   - Pratt parser for operator precedence
   - Prefix and infix expressions
   - Task: Parse arithmetic and comparison expressions
@@ -159,4 +159,5 @@ Make the language useful for computing indicators and emitting signals.
 | 1       | 2026-04-14 | 1.1, 1.2        | Token types defined; lexer handles single-char tokens, identifiers, keywords, ints. |
 | 2       | 2026-04-15 | 1.3, 1.4        | Extended lexer (floats, strings, `==`/`!=`/`<=`/`>=`/`=>`/`&&`/`||`, `//` comments). REPL built with I/O decoupling + tests. |
 | 3       | 2026-04-17 | 2.1, 2.2        | AST foundations + parser for `let`/`const`/`return` statements. Expression parsing stubbed. |
+| 4       | 2026-04-20 | 2.3             | Pratt parser: prefix/infix fn maps, precedence table, `PrefixExpression` and `InfixExpression` AST nodes, full precedence-string tests. |
 
