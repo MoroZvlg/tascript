@@ -89,26 +89,28 @@ func Test_ParseProgram_SimpleExpressions(t *testing.T) {
 		{"false;", false},
 	}
 
-	for _, test := range tests {
-		l := lexer.New(test.input)
-		program := parser.New(l)
-		resultAST := program.ParseProgram()
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			program := parser.New(l)
+			resultAST := program.ParseProgram()
 
-		if len(program.Errors()) != 0 {
-			t.Errorf("expected 0 errors, got %d", len(program.Errors()))
-		}
-
-		if len(resultAST.Statements) != 1 {
-			t.Errorf("expected at least 1 statements, got %d", len(resultAST.Statements))
-		}
-
-		for _, stmt := range resultAST.Statements {
-			exprStmt, ok := stmt.(*ast.ExpressionStatement)
-			if !ok {
-				t.Errorf("expected expression statement, got %T", stmt)
+			if len(program.Errors()) != 0 {
+				t.Errorf("expected 0 errors, got %d", len(program.Errors()))
 			}
-			assertLiteral(t, exprStmt.Expression, test.expectedExprValue)
-		}
+
+			if len(resultAST.Statements) != 1 {
+				t.Errorf("expected at least 1 statements, got %d", len(resultAST.Statements))
+			}
+
+			for _, stmt := range resultAST.Statements {
+				exprStmt, ok := stmt.(*ast.ExpressionStatement)
+				if !ok {
+					t.Errorf("expected expression statement, got %T", stmt)
+				}
+				assertLiteral(t, exprStmt.Expression, tt.expectedExprValue)
+			}
+		})
 	}
 }
 
@@ -230,6 +232,8 @@ func Test_ParseProgram_OperatorPrecedence(t *testing.T) {
 		{"2 / (5 + 5)", "(2 / (5 + 5))"},
 		{"-(5 + 5)", "(-(5 + 5))"},
 		{"!(true == true)", "(!(true == true))"},
+		{"if (x < y) { x }", "if (x < y) { x }"},
+		{"if (x < y) { x } else { y }", "if (x < y) { x } else { y }"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -241,6 +245,46 @@ func Test_ParseProgram_OperatorPrecedence(t *testing.T) {
 			got := prog.String()
 			if got != tt.expected {
 				t.Errorf("expected %q, got %q", tt.expected, got)
+			}
+		})
+	}
+}
+
+func Test_ParseProgram_IfElseBlocks(t *testing.T) {
+	tests := []struct {
+		input    string
+		withElse bool
+	}{
+		{"if (x < y) { x }", false},
+		{"if (x < y) { x } else { y }", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.ParseProgram()
+			assertNoErrors(t, p)
+
+			es, ok := prog.Statements[0].(*ast.ExpressionStatement)
+			if !ok {
+				t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+			}
+			ifExpr, ok := es.Expression.(*ast.IfExpression)
+			if !ok {
+				t.Fatalf("expected IfExpression, got %T", es.Expression)
+			}
+
+			body := ifExpr.Consequence.Statements[0].(*ast.ExpressionStatement)
+			assertLiteral(t, body.Expression, "x")
+
+			if !tt.withElse && ifExpr.Alternative != nil {
+				t.Errorf("expected nil Alternative, got %+v", ifExpr.Alternative)
+			}
+
+			if ifExpr.Alternative != nil {
+				body = ifExpr.Alternative.Statements[0].(*ast.ExpressionStatement)
+				assertLiteral(t, body.Expression, "y")
 			}
 		})
 	}
