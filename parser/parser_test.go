@@ -78,60 +78,36 @@ func Test_ParseProgram_Return(t *testing.T) {
 	}
 }
 
-func Test_ParseProgram_ExpressionIntLiteral(t *testing.T) {
-	input := `5;`
-	l := lexer.New(input)
-	program := parser.New(l)
-	resultAST := program.ParseProgram()
-
-	if len(program.Errors()) != 0 {
-		t.Errorf("expected 0 errors, got %d", len(program.Errors()))
+func Test_ParseProgram_SimpleExpressions(t *testing.T) {
+	tests := []struct {
+		input             string
+		expectedExprValue any
+	}{
+		{"5;", int64(5)},
+		{"foobar;", "foobar"},
+		{"true;", true},
+		{"false;", false},
 	}
 
-	if len(resultAST.Statements) != 1 {
-		t.Errorf("expected at least 1 statements, got %d", len(resultAST.Statements))
-	}
+	for _, test := range tests {
+		l := lexer.New(test.input)
+		program := parser.New(l)
+		resultAST := program.ParseProgram()
 
-	for _, stmt := range resultAST.Statements {
-		exprStmt, ok := stmt.(*ast.ExpressionStatement)
-		if !ok {
-			t.Errorf("expected expression statement, got %T", stmt)
+		if len(program.Errors()) != 0 {
+			t.Errorf("expected 0 errors, got %d", len(program.Errors()))
 		}
-		expExpression, ok := exprStmt.Expression.(*ast.IntegerLiteral)
-		if !ok {
-			t.Errorf("expected INT expression, got %T", exprStmt.Expression)
-		}
-		if expExpression.Value != 5 {
-			t.Errorf("expected value of 5, got %d", expExpression.Value)
-		}
-	}
-}
 
-func Test_ParseProgram_ExpressionIdent(t *testing.T) {
-	input := `foobar;`
-	l := lexer.New(input)
-	program := parser.New(l)
-	resultAST := program.ParseProgram()
-
-	if len(program.Errors()) != 0 {
-		t.Errorf("expected 0 errors, got %d", len(program.Errors()))
-	}
-
-	if len(resultAST.Statements) != 1 {
-		t.Errorf("expected at least 1 statements, got %d", len(resultAST.Statements))
-	}
-
-	for _, stmt := range resultAST.Statements {
-		exprStmt, ok := stmt.(*ast.ExpressionStatement)
-		if !ok {
-			t.Errorf("expected expression statement, got %T", stmt)
+		if len(resultAST.Statements) != 1 {
+			t.Errorf("expected at least 1 statements, got %d", len(resultAST.Statements))
 		}
-		expExpression, ok := exprStmt.Expression.(*ast.Identifier)
-		if !ok {
-			t.Errorf("expected IDENT expression, got %T", exprStmt.Expression)
-		}
-		if expExpression.Value != "foobar" {
-			t.Errorf("expected value of foobar, got %s", expExpression.Value)
+
+		for _, stmt := range resultAST.Statements {
+			exprStmt, ok := stmt.(*ast.ExpressionStatement)
+			if !ok {
+				t.Errorf("expected expression statement, got %T", stmt)
+			}
+			assertLiteral(t, exprStmt.Expression, test.expectedExprValue)
 		}
 	}
 }
@@ -250,6 +226,10 @@ func Test_ParseProgram_OperatorPrecedence(t *testing.T) {
 		{"3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"},
 		{"a && b || c", "((a && b) || c)"},
 		{"a || b && c", "(a || (b && c))"},
+		{"(1 + 2) * 3", "((1 + 2) * 3)"},
+		{"2 / (5 + 5)", "(2 / (5 + 5))"},
+		{"-(5 + 5)", "(-(5 + 5))"},
+		{"!(true == true)", "(!(true == true))"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -295,6 +275,14 @@ func assertLiteral(t *testing.T, expr ast.Expression, expected any) {
 		}
 		if ident.Value != v {
 			t.Errorf("expected value %q, got %q", v, ident.Value)
+		}
+	case bool:
+		boolV, ok := expr.(*ast.Boolean)
+		if !ok {
+			t.Fatalf("expected Boolean, got %T", expr)
+		}
+		if boolV.Value != v {
+			t.Errorf("expected value %v, got %v", v, boolV.Value)
 		}
 	default:
 		t.Fatalf("unhandled literal type %T", expected)
