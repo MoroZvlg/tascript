@@ -44,9 +44,6 @@ func (l *Lexer) NextToken() token.Token {
 		if l.peekChar() == '=' {
 			l.readChar()
 			t = token.Token{Type: token.EQ, Literal: "=="}
-		} else if l.peekChar() == '>' {
-			l.readChar()
-			t = token.Token{Type: token.ARROW, Literal: "=>"}
 		} else {
 			t = token.Token{Type: token.ASSIGN, Literal: "="}
 		}

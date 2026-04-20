@@ -8,9 +8,9 @@
 > library — we do NOT reimplement indicators. Input is a generic candle stream (CSV/JSON,
 > format TBD, not a focus).
 >
-> **Syntax flavor:** TypeScript-style — braces, `let`/`const`, `function` + arrow `=>`, `;`
-> optional, C-style operators. No significant whitespace (so no INDENT/DEDENT tokens). No
-> static type annotations — dynamic like untyped JS.
+> **Syntax flavor:** TypeScript-style — braces, `let`/`const`, `function` keyword, `;`
+> optional, C-style operators. No arrow functions. No significant whitespace (so no
+> INDENT/DEDENT tokens). No static type annotations — dynamic like untyped JS.
 
 ## How This Works
 
@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 2.4
-**Last Session Date:** 2026-04-20
-**Notes:** Pratt parser complete. Prefix (`-`, `!`), 12 infix operators with precedence table, `ExpressionStatement`, `IntegerLiteral`, `PrefixExpression`, `InfixExpression` AST nodes. 30+ test cases covering prefix/infix/operator-precedence string form. Booleans (`true`/`false`) not yet parseable — comes in 2.4.
+**Current Lesson:** 3.1
+**Last Session Date:** 2026-04-21
+**Notes:** Parser feature-complete for Module 2. Grouped expressions, `if`/`else` (as expressions), `function` literals, call expressions (LPAREN as infix at CALL precedence), and string literals all parse and test green. Arrow functions removed from language scope — `ARROW` token/lexer branch deleted. New AST nodes: `BlockStatement`, `IfExpression`, `FunctionLiteral`, `FunctionCall`, `StringLiteral`. `FunctionLiteral.String()` fixed to delegate braces to `BlockStatement`. Shape tests for call expressions + table-driven string-literal tests.
 
 ---
 
@@ -37,7 +37,7 @@ The lexer turns raw source code into tokens — the smallest meaningful pieces o
   - Define the token types for our language
   - Task: Define the `Token` struct and `TokenType` constants
   - Keywords (TS-flavored): `let`, `const`, `function`, `return`, `if`, `else`, `true`, `false`
-  - Operators: `=`, `=>`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `+`, `-`, `*`, `/`, `!`, `&&`, `||`
+  - Operators: `=`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `+`, `-`, `*`, `/`, `!`, `&&`, `||`
   - Punctuation: `(`, `)`, `{`, `}`, `[`, `]`, `,`, `;`, `:`
   - Domain identifiers (plain idents, not keywords): `signal`, `sma`, `ema`, `rsi`, `close`, `open`, `high`, `low`, `volume`
 
@@ -77,12 +77,12 @@ The parser turns a flat list of tokens into a tree (AST) that represents the str
   - Task: Parse arithmetic and comparison expressions
   - Example: `sma(close, 14) + atr(14) * 2 > 100`
 
-- [ ] **2.4 — The Parser, Part 3: Grouped, If, and Functions**
-  - Grouped expressions, if/else, `function` literals and arrow functions (`(x) => x + 1`)
+- [x] **2.4 — The Parser, Part 3: Grouped, If, and Functions**
+  - Grouped expressions, if/else, `function` literals
   - Task: Parse conditionals that produce signal values
   - Example: `if (rsi(close, 14) < 30) { "oversold" } else { "neutral" }`
 
-- [ ] **2.5 — Function Calls & Parameters**
+- [x] **2.5 — Function Calls & Parameters**
   - Parse call expressions with arguments
   - Task: Parse `sma(close, 14)`, `signal("rsi_low", rsi(close, 14) < 30)`
   - Challenge: Parse a complete signal-definition block
@@ -109,7 +109,7 @@ The evaluator walks the AST and actually executes the code.
 - [ ] **3.4 — Functions and Closures**
   - Function evaluation, closures, call stack
   - Task: Define and call indicator-helper functions
-  - Example: `const doubleAtr = (period) => atr(period) * 2; doubleAtr(14);`
+  - Example: `const doubleAtr = function(period) { atr(period) * 2 }; doubleAtr(14);`
 
 - [ ] **3.5 — The REPL, Part 2**
   - Upgrade REPL to evaluate expressions and show results
@@ -157,7 +157,8 @@ Make the language useful for computing indicators and emitting signals.
 | Session | Date       | Lessons Covered | Notes |
 |---------|------------|-----------------|-------|
 | 1       | 2026-04-14 | 1.1, 1.2        | Token types defined; lexer handles single-char tokens, identifiers, keywords, ints. |
-| 2       | 2026-04-15 | 1.3, 1.4        | Extended lexer (floats, strings, `==`/`!=`/`<=`/`>=`/`=>`/`&&`/`||`, `//` comments). REPL built with I/O decoupling + tests. |
+| 2       | 2026-04-15 | 1.3, 1.4        | Extended lexer (floats, strings, `==`/`!=`/`<=`/`>=`/`&&`/`||`, `//` comments). REPL built with I/O decoupling + tests. |
 | 3       | 2026-04-17 | 2.1, 2.2        | AST foundations + parser for `let`/`const`/`return` statements. Expression parsing stubbed. |
 | 4       | 2026-04-20 | 2.3             | Pratt parser: prefix/infix fn maps, precedence table, `PrefixExpression` and `InfixExpression` AST nodes, full precedence-string tests. |
+| 5       | 2026-04-21 | 2.4, 2.5        | Grouped/if/function literals/call expressions/string literals. Arrow functions removed from scope. Shape + table-driven tests. Module 2 complete. |
 

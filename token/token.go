@@ -27,7 +27,6 @@ const (
 	SLASH    TokenType = "/"
 	AND      TokenType = "&&"
 	OR       TokenType = "||"
-	ARROW    TokenType = "=>"
 
 	LPAREN    TokenType = "("
 	RPAREN    TokenType = ")"
