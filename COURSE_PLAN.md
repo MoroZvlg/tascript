@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 3.2
-**Last Session Date:** 2026-05-02
-**Notes:** Object system in place. New `object` package with `Object` interface (`Type()`, `Inspect()`) and concrete types `Integer` (int64), `Float`, `String`, `Boolean`, `Null`, `Series` (placeholder, holds `[]float64`). Type tags use lowercase strings (`"int"`, `"float"`, …) and `Kind`-suffixed Go consts (`IntKind`, `FloatKind`, …) — idiomatic-Go variant of book's `INTEGER_OBJ`. Pointer receivers throughout. Float `Inspect` uses `%g`. Table-driven test covers all six kinds.
+**Current Lesson:** 3.4
+**Last Session Date:** 2026-05-03
+**Notes:** Conditionals + environments wired in. New `object/environment.go` with `Environment{store, outer}`, `NewEnvironment`, `NewEnclosedEnvironment`, `Get` (walks `outer`), `Set`. `Eval` signature now `Eval(ast.Node, *object.Environment)`. Handles `LetStatement`, `ConstStatement` (treated identically — no immutability enforcement yet), `Identifier` (returns `"identifier not found: %s"` error), `IfExpression` (no-else → `NULL`), `BlockStatement` (`evalBlock` mirrors `evalProgram`). Truthiness: `false`/`null` falsy, everything else truthy (book's middle path). `if` blocks do NOT create new scope (matches book; deferred). Tests cover let/const, if/else, nested-scope read, error propagation through `let`.
 
 ---
 
@@ -98,11 +98,11 @@ The evaluator walks the AST and actually executes the code.
   - Task: Define the object system
   - Trading twist: add a `Series` type for price data
 
-- [ ] **3.2 — Evaluating Expressions**
+- [x] **3.2 — Evaluating Expressions**
   - Tree-walking evaluation of arithmetic, booleans, prefix/infix ops
   - Task: Evaluate `(50 + 10) * 2 > 100` → `true`
 
-- [ ] **3.3 — Conditionals and Environments**
+- [x] **3.3 — Conditionals and Environments**
   - If/else evaluation, variable bindings, environment (scope)
   - Task: Evaluate `let x = 10; if x > 5 { x * 2 } else { x }`
 
@@ -162,4 +162,6 @@ Make the language useful for computing indicators and emitting signals.
 | 4       | 2026-04-20 | 2.3             | Pratt parser: prefix/infix fn maps, precedence table, `PrefixExpression` and `InfixExpression` AST nodes, full precedence-string tests. |
 | 5       | 2026-04-21 | 2.4, 2.5        | Grouped/if/function literals/call expressions/string literals. Arrow functions removed from scope. Shape + table-driven tests. Module 2 complete. |
 | 6       | 2026-05-02 | 3.1             | Object system: `Object` interface + Integer/Float/String/Boolean/Null/Series. `int64` for Integer. `Kind`-suffixed Go consts, lowercase type strings. |
+| 7       | 2026-05-03 | 3.2             | Tree-walking evaluator for literals + prefix/infix ops. Singletons, int↔float promotion, error objects, div-by-zero, no-mutation regression test. |
+| 8       | 2026-05-03 | 3.3             | Environment with `outer` chain. `let`/`const`, identifier lookup, `if`/`else` as expressions, block statements, truthiness rule. Tests for nested-scope reads + error propagation. |
 
