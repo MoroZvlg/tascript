@@ -25,6 +25,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.prefixFns = map[token.TokenType]func() ast.Expression{
 		token.IDENT:    p.parseIdentifier,
 		token.INT:      p.parseIntegerLiteral,
+		token.FLOAT:    p.parseFloatLiteral,
 		token.STRING:   p.parseStringLiteral,
 		token.MINUS:    p.parsePrefixExpression,
 		token.BANG:     p.parsePrefixExpression,
@@ -182,6 +183,15 @@ func (p *Parser) parseIntegerLiteral() ast.Expression {
 		return nil
 	}
 	return &ast.IntegerLiteral{Token: p.currentToken, Value: i}
+}
+
+func (p *Parser) parseFloatLiteral() ast.Expression {
+	f, err := strconv.ParseFloat(p.currentToken.Literal, 0)
+	if err != nil {
+		p.errors = append(p.errors, fmt.Errorf("invalid integer literal: %s", p.currentToken.Literal))
+		return nil
+	}
+	return &ast.FloatLiteral{Token: p.currentToken, Value: f}
 }
 
 func (p *Parser) parseStringLiteral() ast.Expression {

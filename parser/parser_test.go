@@ -10,7 +10,7 @@ import (
 )
 
 func Test_ParseProgram_Let(t *testing.T) {
-	input := `let x = 5;
+	input := `let x = 5.0;
   let y = 10;
   let foobar = 838383;`
 	l := lexer.New(input)

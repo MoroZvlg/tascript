@@ -11,6 +11,7 @@ const (
 	BooleanKind ObjectType = "boolean"
 	NullKind    ObjectType = "null"
 	SeriesKind  ObjectType = "series"
+	ErrorKind   ObjectType = "error"
 )
 
 type Object interface {
@@ -58,6 +59,13 @@ type Series struct {
 func (s *Series) Type() ObjectType { return SeriesKind }
 func (s *Series) Inspect() string  { return fmt.Sprintf("[%d]", len(s.Value)) }
 
-func TypeMismatchError(left, right Object) string {
-	return fmt.Sprintf("type mismatch: left <%T> and right <%T>", left.Type(), right.Inspect())
+type Error struct {
+	Message string
+}
+
+func (e *Error) Type() ObjectType { return ErrorKind }
+func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
+
+func IsError(obj Object) bool {
+	return obj != nil && obj.Type() == ErrorKind
 }

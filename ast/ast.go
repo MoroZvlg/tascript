@@ -158,6 +158,21 @@ func (il *IntegerLiteral) String() string {
 
 func (il *IntegerLiteral) expressionNode() {}
 
+type FloatLiteral struct {
+	Token token.Token
+	Value float64
+}
+
+func (fl *FloatLiteral) TokenLiteral() string {
+	return fl.Token.Literal
+}
+
+func (fl *FloatLiteral) String() string {
+	return fmt.Sprintf("%g", fl.Value)
+}
+
+func (fl *FloatLiteral) expressionNode() {}
+
 type StringLiteral struct {
 	Token token.Token
 	Value string

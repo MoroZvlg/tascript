@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 3.1
-**Last Session Date:** 2026-04-21
-**Notes:** Parser feature-complete for Module 2. Grouped expressions, `if`/`else` (as expressions), `function` literals, call expressions (LPAREN as infix at CALL precedence), and string literals all parse and test green. Arrow functions removed from language scope — `ARROW` token/lexer branch deleted. New AST nodes: `BlockStatement`, `IfExpression`, `FunctionLiteral`, `FunctionCall`, `StringLiteral`. `FunctionLiteral.String()` fixed to delegate braces to `BlockStatement`. Shape tests for call expressions + table-driven string-literal tests.
+**Current Lesson:** 3.2
+**Last Session Date:** 2026-05-02
+**Notes:** Object system in place. New `object` package with `Object` interface (`Type()`, `Inspect()`) and concrete types `Integer` (int64), `Float`, `String`, `Boolean`, `Null`, `Series` (placeholder, holds `[]float64`). Type tags use lowercase strings (`"int"`, `"float"`, …) and `Kind`-suffixed Go consts (`IntKind`, `FloatKind`, …) — idiomatic-Go variant of book's `INTEGER_OBJ`. Pointer receivers throughout. Float `Inspect` uses `%g`. Table-driven test covers all six kinds.
 
 ---
 
@@ -93,7 +93,7 @@ The parser turns a flat list of tokens into a tree (AST) that represents the str
 
 The evaluator walks the AST and actually executes the code.
 
-- [ ] **3.1 — The Object System**
+- [x] **3.1 — The Object System**
   - Internal representation of values (integers, floats, booleans, null)
   - Task: Define the object system
   - Trading twist: add a `Series` type for price data
@@ -161,4 +161,5 @@ Make the language useful for computing indicators and emitting signals.
 | 3       | 2026-04-17 | 2.1, 2.2        | AST foundations + parser for `let`/`const`/`return` statements. Expression parsing stubbed. |
 | 4       | 2026-04-20 | 2.3             | Pratt parser: prefix/infix fn maps, precedence table, `PrefixExpression` and `InfixExpression` AST nodes, full precedence-string tests. |
 | 5       | 2026-04-21 | 2.4, 2.5        | Grouped/if/function literals/call expressions/string literals. Arrow functions removed from scope. Shape + table-driven tests. Module 2 complete. |
+| 6       | 2026-05-02 | 3.1             | Object system: `Object` interface + Integer/Float/String/Boolean/Null/Series. `int64` for Integer. `Kind`-suffixed Go consts, lowercase type strings. |
 
