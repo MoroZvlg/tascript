@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 3.4
-**Last Session Date:** 2026-05-03
-**Notes:** Conditionals + environments wired in. New `object/environment.go` with `Environment{store, outer}`, `NewEnvironment`, `NewEnclosedEnvironment`, `Get` (walks `outer`), `Set`. `Eval` signature now `Eval(ast.Node, *object.Environment)`. Handles `LetStatement`, `ConstStatement` (treated identically — no immutability enforcement yet), `Identifier` (returns `"identifier not found: %s"` error), `IfExpression` (no-else → `NULL`), `BlockStatement` (`evalBlock` mirrors `evalProgram`). Truthiness: `false`/`null` falsy, everything else truthy (book's middle path). `if` blocks do NOT create new scope (matches book; deferred). Tests cover let/const, if/else, nested-scope read, error propagation through `let`.
+**Current Lesson:** 3.5
+**Last Session Date:** 2026-05-05
+**Notes:** Functions + closures evaluated. New `object.Function{Parameters, Body, Env}` (object pkg now imports ast — one-way dep). `Eval` handles `*ast.FunctionLiteral` (captures defn env) and `*ast.FunctionCall`. Critical correctness rule learned: args MUST be eval'd in caller's `env`, then bound into a **fresh** `NewEnclosedEnvironment(funcVal.Env)` — never `Set` on `funcVal.Env` itself (would leak bindings, break multi-instance closures). Returns errors for non-function call (`function call not found: %s`) and arg/param count mismatch. Tests cover identity call, closure (`makeAdder`), closure isolation (two adders w/ different `x`), recursion (`fact(5)=120`), non-function call, arity mismatch.
 
 ---
 
@@ -106,7 +106,7 @@ The evaluator walks the AST and actually executes the code.
   - If/else evaluation, variable bindings, environment (scope)
   - Task: Evaluate `let x = 10; if x > 5 { x * 2 } else { x }`
 
-- [ ] **3.4 — Functions and Closures**
+- [x] **3.4 — Functions and Closures**
   - Function evaluation, closures, call stack
   - Task: Define and call indicator-helper functions
   - Example: `const doubleAtr = function(period) { atr(period) * 2 }; doubleAtr(14);`
@@ -164,4 +164,5 @@ Make the language useful for computing indicators and emitting signals.
 | 6       | 2026-05-02 | 3.1             | Object system: `Object` interface + Integer/Float/String/Boolean/Null/Series. `int64` for Integer. `Kind`-suffixed Go consts, lowercase type strings. |
 | 7       | 2026-05-03 | 3.2             | Tree-walking evaluator for literals + prefix/infix ops. Singletons, int↔float promotion, error objects, div-by-zero, no-mutation regression test. |
 | 8       | 2026-05-03 | 3.3             | Environment with `outer` chain. `let`/`const`, identifier lookup, `if`/`else` as expressions, block statements, truthiness rule. Tests for nested-scope reads + error propagation. |
+| 9       | 2026-05-05 | 3.4             | Functions + closures. `object.Function{Params, Body, Env}`. Args eval'd in caller env, bound in fresh enclosed env (defn-env never mutated). Tests: identity, closure, closure isolation, recursion, non-fn call, arity. |
 

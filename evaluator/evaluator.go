@@ -87,6 +87,30 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 
 	case *ast.BlockStatement:
 		return evalBlock(n, env)
+
+	case *ast.FunctionLiteral:
+		return &object.Function{Parameters: n.Parameters, Body: n.Body, Env: env}
+
+	case *ast.FunctionCall:
+		funcVal, ok := Eval(n.Function, env).(*object.Function)
+		if !ok {
+			return newError("function call not found: %s", n.Function.String())
+		}
+		if object.IsError(funcVal) {
+			return funcVal
+		}
+		if len(n.Arguments) != len(funcVal.Parameters) {
+			return newError("argument(s) number mismatch. expected %d got %d", len(funcVal.Parameters), len(n.Arguments))
+		}
+		funcEnv := object.NewEnclosedEnvironment(funcVal.Env)
+		for i, arg := range n.Arguments {
+			argVal := Eval(arg, env)
+			if object.IsError(argVal) {
+				return argVal
+			}
+			funcEnv.Set(funcVal.Parameters[i].String(), argVal)
+		}
+		return Eval(funcVal.Body, funcEnv)
 	}
 
 	return newError("unknown node type: %T", node)

@@ -35,6 +35,12 @@ func TestEvalIntegerExpression(t *testing.T) {
 		{"50 / 2 * 2 + 10", "60"},
 		{"20 + 2 * -10", "0"},
 		{"3 * (3 * 3) + 10", "37"},
+		{"let id = function(x) { x }; id(5)", "5"},
+		{"const makeAdder = function(x) { function(y) { x + y } }; const addFive = makeAdder(5); addFive(10)", "15"},
+		{"let fact = function(n) { if (n < 2) { 1 } else { n * fact(n - 1) } }; fact(5)", "120"},
+		{"5(1,2)", "ERROR: function call not found: 5"},
+		{"let f = function(x) { x }; f(1, 2)", "ERROR: argument(s) number mismatch. expected 1 got 2"},
+		{"const make = function(x) { function(y) { x + y } }; const a = make(5); const b = make(10); a(1)", "6"},
 	}
 	for _, tt := range tests {
 		got := testEval(t, tt.input)

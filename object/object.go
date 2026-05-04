@@ -1,17 +1,23 @@
 package object
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+
+	"github.com/MoroZvlg/tascript/ast"
+)
 
 type ObjectType string
 
 const (
-	IntKind     ObjectType = "int"
-	FloatKind   ObjectType = "float"
-	StringKind  ObjectType = "string"
-	BooleanKind ObjectType = "boolean"
-	NullKind    ObjectType = "null"
-	SeriesKind  ObjectType = "series"
-	ErrorKind   ObjectType = "error"
+	IntKind      ObjectType = "int"
+	FloatKind    ObjectType = "float"
+	StringKind   ObjectType = "string"
+	BooleanKind  ObjectType = "boolean"
+	NullKind     ObjectType = "null"
+	FunctionKind ObjectType = "function"
+	SeriesKind   ObjectType = "series"
+	ErrorKind    ObjectType = "error"
 )
 
 type Object interface {
@@ -46,6 +52,28 @@ type Boolean struct {
 
 func (b *Boolean) Type() ObjectType { return BooleanKind }
 func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
+
+type Function struct {
+	Parameters []*ast.Identifier
+	Body       *ast.BlockStatement
+	Env        *Environment
+}
+
+func (f *Function) Type() ObjectType { return FunctionKind }
+func (f *Function) Inspect() string {
+	var out bytes.Buffer
+	out.WriteString("function(")
+	for i, s := range f.Parameters {
+		out.WriteString(s.String())
+		if i < len(f.Parameters)-1 {
+			out.WriteString(", ")
+		} else {
+			out.WriteString(") ")
+		}
+	}
+	out.WriteString("{ ... }")
+	return out.String()
+}
 
 type Null struct{}
 

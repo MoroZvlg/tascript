@@ -1,5 +1,7 @@
 package object
 
+import "fmt"
+
 type Environment struct {
 	store map[string]Object
 	outer *Environment
@@ -27,4 +29,10 @@ func (e *Environment) Get(name string) (Object, bool) {
 func (e *Environment) Set(name string, val Object) Object {
 	e.store[name] = val
 	return val
+}
+
+func (e *Environment) Debug() {
+	for key, val := range e.store {
+		fmt.Println(key, ":", val)
+	}
 }
