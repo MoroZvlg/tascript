@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 3.5
+**Current Lesson:** 4.1
 **Last Session Date:** 2026-05-05
-**Notes:** Functions + closures evaluated. New `object.Function{Parameters, Body, Env}` (object pkg now imports ast — one-way dep). `Eval` handles `*ast.FunctionLiteral` (captures defn env) and `*ast.FunctionCall`. Critical correctness rule learned: args MUST be eval'd in caller's `env`, then bound into a **fresh** `NewEnclosedEnvironment(funcVal.Env)` — never `Set` on `funcVal.Env` itself (would leak bindings, break multi-instance closures). Returns errors for non-function call (`function call not found: %s`) and arg/param count mismatch. Tests cover identity call, closure (`makeAdder`), closure isolation (two adders w/ different `x`), recursion (`fact(5)=120`), non-function call, arity mismatch.
+**Notes:** REPL Part 2: persistent `*object.Environment` across lines, parse → check `p.Errors()` → eval → print `result.Inspect()`. `LetStatement`/`ConstStatement` now return the bound value (JS-style) instead of `NULL` so `let x = 5` prints `5` rather than `null`. Tests use table-driven subtests (`t.Run`) covering arithmetic, env persistence (let + const), runtime errors, parser errors, post-error continuation. Module 3 complete.
 
 ---
 
@@ -111,7 +111,7 @@ The evaluator walks the AST and actually executes the code.
   - Task: Define and call indicator-helper functions
   - Example: `const doubleAtr = function(period) { atr(period) * 2 }; doubleAtr(14);`
 
-- [ ] **3.5 — The REPL, Part 2**
+- [x] **3.5 — The REPL, Part 2**
   - Upgrade REPL to evaluate expressions and show results
   - Task: Full working REPL that can evaluate indicator/signal expressions
 
@@ -165,4 +165,5 @@ Make the language useful for computing indicators and emitting signals.
 | 7       | 2026-05-03 | 3.2             | Tree-walking evaluator for literals + prefix/infix ops. Singletons, int↔float promotion, error objects, div-by-zero, no-mutation regression test. |
 | 8       | 2026-05-03 | 3.3             | Environment with `outer` chain. `let`/`const`, identifier lookup, `if`/`else` as expressions, block statements, truthiness rule. Tests for nested-scope reads + error propagation. |
 | 9       | 2026-05-05 | 3.4             | Functions + closures. `object.Function{Params, Body, Env}`. Args eval'd in caller env, bound in fresh enclosed env (defn-env never mutated). Tests: identity, closure, closure isolation, recursion, non-fn call, arity. |
+| 10      | 2026-05-05 | 3.5             | REPL Part 2: persistent env, parser-error path, eval+print. `let`/`const` return bound value. Module 3 complete. |
 

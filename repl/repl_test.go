@@ -9,19 +9,26 @@ import (
 )
 
 func Test_Start(t *testing.T) {
-	bufferIn := bytes.NewBufferString(`let x = 5;`)
-	bufferOut := bytes.NewBuffer(nil)
-	expectedOut := []string{
-		"[let] -> let",
-		"[IDENTIFIER] -> x",
-		"[=] -> =",
-		"[INT] -> 5",
-		"[;] -> ;",
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"arithmetic", "5 + 5\n", "10"},
+		{"env persists across lines", "let x = 5\nx * 2\n", "10"},
+		{"const persists across lines", "const greeting = \"hi\"\ngreeting + \" you\"\n", "hi you"},
+		{"runtime error doesn't crash", "foobar\n", "identifier not found: foobar"},
+		{"parser error doesn't crash", "let =\n", "expected next token to be"},
+		{"keeps going after error", "foobar\n1 + 1\n", "2"},
 	}
-	repl.Start(bufferIn, bufferOut)
-	for _, w := range expectedOut {
-		if !strings.Contains(bufferOut.String(), w) {
-			t.Errorf("output missing %q\nfull output:\n%s", w, bufferOut.String())
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := bytes.NewBufferString(tt.input)
+			out := bytes.NewBuffer(nil)
+			repl.Start(in, out)
+			if !strings.Contains(out.String(), tt.contains) {
+				t.Errorf("output missing %q\nfull output:\n%s", tt.contains, out.String())
+			}
+		})
 	}
 }

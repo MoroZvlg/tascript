@@ -57,7 +57,7 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 			return val
 		}
 		env.Set(n.Name.Value, val)
-		return NULL
+		return val
 
 	case *ast.ConstStatement:
 		val := Eval(n.Value, env)
@@ -65,7 +65,7 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 			return val
 		}
 		env.Set(n.Name.Value, val)
-		return NULL
+		return val
 
 	case *ast.Identifier:
 		if val, ok := env.Get(n.Value); ok {

@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/MoroZvlg/tascript/evaluator"
 	"github.com/MoroZvlg/tascript/lexer"
-	"github.com/MoroZvlg/tascript/token"
+	"github.com/MoroZvlg/tascript/object"
+	"github.com/MoroZvlg/tascript/parser"
 )
 
 const Prompt = ">> "
 
 func Start(in io.Reader, out io.Writer) {
 	scanner := bufio.NewScanner(in)
+	env := object.NewEnvironment()
 
 	for {
 		fmt.Fprint(out, Prompt)
@@ -22,8 +25,15 @@ func Start(in io.Reader, out io.Writer) {
 		line := scanner.Text()
 
 		l := lexer.New(line)
-		for tok := l.NextToken(); tok.Type != token.EOF; tok = l.NextToken() {
-			fmt.Fprint(out, tok.String())
+		p := parser.New(l)
+		program := p.ParseProgram()
+		if len(p.Errors()) != 0 {
+			for _, err := range p.Errors() {
+				fmt.Fprintln(out, err)
+			}
+			continue
 		}
+		result := evaluator.Eval(program, env)
+		fmt.Fprintln(out, result.Inspect())
 	}
 }
