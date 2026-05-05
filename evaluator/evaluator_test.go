@@ -38,9 +38,19 @@ func TestEvalIntegerExpression(t *testing.T) {
 		{"let id = function(x) { x }; id(5)", "5"},
 		{"const makeAdder = function(x) { function(y) { x + y } }; const addFive = makeAdder(5); addFive(10)", "15"},
 		{"let fact = function(n) { if (n < 2) { 1 } else { n * fact(n - 1) } }; fact(5)", "120"},
-		{"5(1,2)", "ERROR: function call not found: 5"},
+		{"5(1,2)", "ERROR: not a function: 5"},
 		{"let f = function(x) { x }; f(1, 2)", "ERROR: argument(s) number mismatch. expected 1 got 2"},
 		{"const make = function(x) { function(y) { x + y } }; const a = make(5); const b = make(10); a(1)", "6"},
+		{`"hi".length`, "2"},
+		{`"".length`, "0"},
+		{`"".wrong`, "ERROR: string has no property 'wrong'"},
+		{`(5).length`, "ERROR: type int has no properties"},
+		{"let f = function(x) { return x; }; f(5)", "5"},
+		{"let f = function(x) { return x; x * 2 }; f(5)", "5"},
+		{"let f = function(x) { if (x > 0) { return 1; } return -1; }; f(5)", "1"},
+		{"let f = function(x) { if (x > 0) { if (x > 10) { return 1; } return 2; } return 3; }; f(5)", "2"},
+		{"return 10;", "10"},
+		{"let f = function() { return 5 + true; }; f()", "ERROR: type mismatch: int + boolean"},
 	}
 	for _, tt := range tests {
 		got := testEval(t, tt.input)
@@ -94,6 +104,8 @@ func TestEvalBooleanExpression(t *testing.T) {
 		{"(1 > 2) == false", "true"},
 		{"1.5 < 2", "true"},
 		{"2 == 2.0", "true"},
+		{"true && false", "false"},
+		{"true || false", "true"},
 	}
 	for _, tt := range tests {
 		got := testEval(t, tt.input)

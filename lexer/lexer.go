@@ -121,6 +121,8 @@ func (l *Lexer) NextToken() token.Token {
 		} else {
 			t = token.Token{Type: token.STRING, Literal: lit}
 		}
+	case '.':
+		t = token.Token{Type: token.DOT, Literal: "."}
 	default:
 		if isLetter(l.char) {
 			lit := l.readIdentifier()

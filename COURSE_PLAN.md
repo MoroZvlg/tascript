@@ -23,8 +23,8 @@
 ## Current Status
 
 **Current Lesson:** 4.1
-**Last Session Date:** 2026-05-05
-**Notes:** REPL Part 2: persistent `*object.Environment` across lines, parse → check `p.Errors()` → eval → print `result.Inspect()`. `LetStatement`/`ConstStatement` now return the bound value (JS-style) instead of `NULL` so `let x = 5` prints `5` rather than `null`. Tests use table-driven subtests (`t.Run`) covering arithmetic, env persistence (let + const), runtime errors, parser errors, post-error continuation. Module 3 complete.
+**Last Session Date:** 2026-05-06
+**Notes:** Member access (`obj.prop`) shipped — DOT token, `MemberExpression` AST, infix at CALL precedence, evaluator dispatch on receiver type. `.length` exposed on `String` and `Series`. While in the evaluator, fixed three pre-existing gaps: `return` statements (now wrapped in `*object.Return`, bubbled through blocks, unwrapped at program + function-call boundaries); `&&` / `||` evaluation in `evalBoolInfix`; FunctionCall now propagates errors from the callee expression and reports `"not a function: <T>"` instead of swallowing real lookup failures. Module 3 fully complete.
 
 ---
 
@@ -115,6 +115,17 @@ The evaluator walks the AST and actually executes the code.
   - Upgrade REPL to evaluate expressions and show results
   - Task: Full working REPL that can evaluate indicator/signal expressions
 
+- [x] **3.6 — Member Access**
+  - Add a generic `obj.prop` expression: lexer `DOT` token, `MemberExpression` AST node,
+    infix parser at CALL-level precedence, evaluator dispatch on receiver type.
+  - Lexer care: don't break float literals — `3.14` stays a float, but `foo.bar` lexes as
+    IDENT DOT IDENT.
+  - Canary use: expose `.length` on `String` (e.g. `"hi".length` → `2`) so 3.6 has a real
+    end-to-end test without needing the `Candles` type yet.
+  - Errors: unknown property → runtime error; receiver type with no properties → runtime error.
+  - Tests: lexer (no float regression, ident.ident sequence), parser (`a.b`, `a.b.c`,
+    `f().x`, precedence vs `+`), eval (string `.length`, unknown prop, bad receiver).
+
 ---
 
 ## Module 4: Indicators & Signal Output (beyond the book)
@@ -123,9 +134,14 @@ Make the language useful for computing indicators and emitting signals.
 **Out of scope:** orders, positions, PnL, backtesting.
 
 - [ ] **4.1 — Candle Input**
-  - Load a candle stream from CSV or JSON into a `Series` value
-  - Task: Minimal loader — accept either format, expose `open/high/low/close/volume` series
-  - Not a focus: keep the loader small, don't over-engineer the format
+  - Thin host-side glue, NOT part of the DSL surface — will be replaced when the DSL gets
+    a real way to ingest data. No tests for the loader itself; it's just plumbing.
+  - Add a `*object.Candles` value with five `*Series` fields exposed via member access
+    as `opens / highs / lows / closes / volumes`. Relies on 3.6.
+  - CSV-only loader (header `open,high,low,close,volume`) lives next to the REPL.
+  - REPL auto-loads `./data.csv` if present and seeds env binding `candles`. No flag.
+    Missing file = REPL still starts normally.
+  - Tests: only the evaluator side — `candles.closes` returns Series, unknown prop errors.
 
 - [ ] **4.2 — Built-in Indicators via talive**
   - Wire indicator builtins (`sma`, `ema`, `rsi`, …) to the `talive` library
@@ -152,6 +168,36 @@ Make the language useful for computing indicators and emitting signals.
 
 ---
 
+## Module 5: Sandbox & Limits (beyond the book)
+
+Make the interpreter safe to run untrusted scripts. Real CPU/RSS limits are OS-level
+(cgroups, `setrlimit`) and out of scope here — these lessons cover what an interpreter
+itself can enforce.
+
+- [ ] **5.1 — String & Collection Size Caps**
+  - Configurable `MaxStringLen`, `MaxSeriesLen` on the evaluator.
+  - Enforced at literal eval, string concat, and any builtin that grows a value.
+  - Violation = runtime error with the limit name and offending size.
+
+- [ ] **5.2 — Operation Budget**
+  - Evaluator carries an op counter; bump on every `Eval` call.
+  - Abort with `"op budget exceeded"` when the counter passes the configured budget.
+  - Budget is a constructor argument; tests use a low budget to force the abort.
+
+- [ ] **5.3 — Wall-Clock Deadline**
+  - Thread `context.Context` through `Eval`. On `ctx.Err()`, halt with a deadline error.
+  - Compose with the op budget — whichever trips first wins.
+
+- [ ] **5.4 — (Stretch) Static Validation Pass**
+  - Pre-eval AST walk that rejects disallowed constructs (e.g. unbounded loops once
+    those exist, blacklisted builtins) before any code runs. Cheap lint layer.
+
+- [ ] **5.5 — (Stretch) Best-Effort Memory Accounting**
+  - Track the sum of `len()` of live strings + series via wrapper allocations.
+  - Document the gap: this is NOT real RSS; for true memory caps see OS-level controls.
+
+---
+
 ## Session Log
 
 | Session | Date       | Lessons Covered | Notes |
@@ -166,4 +212,5 @@ Make the language useful for computing indicators and emitting signals.
 | 8       | 2026-05-03 | 3.3             | Environment with `outer` chain. `let`/`const`, identifier lookup, `if`/`else` as expressions, block statements, truthiness rule. Tests for nested-scope reads + error propagation. |
 | 9       | 2026-05-05 | 3.4             | Functions + closures. `object.Function{Params, Body, Env}`. Args eval'd in caller env, bound in fresh enclosed env (defn-env never mutated). Tests: identity, closure, closure isolation, recursion, non-fn call, arity. |
 | 10      | 2026-05-05 | 3.5             | REPL Part 2: persistent env, parser-error path, eval+print. `let`/`const` return bound value. Module 3 complete. |
+| 11      | 2026-05-06 | 3.6             | Member access: DOT token, `MemberExpression` AST, infix at CALL precedence, evaluator dispatch (`String.length`, `Series.length`). Pre-existing fixes: `return` statements via `*object.Return` wrapper; `&&`/`||` eval; FunctionCall error propagation + `not a function` message. |
 

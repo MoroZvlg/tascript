@@ -345,3 +345,21 @@ func (fc *FunctionCall) String() string {
 }
 
 func (fc *FunctionCall) expressionNode() {}
+
+type MemberExpression struct {
+	Token    token.Token
+	Object   Expression
+	Property *Identifier
+}
+
+func (me *MemberExpression) TokenLiteral() string { return me.Token.Literal }
+
+func (me *MemberExpression) String() string {
+	var out bytes.Buffer
+	out.WriteString(me.Object.String())
+	out.WriteString(".")
+	out.WriteString(me.Property.String())
+	return out.String()
+}
+
+func (me *MemberExpression) expressionNode() {}

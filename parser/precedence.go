@@ -30,4 +30,5 @@ var precedences = map[token.TokenType]precedence{
 	token.ASTERISK: PRODUCT,
 	token.SLASH:    PRODUCT,
 	token.LPAREN:   CALL,
+	token.DOT:      CALL,
 }

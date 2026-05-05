@@ -49,6 +49,7 @@ func New(l *lexer.Lexer) *Parser {
 		token.AND:      p.parseInfixExpression,
 		token.OR:       p.parseInfixExpression,
 		token.LPAREN:   p.parseCallExpression,
+		token.DOT:      p.parseMemberExpression,
 	}
 	return p
 }
@@ -333,6 +334,15 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	prec := p.currentPrecedence()
 	p.nextToken()
 	expr.Right = p.parseExpression(prec)
+	return &expr
+}
+
+func (p *Parser) parseMemberExpression(left ast.Expression) ast.Expression {
+	expr := ast.MemberExpression{Token: p.currentToken, Object: left}
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+	expr.Property = &ast.Identifier{Token: p.currentToken, Value: p.currentToken.Literal}
 	return &expr
 }
 

@@ -18,7 +18,8 @@ if (sma(close, 14) > 50.0) {
 	five = 10
 } else {
 	five = 5.0
-}`
+}
+foo.bar`
 	expectedOut := []struct {
 		expectedType    token.TokenType
 		expectedLiteral string
@@ -83,6 +84,10 @@ if (sma(close, 14) > 50.0) {
 		{token.ASSIGN, "="},
 		{token.FLOAT, "5.0"},
 		{token.RBRACE, "}"},
+
+		{token.IDENT, "foo"},
+		{token.DOT, "."},
+		{token.IDENT, "bar"},
 
 		{token.EOF, ""},
 	}

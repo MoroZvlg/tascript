@@ -37,6 +37,7 @@ const (
 	COMMA     TokenType = ","
 	COLON     TokenType = ":"
 	SEMICOLON TokenType = ";"
+	DOT       TokenType = "."
 
 	LET      TokenType = "let"
 	CONST    TokenType = "const"

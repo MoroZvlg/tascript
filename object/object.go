@@ -16,6 +16,7 @@ const (
 	BooleanKind  ObjectType = "boolean"
 	NullKind     ObjectType = "null"
 	FunctionKind ObjectType = "function"
+	ReturnKind   ObjectType = "return"
 	SeriesKind   ObjectType = "series"
 	ErrorKind    ObjectType = "error"
 )
@@ -52,6 +53,13 @@ type Boolean struct {
 
 func (b *Boolean) Type() ObjectType { return BooleanKind }
 func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
+
+type Return struct {
+	Value Object
+}
+
+func (r *Return) Type() ObjectType { return ReturnKind }
+func (r *Return) Inspect() string  { return r.Value.Inspect() }
 
 type Function struct {
 	Parameters []*ast.Identifier

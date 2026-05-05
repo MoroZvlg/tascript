@@ -237,6 +237,11 @@ func Test_ParseProgram_OperatorPrecedence(t *testing.T) {
 		{"a + add(b + c) + d", "((a + add((b + c))) + d)"},
 		{"add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))"},
 		{"-f(x)", "(-f(x))"},
+		{"a.b", "a.b"},
+		{"a.b.c", "a.b.c"},
+		{"f().x", "f().x"},
+		{"a + b.c", "(a + b.c)"},
+		{"a.b(1)", "a.b(1)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -411,6 +416,54 @@ func Test_ParseProgram_FunctionLiteral(t *testing.T) {
 				t.Errorf("body: expected %q, got %q", tt.bodyStr, fn.Body.String())
 			}
 		})
+	}
+}
+
+func Test_ParseProgram_MemberExpression_LeftAssoc(t *testing.T) {
+	input := `a.b.c`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	if len(prog.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(prog.Statements))
+	}
+	exprStmt, ok := prog.Statements[0].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+	}
+	outer, ok := exprStmt.Expression.(*ast.MemberExpression)
+	if !ok {
+		t.Fatalf("expected outer MemberExpression, got %T", exprStmt.Expression)
+	}
+	if outer.Property.Value != "c" {
+		t.Errorf("expected outer property %q, got %q", "c", outer.Property.Value)
+	}
+	inner, ok := outer.Object.(*ast.MemberExpression)
+	if !ok {
+		t.Fatalf("expected inner MemberExpression, got %T", outer.Object)
+	}
+	if inner.Property.Value != "b" {
+		t.Errorf("expected inner property %q, got %q", "b", inner.Property.Value)
+	}
+	root, ok := inner.Object.(*ast.Identifier)
+	if !ok {
+		t.Fatalf("expected root Identifier, got %T", inner.Object)
+	}
+	if root.Value != "a" {
+		t.Errorf("expected root ident %q, got %q", "a", root.Value)
+	}
+}
+
+func Test_ParseProgram_MemberExpression_MissingIdent(t *testing.T) {
+	input := `a.;`
+	l := lexer.New(input)
+	p := parser.New(l)
+	_ = p.ParseProgram()
+
+	if len(p.Errors()) == 0 {
+		t.Fatalf("expected at least one parser error, got 0")
 	}
 }
 

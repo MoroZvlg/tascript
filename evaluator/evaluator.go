@@ -91,14 +91,23 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	case *ast.FunctionLiteral:
 		return &object.Function{Parameters: n.Parameters, Body: n.Body, Env: env}
 
+	case *ast.ReturnStatement:
+		result := Eval(n.Value, env)
+		if object.IsError(result) {
+			return result
+		}
+		return &object.Return{Value: result}
+
 	case *ast.FunctionCall:
-		funcVal, ok := Eval(n.Function, env).(*object.Function)
+		fnObj := Eval(n.Function, env)
+		if object.IsError(fnObj) {
+			return fnObj
+		}
+		funcVal, ok := fnObj.(*object.Function)
 		if !ok {
-			return newError("function call not found: %s", n.Function.String())
+			return newError("not a function: %s", n.Function.String())
 		}
-		if object.IsError(funcVal) {
-			return funcVal
-		}
+
 		if len(n.Arguments) != len(funcVal.Parameters) {
 			return newError("argument(s) number mismatch. expected %d got %d", len(funcVal.Parameters), len(n.Arguments))
 		}
@@ -108,9 +117,37 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 			if object.IsError(argVal) {
 				return argVal
 			}
-			funcEnv.Set(funcVal.Parameters[i].String(), argVal)
+			funcEnv.Set(funcVal.Parameters[i].Value, argVal)
 		}
-		return Eval(funcVal.Body, funcEnv)
+		result := Eval(funcVal.Body, funcEnv)
+		if rv, ok := result.(*object.Return); ok {
+			return rv.Value
+		}
+		return result
+
+	case *ast.MemberExpression:
+		obj := Eval(n.Object, env)
+		if object.IsError(obj) {
+			return obj
+		}
+		switch ot := obj.(type) {
+		case *object.String:
+			switch n.Property.Value {
+			case "length":
+				return &object.Integer{Value: int64(len(ot.Value))}
+			default:
+				return newError("string has no property '%s'", n.Property.Value)
+			}
+		case *object.Series:
+			switch n.Property.Value {
+			case "length":
+				return &object.Integer{Value: int64(len(ot.Value))}
+			default:
+				return newError("series has no property '%s'", n.Property.Value)
+			}
+		default:
+			return newError("type %s has no properties", obj.Type())
+		}
 	}
 
 	return newError("unknown node type: %T", node)
@@ -120,8 +157,11 @@ func evalProgram(p *ast.Program, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	for _, stmt := range p.Statements {
 		result = Eval(stmt, env)
-		if object.IsError(result) {
-			return result
+		switch rTyped := result.(type) {
+		case *object.Error:
+			return rTyped
+		case *object.Return:
+			return rTyped.Value
 		}
 	}
 	return result
@@ -131,8 +171,11 @@ func evalBlock(p *ast.BlockStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	for _, stmt := range p.Statements {
 		result = Eval(stmt, env)
-		if object.IsError(result) {
-			return result
+		if result != nil {
+			rType := result.Type()
+			if rType == object.ErrorKind || rType == object.ReturnKind {
+				return result
+			}
 		}
 	}
 	return result
@@ -286,6 +329,10 @@ func evalBoolInfix(op string, left, right object.Object) object.Object {
 		return nativeBool(left == right)
 	case "!=":
 		return nativeBool(left != right)
+	case "&&":
+		return nativeBool(left == TRUE && right == TRUE)
+	case "||":
+		return nativeBool(left == TRUE || right == TRUE)
 	}
 	return newError("unknown operator: boolean %s boolean", op)
 }
