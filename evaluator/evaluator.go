@@ -145,6 +145,36 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 			default:
 				return newError("series has no property '%s'", n.Property.Value)
 			}
+		case *object.Candle:
+			switch n.Property.Value {
+			case "open":
+				return &object.Float{Value: ot.Open}
+			case "high":
+				return &object.Float{Value: ot.High}
+			case "low":
+				return &object.Float{Value: ot.Low}
+			case "close":
+				return &object.Float{Value: ot.Close}
+			case "volume":
+				return &object.Float{Value: ot.Volume}
+			default:
+				return newError("Candle has no property '%s'", n.Property.Value)
+			}
+		case *object.CandleSeries:
+			switch n.Property.Value {
+			case "opens":
+				return extractColumn(ot, func(c object.Candle) float64 { return c.Open })
+			case "highs":
+				return extractColumn(ot, func(c object.Candle) float64 { return c.High })
+			case "lows":
+				return extractColumn(ot, func(c object.Candle) float64 { return c.Low })
+			case "closes":
+				return extractColumn(ot, func(c object.Candle) float64 { return c.Close })
+			case "volumes":
+				return extractColumn(ot, func(c object.Candle) float64 { return c.Volume })
+			default:
+				return newError("CandleSeries has no property '%s'", n.Property.Value)
+			}
 		default:
 			return newError("type %s has no properties", obj.Type())
 		}
@@ -339,6 +369,14 @@ func evalBoolInfix(op string, left, right object.Object) object.Object {
 
 func newError(format string, args ...any) *object.Error {
 	return &object.Error{Message: fmt.Sprintf(format, args...)}
+}
+
+func extractColumn(cs *object.CandleSeries, pick func(object.Candle) float64) *object.Series {
+	out := make([]float64, len(cs.Value))
+	for i, c := range cs.Value {
+		out[i] = pick(c)
+	}
+	return &object.Series{Value: out}
 }
 
 func isTruthy(o object.Object) bool {

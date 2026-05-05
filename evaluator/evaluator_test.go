@@ -237,6 +237,77 @@ func TestNestedScopeAccess(t *testing.T) {
 	}
 }
 
+func TestCandleSeriesMemberAccess(t *testing.T) {
+	mk := func() *object.Environment {
+		env := object.NewEnvironment()
+		env.Set("candles", &object.CandleSeries{
+			Value: []object.Candle{
+				{Open: 1, High: 1.5, Low: 0.5, Close: 1.2, Volume: 100},
+				{Open: 2, High: 2.5, Low: 1.5, Close: 2.2, Volume: 200},
+				{Open: 3, High: 3.5, Low: 2.5, Close: 3.2, Volume: 300},
+			},
+		})
+		return env
+	}
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"candles.opens.length", "3"},
+		{"candles.highs.length", "3"},
+		{"candles.lows.length", "3"},
+		{"candles.closes.length", "3"},
+		{"candles.volumes.length", "3"},
+		{"candles.closes", "[3]"},
+		{"candles.bogus", "ERROR: CandleSeries has no property 'bogus'"},
+	}
+	for _, tt := range tests {
+		l := lexer.New(tt.input)
+		p := parser.New(l)
+		prog := p.ParseProgram()
+		if errs := p.Errors(); len(errs) > 0 {
+			t.Fatalf("parser errors for %q: %v", tt.input, errs)
+		}
+		got := evaluator.Eval(prog, mk())
+		if got.Inspect() != tt.expected {
+			t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
+		}
+	}
+}
+
+func TestCandleMemberAccess(t *testing.T) {
+	mk := func() *object.Environment {
+		env := object.NewEnvironment()
+		env.Set("c", &object.Candle{Open: 1, High: 1.5, Low: 0.5, Close: 1.2, Volume: 100})
+		return env
+	}
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"c.open", "1"},
+		{"c.high", "1.5"},
+		{"c.low", "0.5"},
+		{"c.close", "1.2"},
+		{"c.volume", "100"},
+		{"c.bogus", "ERROR: Candle has no property 'bogus'"},
+	}
+	for _, tt := range tests {
+		l := lexer.New(tt.input)
+		p := parser.New(l)
+		prog := p.ParseProgram()
+		if errs := p.Errors(); len(errs) > 0 {
+			t.Fatalf("parser errors for %q: %v", tt.input, errs)
+		}
+		got := evaluator.Eval(prog, mk())
+		if got.Inspect() != tt.expected {
+			t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
+		}
+	}
+}
+
 func TestErrorPropagatesThroughLet(t *testing.T) {
 	input := "let x = 5 + true; x"
 	got := testEval(t, input)

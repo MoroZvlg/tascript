@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/MoroZvlg/tascript/evaluator"
 	"github.com/MoroZvlg/tascript/lexer"
@@ -11,11 +12,21 @@ import (
 	"github.com/MoroZvlg/tascript/parser"
 )
 
-const Prompt = ">> "
+const (
+	Prompt             = ">> "
+	DefaultCandlesPath = "./data.csv"
+)
 
 func Start(in io.Reader, out io.Writer) {
 	scanner := bufio.NewScanner(in)
 	env := object.NewEnvironment()
+
+	if cs, err := loadCandlesCSV(DefaultCandlesPath); err == nil {
+		env.Set("candles", cs)
+		fmt.Fprintf(out, "loaded %d candles from %s\n", len(cs.Value), DefaultCandlesPath)
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(out, "candles load error: %s\n", err)
+	}
 
 	for {
 		fmt.Fprint(out, Prompt)

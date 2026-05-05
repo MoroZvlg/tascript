@@ -10,15 +10,17 @@ import (
 type ObjectType string
 
 const (
-	IntKind      ObjectType = "int"
-	FloatKind    ObjectType = "float"
-	StringKind   ObjectType = "string"
-	BooleanKind  ObjectType = "boolean"
-	NullKind     ObjectType = "null"
-	FunctionKind ObjectType = "function"
-	ReturnKind   ObjectType = "return"
-	SeriesKind   ObjectType = "series"
-	ErrorKind    ObjectType = "error"
+	IntKind          ObjectType = "int"
+	FloatKind        ObjectType = "float"
+	StringKind       ObjectType = "string"
+	BooleanKind      ObjectType = "boolean"
+	NullKind         ObjectType = "null"
+	FunctionKind     ObjectType = "function"
+	ReturnKind       ObjectType = "return"
+	SeriesKind       ObjectType = "series"
+	CandleKind       ObjectType = "candle"
+	CandleSeriesKind ObjectType = "CandleSeries"
+	ErrorKind        ObjectType = "error"
 )
 
 type Object interface {
@@ -105,3 +107,23 @@ func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
 func IsError(obj Object) bool {
 	return obj != nil && obj.Type() == ErrorKind
 }
+
+type Candle struct {
+	Open   float64
+	High   float64
+	Low    float64
+	Close  float64
+	Volume float64
+}
+
+func (c *Candle) Type() ObjectType { return CandleKind }
+func (c *Candle) Inspect() string {
+	return fmt.Sprintf("o=%g,h=%g,l=%g,c=%g,v=%g", c.Open, c.High, c.Low, c.Close, c.Volume)
+}
+
+type CandleSeries struct {
+	Value []Candle
+}
+
+func (c *CandleSeries) Type() ObjectType { return CandleSeriesKind }
+func (c *CandleSeries) Inspect() string  { return fmt.Sprintf("Candles[%d]", len(c.Value)) }

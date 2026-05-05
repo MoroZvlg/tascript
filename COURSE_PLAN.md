@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 4.1
+**Current Lesson:** 4.2
 **Last Session Date:** 2026-05-06
-**Notes:** Member access (`obj.prop`) shipped — DOT token, `MemberExpression` AST, infix at CALL precedence, evaluator dispatch on receiver type. `.length` exposed on `String` and `Series`. While in the evaluator, fixed three pre-existing gaps: `return` statements (now wrapped in `*object.Return`, bubbled through blocks, unwrapped at program + function-call boundaries); `&&` / `||` evaluation in `evalBoolInfix`; FunctionCall now propagates errors from the callee expression and reports `"not a function: <T>"` instead of swallowing real lookup failures. Module 3 fully complete.
+**Notes:** Candle input shipped (AoS shape). New object types `Candle` (five float fields) and `CandleSeries` (`Value []Candle`). Member access dispatch in evaluator: `Candle.open/.high/.low/.close/.volume` → `*Float`; `CandleSeries.opens/.highs/.lows/.closes/.volumes` → fresh `*Series` built by walking the slice (recompute every call, no caching). Column extraction collapsed via `extractColumn(cs, pick)` helper. CSV loader (`repl/loader.go`) reads strict header `open,high,low,close,volume`; REPL auto-seeds env binding `candles` from `./data.csv` if present, silent on missing, prints error but launches on malformed. Tests: `TestCandleSeriesMemberAccess` + `TestCandleMemberAccess`. Module 4 plan reworked: 4.3 now also covers adding `IndexExpression` (parser + evaluator) so indexing works on both `Series` and `CandleSeries`.
 
 ---
 
@@ -130,41 +130,53 @@ The evaluator walks the AST and actually executes the code.
 
 ## Module 4: Indicators & Signal Output (beyond the book)
 
-Make the language useful for computing indicators and emitting signals.
+Make the language useful for computing indicators and emitting signals from a candle stream.
 **Out of scope:** orders, positions, PnL, backtesting.
 
-- [ ] **4.1 — Candle Input**
+- [x] **4.1 — Candle Input (AoS)**
   - Thin host-side glue, NOT part of the DSL surface — will be replaced when the DSL gets
     a real way to ingest data. No tests for the loader itself; it's just plumbing.
-  - Add a `*object.Candles` value with five `*Series` fields exposed via member access
-    as `opens / highs / lows / closes / volumes`. Relies on 3.6.
+  - **Storage shape: array of structs.** A `Candle` is one bar with float fields
+    `open / high / low / close / volume`. A `CandleSeries` holds `[]Candle`.
+  - Member access surface (relies on 3.6):
+    - `candle.open / .high / .low / .close / .volume` → `*Float`
+    - `candleseries.opens / .highs / .lows / .closes / .volumes` → `*Series` built on
+      the fly by walking the slice. Recompute each call (no caching — premature).
   - CSV-only loader (header `open,high,low,close,volume`) lives next to the REPL.
   - REPL auto-loads `./data.csv` if present and seeds env binding `candles`. No flag.
-    Missing file = REPL still starts normally.
-  - Tests: only the evaluator side — `candles.closes` returns Series, unknown prop errors.
+    Missing file = REPL still starts normally; malformed file prints an error but launches.
+  - Tests (evaluator side only): `candles.closes` returns Series, `candles.closes.length`
+    chains through 3.6, single Candle scalar accessors, unknown-prop errors on both types.
 
 - [ ] **4.2 — Built-in Indicators via talive**
-  - Wire indicator builtins (`sma`, `ema`, `rsi`, …) to the `talive` library
-  - Task: Bind at least 3 talive indicators as callable builtins
-  - Rule: do NOT reimplement indicator math — always delegate to talive
+  - Add a builtin-function mechanism (new object kind, separate from user `Function`,
+    backed by a Go closure over `[]object.Object`).
+  - Wire `sma`, `ema`, `rsi` to the `talive` library — at least 3 indicators.
+  - Builtins consume `*Series` and return `*Series`. talive owns the math; we never
+    reimplement indicators.
 
-- [ ] **4.3 — Arrays and Series Indexing**
-  - Index expressions on series: `close[0]`, `close[-1]`
-  - Task: Evaluate series indexing and pass series into indicator builtins
+- [ ] **4.3 — Indexing**
+  - Add `IndexExpression` end to end: `[` `]` tokens already exist (1.1), needs a Pratt
+    entry (CALL-level precedence or higher), an AST node, and evaluator dispatch.
+  - Index into `*Series` → `*Float`. Index into `*CandleSeries` → `*Candle`.
+  - Decide indexing convention now: `[0]` = oldest or newest? Negative-index semantics
+    (`[-1]`)? Lock the choice in the lesson notes when shipped.
+  - Out-of-bounds → runtime error.
+  - Tests: positive/negative indices on both series types, oob errors, chained
+    `candles[-1].close`.
 
 - [ ] **4.4 — Signals & Output**
-  - A `signal(name, condition)` builtin (or `signal` block) that emits a named boolean/value per bar
-  - Task: Run the program over a candle stream and print emitted signals (name, timestamp, value)
-  - Example:
-    ```ts
-    const r = rsi(close, 14);
-    signal("rsi_oversold", r < 30);
-    signal("rsi_overbought", r > 70);
-    ```
+  - **Open design question to resolve in this lesson:** is the program evaluated **once**
+    (producing series-valued signals — requires broadcasting comparisons over a Series)
+    or **per-bar** in a host-driven loop (signals emit one row at a time)? Original
+    example `signal("rsi_oversold", r < 30)` where `r` is a Series implies broadcasting.
+  - A `signal(name, value)` builtin that emits a named per-bar value to an output sink.
+  - Output: timestamped CSV/JSON to stdout, format TBD.
+  - Task: run a candle stream through a script that emits two named signals.
 
 - [ ] **4.5 — Final Project**
-  - Write a signal-only program using several indicators
-  - Review: clean up code, add tests, reflect on the architecture
+  - Write a signal-only program using several indicators (e.g. RSI cross + SMA filter).
+  - Review: clean up, add tests, reflect on architecture decisions made in 4.1–4.4.
 
 ---
 
@@ -213,4 +225,5 @@ itself can enforce.
 | 9       | 2026-05-05 | 3.4             | Functions + closures. `object.Function{Params, Body, Env}`. Args eval'd in caller env, bound in fresh enclosed env (defn-env never mutated). Tests: identity, closure, closure isolation, recursion, non-fn call, arity. |
 | 10      | 2026-05-05 | 3.5             | REPL Part 2: persistent env, parser-error path, eval+print. `let`/`const` return bound value. Module 3 complete. |
 | 11      | 2026-05-06 | 3.6             | Member access: DOT token, `MemberExpression` AST, infix at CALL precedence, evaluator dispatch (`String.length`, `Series.length`). Pre-existing fixes: `return` statements via `*object.Return` wrapper; `&&`/`||` eval; FunctionCall error propagation + `not a function` message. |
+| 12      | 2026-05-06 | 4.1             | Candle input (AoS): `Candle` + `CandleSeries{Value []Candle}`, evaluator member access for scalar accessors and column extraction (via `extractColumn` helper, recompute each call). CSV loader + REPL auto-seed of `candles` from `./data.csv`. Module 4 plan reworked: 4.3 now also adds `IndexExpression`. |
 
