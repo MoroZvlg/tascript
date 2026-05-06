@@ -27,6 +27,7 @@ func Start(in io.Reader, out io.Writer) {
 	} else if !os.IsNotExist(err) {
 		fmt.Fprintf(out, "candles load error: %s\n", err)
 	}
+	evaluator.RegisterBuiltins(env)
 
 	for {
 		fmt.Fprint(out, Prompt)

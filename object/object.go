@@ -20,6 +20,7 @@ const (
 	SeriesKind       ObjectType = "series"
 	CandleKind       ObjectType = "candle"
 	CandleSeriesKind ObjectType = "CandleSeries"
+	BuiltinKind      ObjectType = "builtin"
 	ErrorKind        ObjectType = "error"
 )
 
@@ -127,3 +128,11 @@ type CandleSeries struct {
 
 func (c *CandleSeries) Type() ObjectType { return CandleSeriesKind }
 func (c *CandleSeries) Inspect() string  { return fmt.Sprintf("Candles[%d]", len(c.Value)) }
+
+type Builtin struct {
+	Name string
+	Fn   func(args []Object) Object
+}
+
+func (b *Builtin) Type() ObjectType { return BuiltinKind }
+func (b *Builtin) Inspect() string  { return b.Name }

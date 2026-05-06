@@ -103,28 +103,14 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		if object.IsError(fnObj) {
 			return fnObj
 		}
-		funcVal, ok := fnObj.(*object.Function)
-		if !ok {
+		switch funcValue := fnObj.(type) {
+		case *object.Function:
+			return evalFunc(n, funcValue, env)
+		case *object.Builtin:
+			return evalBuiltin(n, funcValue, env)
+		default:
 			return newError("not a function: %s", n.Function.String())
 		}
-
-		if len(n.Arguments) != len(funcVal.Parameters) {
-			return newError("argument(s) number mismatch. expected %d got %d", len(funcVal.Parameters), len(n.Arguments))
-		}
-		funcEnv := object.NewEnclosedEnvironment(funcVal.Env)
-		for i, arg := range n.Arguments {
-			argVal := Eval(arg, env)
-			if object.IsError(argVal) {
-				return argVal
-			}
-			funcEnv.Set(funcVal.Parameters[i].Value, argVal)
-		}
-		result := Eval(funcVal.Body, funcEnv)
-		if rv, ok := result.(*object.Return); ok {
-			return rv.Value
-		}
-		return result
-
 	case *ast.MemberExpression:
 		obj := Eval(n.Object, env)
 		if object.IsError(obj) {
@@ -193,6 +179,37 @@ func evalProgram(p *ast.Program, env *object.Environment) object.Object {
 		case *object.Return:
 			return rTyped.Value
 		}
+	}
+	return result
+}
+
+func evalBuiltin(funcCall *ast.FunctionCall, funcVal *object.Builtin, env *object.Environment) object.Object {
+	args := make([]object.Object, len(funcCall.Arguments))
+	for i, arg := range funcCall.Arguments {
+		argVal := Eval(arg, env)
+		if object.IsError(argVal) {
+			return argVal
+		}
+		args[i] = argVal
+	}
+	return funcVal.Fn(args)
+}
+
+func evalFunc(funcCall *ast.FunctionCall, funcVal *object.Function, env *object.Environment) object.Object {
+	if len(funcCall.Arguments) != len(funcVal.Parameters) {
+		return newError("argument(s) number mismatch. expected %d got %d", len(funcVal.Parameters), len(funcCall.Arguments))
+	}
+	funcEnv := object.NewEnclosedEnvironment(funcVal.Env)
+	for i, arg := range funcCall.Arguments {
+		argVal := Eval(arg, env)
+		if object.IsError(argVal) {
+			return argVal
+		}
+		funcEnv.Set(funcVal.Parameters[i].Value, argVal)
+	}
+	result := Eval(funcVal.Body, funcEnv)
+	if rv, ok := result.(*object.Return); ok {
+		return rv.Value
 	}
 	return result
 }
