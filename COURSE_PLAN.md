@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 4.3
+**Current Lesson:** 4.4
 **Last Session Date:** 2026-05-07
-**Notes:** Built-in indicators shipped via talive. New `*object.Builtin{Name, Fn}` value type; FunctionCall arm now does `Eval(n.Function, env)` once and type-switches over `*Function` / `*Builtin` / default ("not a function"). Builtins are first-class env values — `let f = sma; f(candles, 14)` works. Three lowercase builtins (`sma`, `ema`, `rsi`) registered through `evaluator.RegisterBuiltins(env)`, called from REPL. Each one is a one-liner over a shared `runIndicator(name, args, factory)` helper that does arity + type checks (`*CandleSeries`, `*Integer`), drives talive, returns a `*Series`. talive's `OHLCV` interface is satisfied via a private `ohlcvAdapter` inside `builtin.go` — `object.Candle` keeps its idiomatic long-name fields (Open/High/Low/Close/Volume) with no methods. Builtins take `*CandleSeries` (not `*Series` as 4.1 originally proposed) so future H/L/V indicators can reuse the same shape. Warmup-zero (talive returns 0.0 during warmup, indistinguishable from genuine zero downstream) accepted and deferred to 4.4. Tests: dispatcher mechanism (`TestBuiltinDispatch`), Function/Builtin interop (`TestBuiltinAndUserFunctionInterop`), end-to-end through real talive math (`TestIndicatorBuiltinsEndToEnd`, `TestSmaMathRoundTrip`). Manual REPL verified against a 30-bar `data.csv`.
+**Notes:** Indexing shipped end-to-end. Pratt entry: `LBRACKET` mapped to `parseIndexExpression`, new `INDEX` precedence tier between `PREFIX` and `CALL` (collapse-to-CALL noted as a stylistic option, kept separate for now). `parseIndex` broadened to parse a full expression (was INT-only); `ast.IndexExpression{Left, Index}` was already in place. Evaluator dispatches over `*Series` → `*Float` and `*CandleSeries` → `*Candle`. Indexing convention locked: 0-based, no negative indices (explicit error before bounds check), out-of-bounds = error. Two bugs surfaced via TDD evaluator tests and fixed: missing negative-index guard (caused Go panic on `closes[-1]`) and `%d` formatting against the `Object` wrapper instead of `indexInt.Value`. Tests: parser shape (`Test_ParseProgram_IndexExpression_*` — literal, identifier, expression, chained, on-call-result, missing-bracket, empty-brackets), parser precedence (added `a + b[0]`, `-a[0]`, `a[0][1]`, `f(x)[0]`, `a.b[0]`, `closes[i + 1] * 2` to `Test_ParseProgram_OperatorPrecedence`), evaluator happy paths (`TestIndexExpressionOnSeries`, `TestIndexExpressionOnCandleSeries`), evaluator errors (`TestIndexExpressionErrors` — oob positive, negative, non-integer index, non-indexable receiver, error-propagation through arg).
 
 ---
 
@@ -155,7 +155,7 @@ Make the language useful for computing indicators and emitting signals from a ca
   - Builtins consume `*Series` and return `*Series`. talive owns the math; we never
     reimplement indicators.
 
-- [ ] **4.3 — Indexing**
+- [x] **4.3 — Indexing**
   - Add `IndexExpression` end to end: `[` `]` tokens already exist (1.1), needs a Pratt
     entry (CALL-level precedence or higher), an AST node, and evaluator dispatch.
   - Index into `*Series` → `*Float`. Index into `*CandleSeries` → `*Candle`.
@@ -164,6 +164,8 @@ Make the language useful for computing indicators and emitting signals from a ca
   - Out-of-bounds → runtime error.
   - Tests: positive/negative indices on both series types, oob errors, chained
     `candles[-1].close`.
+  - **Locked:** 0-based (oldest = `[0]`), negative indices rejected with explicit error,
+    out-of-bounds = error.
 
 - [ ] **4.4 — Signals & Output**
   - **Open design question to resolve in this lesson:** is the program evaluated **once**
@@ -227,4 +229,5 @@ itself can enforce.
 | 11      | 2026-05-06 | 3.6             | Member access: DOT token, `MemberExpression` AST, infix at CALL precedence, evaluator dispatch (`String.length`, `Series.length`). Pre-existing fixes: `return` statements via `*object.Return` wrapper; `&&`/`||` eval; FunctionCall error propagation + `not a function` message. |
 | 12      | 2026-05-06 | 4.1             | Candle input (AoS): `Candle` + `CandleSeries{Value []Candle}`, evaluator member access for scalar accessors and column extraction (via `extractColumn` helper, recompute each call). CSV loader + REPL auto-seed of `candles` from `./data.csv`. Module 4 plan reworked: 4.3 now also adds `IndexExpression`. |
 | 13      | 2026-05-07 | 4.2             | Built-in indicators via talive. New `*object.Builtin` kind; FunctionCall arm type-switches `*Function`/`*Builtin`/else. Lowercase `sma`/`ema`/`rsi` share a `runIndicator(name, args, factory)` helper; talive `OHLCV` satisfied by a private `ohlcvAdapter` in `builtin.go` — `object.Candle` stays a plain struct with long field names. Builtins take `*CandleSeries` + `*Integer` → `*Series`. `RegisterBuiltins(env)` lives in evaluator package, called from REPL. Tests cover dispatch mechanism + real talive math. |
+| 14      | 2026-05-07 | 4.3             | Indexing end-to-end. `LBRACKET` Pratt entry → `parseIndexExpression`; new `INDEX` precedence between `PREFIX` and `CALL`; `parseIndex` broadened to a full expression. Evaluator dispatch: `*Series` → `*Float`, `*CandleSeries` → `*Candle`. Convention locked: 0-based, no negatives (explicit error), out-of-bounds = error. TDD-driven: parser tests written first (shape + precedence-string), then evaluator tests surfaced two bugs (Go panic on negative index, `%d` against `Object` wrapper) that user fixed. |
 

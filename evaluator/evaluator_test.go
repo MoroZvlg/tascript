@@ -459,6 +459,132 @@ func TestSmaMathRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIndexExpressionOnSeries(t *testing.T) {
+	mk := func() *object.Environment {
+		env := object.NewEnvironment()
+		env.Set("closes", &object.Series{Value: []float64{10, 20, 30}})
+		env.Set("i", &object.Integer{Value: 1})
+		return env
+	}
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"closes[0]", "10"},
+		{"closes[1]", "20"},
+		{"closes[2]", "30"},
+		{"closes[i]", "20"},
+		{"closes[i + 1]", "30"},
+		{"closes[0] + closes[2]", "40"},
+		{"-closes[0]", "-10"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.ParseProgram()
+			if errs := p.Errors(); len(errs) > 0 {
+				t.Fatalf("parser errors: %v", errs)
+			}
+			got := evaluator.Eval(prog, mk())
+			if got.Inspect() != tt.expected {
+				t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
+			}
+		})
+	}
+}
+
+func TestIndexExpressionOnCandleSeries(t *testing.T) {
+	mk := func() *object.Environment {
+		env := object.NewEnvironment()
+		env.Set("candles", &object.CandleSeries{
+			Value: []object.Candle{
+				{Open: 1, High: 1.5, Low: 0.5, Close: 1.2, Volume: 100},
+				{Open: 2, High: 2.5, Low: 1.5, Close: 2.2, Volume: 200},
+				{Open: 3, High: 3.5, Low: 2.5, Close: 3.2, Volume: 300},
+			},
+		})
+		return env
+	}
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"candles[0].open", "1"},
+		{"candles[1].close", "2.2"},
+		{"candles[2].volume", "300"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.ParseProgram()
+			if errs := p.Errors(); len(errs) > 0 {
+				t.Fatalf("parser errors: %v", errs)
+			}
+			got := evaluator.Eval(prog, mk())
+			if got.Inspect() != tt.expected {
+				t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
+			}
+		})
+	}
+}
+
+func TestIndexExpressionErrors(t *testing.T) {
+	mk := func() *object.Environment {
+		env := object.NewEnvironment()
+		env.Set("closes", &object.Series{Value: []float64{10, 20, 30}})
+		env.Set("candles", &object.CandleSeries{
+			Value: []object.Candle{
+				{Open: 1, High: 1.5, Low: 0.5, Close: 1.2, Volume: 100},
+			},
+		})
+		return env
+	}
+
+	tests := []struct {
+		input       string
+		wantErrPart string
+	}{
+		{"closes[3]", "out of range"},
+		{"closes[100]", "out of range"},
+		{"closes[-1]", "index should be a positive integer, got -1"},
+		{"candles[5]", "out of range"},
+		{`closes["foo"]`, "integer"},
+		{"let x = 5; x[0]", "indexable"},
+		{"closes[5 + true]", "type mismatch"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.ParseProgram()
+			if errs := p.Errors(); len(errs) > 0 {
+				t.Fatalf("parser errors: %v", errs)
+			}
+			got := evaluator.Eval(prog, mk())
+			errObj, ok := got.(*object.Error)
+			if !ok {
+				t.Fatalf("input %q: expected *object.Error, got %T (%s)", tt.input, got, got.Inspect())
+			}
+			if !contains(errObj.Message, tt.wantErrPart) {
+				t.Errorf("input %q: expected error containing %q, got %q", tt.input, tt.wantErrPart, errObj.Message)
+			}
+		})
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuiltinAndUserFunctionInterop(t *testing.T) {
 	env := object.NewEnvironment()
 	env.Set("triple", &object.Builtin{

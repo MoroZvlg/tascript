@@ -242,6 +242,13 @@ func Test_ParseProgram_OperatorPrecedence(t *testing.T) {
 		{"f().x", "f().x"},
 		{"a + b.c", "(a + b.c)"},
 		{"a.b(1)", "a.b(1)"},
+		{"a + b[0]", "(a + b[0])"},
+		{"b[0] + a", "(b[0] + a)"},
+		{"-a[0]", "(-a[0])"},
+		{"a[0][1]", "a[0][1]"},
+		{"f(x)[0]", "f(x)[0]"},
+		{"a.b[0]", "a.b[0]"},
+		{"closes[i + 1] * 2", "(closes[(i + 1)] * 2)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -462,6 +469,149 @@ func Test_ParseProgram_MemberExpression_MissingIdent(t *testing.T) {
 	p := parser.New(l)
 	_ = p.ParseProgram()
 
+	if len(p.Errors()) == 0 {
+		t.Fatalf("expected at least one parser error, got 0")
+	}
+}
+
+func Test_ParseProgram_IndexExpression_Literal(t *testing.T) {
+	input := `closes[0]`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	if len(prog.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(prog.Statements))
+	}
+	exprStmt, ok := prog.Statements[0].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+	}
+	idx, ok := exprStmt.Expression.(*ast.IndexExpression)
+	if !ok {
+		t.Fatalf("expected IndexExpression, got %T", exprStmt.Expression)
+	}
+	assertLiteral(t, idx.Left, "closes")
+	assertLiteral(t, idx.Index, int64(0))
+}
+
+func Test_ParseProgram_IndexExpression_IdentifierIndex(t *testing.T) {
+	input := `closes[i]`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	exprStmt, ok := prog.Statements[0].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+	}
+	idx, ok := exprStmt.Expression.(*ast.IndexExpression)
+	if !ok {
+		t.Fatalf("expected IndexExpression, got %T", exprStmt.Expression)
+	}
+	assertLiteral(t, idx.Left, "closes")
+	assertLiteral(t, idx.Index, "i")
+}
+
+func Test_ParseProgram_IndexExpression_ExpressionIndex(t *testing.T) {
+	input := `closes[i + 1]`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	exprStmt, ok := prog.Statements[0].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+	}
+	idx, ok := exprStmt.Expression.(*ast.IndexExpression)
+	if !ok {
+		t.Fatalf("expected IndexExpression, got %T", exprStmt.Expression)
+	}
+	assertLiteral(t, idx.Left, "closes")
+
+	inf, ok := idx.Index.(*ast.InfixExpression)
+	if !ok {
+		t.Fatalf("expected InfixExpression as Index, got %T", idx.Index)
+	}
+	if inf.Operator != "+" {
+		t.Errorf("expected operator %q, got %q", "+", inf.Operator)
+	}
+	assertLiteral(t, inf.Left, "i")
+	assertLiteral(t, inf.Right, int64(1))
+}
+
+func Test_ParseProgram_IndexExpression_Chained(t *testing.T) {
+	input := `m[0][1]`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	exprStmt, ok := prog.Statements[0].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+	}
+	outer, ok := exprStmt.Expression.(*ast.IndexExpression)
+	if !ok {
+		t.Fatalf("expected outer IndexExpression, got %T", exprStmt.Expression)
+	}
+	assertLiteral(t, outer.Index, int64(1))
+
+	inner, ok := outer.Left.(*ast.IndexExpression)
+	if !ok {
+		t.Fatalf("expected inner IndexExpression, got %T", outer.Left)
+	}
+	assertLiteral(t, inner.Left, "m")
+	assertLiteral(t, inner.Index, int64(0))
+}
+
+func Test_ParseProgram_IndexExpression_OnCallResult(t *testing.T) {
+	input := `sma(candles, 14)[0]`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	exprStmt, ok := prog.Statements[0].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("expected ExpressionStatement, got %T", prog.Statements[0])
+	}
+	idx, ok := exprStmt.Expression.(*ast.IndexExpression)
+	if !ok {
+		t.Fatalf("expected IndexExpression, got %T", exprStmt.Expression)
+	}
+	assertLiteral(t, idx.Index, int64(0))
+
+	call, ok := idx.Left.(*ast.FunctionCall)
+	if !ok {
+		t.Fatalf("expected FunctionCall as Left, got %T", idx.Left)
+	}
+	if call.Function.String() != "sma" {
+		t.Errorf("expected function %q, got %q", "sma", call.Function.String())
+	}
+	if len(call.Arguments) != 2 {
+		t.Errorf("expected 2 arguments, got %d", len(call.Arguments))
+	}
+}
+
+func Test_ParseProgram_IndexExpression_MissingBracket(t *testing.T) {
+	input := `closes[0;`
+	l := lexer.New(input)
+	p := parser.New(l)
+	_ = p.ParseProgram()
+	if len(p.Errors()) == 0 {
+		t.Fatalf("expected at least one parser error, got 0")
+	}
+}
+
+func Test_ParseProgram_IndexExpression_EmptyBrackets(t *testing.T) {
+	input := `closes[]`
+	l := lexer.New(input)
+	p := parser.New(l)
+	_ = p.ParseProgram()
 	if len(p.Errors()) == 0 {
 		t.Fatalf("expected at least one parser error, got 0")
 	}

@@ -49,6 +49,7 @@ func New(l *lexer.Lexer) *Parser {
 		token.AND:      p.parseInfixExpression,
 		token.OR:       p.parseInfixExpression,
 		token.LPAREN:   p.parseCallExpression,
+		token.LBRACKET: p.parseIndexExpression,
 		token.DOT:      p.parseMemberExpression,
 	}
 	return p
@@ -316,6 +317,19 @@ func (p *Parser) parseCallArguments() []ast.Expression {
 func (p *Parser) parseCallExpression(fn ast.Expression) ast.Expression {
 	expr := &ast.FunctionCall{Token: p.currentToken, Function: fn}
 	expr.Arguments = p.parseCallArguments()
+	return expr
+}
+
+func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
+	expr := &ast.IndexExpression{Token: p.currentToken, Left: left}
+	p.nextToken()
+	expr.Index = p.parseExpression(LOWEST)
+	if expr.Index == nil {
+		return nil
+	}
+	if !p.expectPeek(token.RBRACKET) {
+		return nil
+	}
 	return expr
 }
 

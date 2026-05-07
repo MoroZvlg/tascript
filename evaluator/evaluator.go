@@ -111,6 +111,39 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		default:
 			return newError("not a function: %s", n.Function.String())
 		}
+
+	case *ast.IndexExpression:
+		leftVal := Eval(n.Left, env)
+		if object.IsError(leftVal) {
+			return leftVal
+		}
+		index := Eval(n.Index, env)
+		if object.IsError(index) {
+			return index
+		}
+		indexInt, ok := index.(*object.Integer)
+		if !ok {
+			return newError("index should be an integer, got %s", n.Index.TokenLiteral())
+		}
+		if indexInt.Value < 0 {
+			return newError("index should be a positive integer, got %d", indexInt.Value)
+		}
+
+		switch leftObject := leftVal.(type) {
+		case *object.Series:
+			if int(indexInt.Value) > len(leftObject.Value)-1 {
+				return newError("index out of range: %d", indexInt.Value)
+			}
+			return &object.Float{Value: leftObject.Value[indexInt.Value]}
+		case *object.CandleSeries:
+			if int(indexInt.Value) > len(leftObject.Value)-1 {
+				return newError("index out of range: %d", indexInt.Value)
+			}
+			return &leftObject.Value[indexInt.Value]
+		default:
+			return newError("not an indexable object: %s", n.Left.String())
+		}
+
 	case *ast.MemberExpression:
 		obj := Eval(n.Object, env)
 		if object.IsError(obj) {
