@@ -12,7 +12,7 @@ import (
 
 var candleHeader = []string{"open", "high", "low", "close", "volume"}
 
-func loadCandlesCSV(path string) (*object.CandleSeries, error) {
+func LoadCandlesCSV(path string) (*object.CandleSeries, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

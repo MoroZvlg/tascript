@@ -134,12 +134,14 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 			if int(indexInt.Value) > len(leftObject.Value)-1 {
 				return newError("index out of range: %d", indexInt.Value)
 			}
-			return &object.Float{Value: leftObject.Value[indexInt.Value]}
+			pos := len(leftObject.Value) - int(indexInt.Value) - 1
+			return &object.Float{Value: leftObject.Value[pos]}
 		case *object.CandleSeries:
 			if int(indexInt.Value) > len(leftObject.Value)-1 {
 				return newError("index out of range: %d", indexInt.Value)
 			}
-			return &leftObject.Value[indexInt.Value]
+			pos := len(leftObject.Value) - int(indexInt.Value) - 1
+			return &leftObject.Value[pos]
 		default:
 			return newError("not an indexable object: %s", n.Left.String())
 		}

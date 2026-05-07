@@ -617,6 +617,84 @@ func Test_ParseProgram_IndexExpression_EmptyBrackets(t *testing.T) {
 	}
 }
 
+func Test_ParseProgram_MultiLineLetChain(t *testing.T) {
+	input := `let r = rsi(candles, 14);
+let s14 = sma(candles, 14);
+let s7 = sma(candles, 7);`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	if len(prog.Statements) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Statements))
+	}
+	for i, stmt := range prog.Statements {
+		if _, ok := stmt.(*ast.LetStatement); !ok {
+			t.Errorf("stmt[%d]: expected LetStatement, got %T", i, stmt)
+		}
+	}
+}
+
+func Test_ParseProgram_MultiLineLetWithIndexAndMember(t *testing.T) {
+	input := `let close_now = candles[0].close;
+let close_prev = candles[1].close;
+let rsi_now = r[0];`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	if len(prog.Statements) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Statements))
+	}
+}
+
+func Test_ParseProgram_SequentialBareIfs(t *testing.T) {
+	input := `if (a > b) { signal("up") }
+if (a > c) { signal("above") }
+if (a < d) { signal("below") }`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	assertNoErrors(t, p)
+
+	if len(prog.Statements) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Statements))
+	}
+	for i, stmt := range prog.Statements {
+		es, ok := stmt.(*ast.ExpressionStatement)
+		if !ok {
+			t.Fatalf("stmt[%d]: expected ExpressionStatement, got %T", i, stmt)
+		}
+		if _, ok := es.Expression.(*ast.IfExpression); !ok {
+			t.Errorf("stmt[%d]: expected IfExpression, got %T", i, es.Expression)
+		}
+	}
+}
+
+func Test_ParseProgram_DemoScript(t *testing.T) {
+	input := `let r = rsi(candles, 14);
+let s14 = sma(candles, 14);
+let s7 = sma(candles, 7);
+
+let close_now = candles[0].close;
+let close_prev = candles[1].close;
+let rsi_now = r[0];
+let sma14_now = s14[0];
+let sma7_now = s7[0];
+
+if (close_now > close_prev) { signal("up_bar") }
+if (close_now > sma14_now) { signal("above_sma14") }
+if (sma7_now > sma14_now) { signal("sma7_over_sma14") }
+if (rsi_now > 70) { signal("rsi_overbought") }
+if (rsi_now < 30) { signal("rsi_oversold") }`
+	l := lexer.New(input)
+	p := parser.New(l)
+	_ = p.ParseProgram()
+	assertNoErrors(t, p)
+}
+
 func Test_ParseProgram_StringLiteral(t *testing.T) {
 	tests := []struct {
 		input    string

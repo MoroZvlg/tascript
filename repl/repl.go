@@ -21,7 +21,7 @@ func Start(in io.Reader, out io.Writer) {
 	scanner := bufio.NewScanner(in)
 	env := object.NewEnvironment()
 
-	if cs, err := loadCandlesCSV(DefaultCandlesPath); err == nil {
+	if cs, err := LoadCandlesCSV(DefaultCandlesPath); err == nil {
 		env.Set("candles", cs)
 		fmt.Fprintf(out, "loaded %d candles from %s\n", len(cs.Value), DefaultCandlesPath)
 	} else if !os.IsNotExist(err) {

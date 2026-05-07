@@ -102,3 +102,28 @@ foo.bar`
 		}
 	}
 }
+
+func TestLexer_IdentifierWithDigits(t *testing.T) {
+	input := `s14 sma7_now r2d2 14foo`
+	expected := []struct {
+		typ token.TokenType
+		lit string
+	}{
+		{token.IDENT, "s14"},
+		{token.IDENT, "sma7_now"},
+		{token.IDENT, "r2d2"},
+		{token.INT, "14"},
+		{token.IDENT, "foo"},
+		{token.EOF, ""},
+	}
+	lex := lexer.New(input)
+	for i, want := range expected {
+		tok := lex.NextToken()
+		if tok.Type != want.typ {
+			t.Errorf("(%d) expected type %v, got %v (literal %q)", i, want.typ, tok.Type, tok.Literal)
+		}
+		if tok.Literal != want.lit {
+			t.Errorf("(%d) expected literal %q, got %q", i, want.lit, tok.Literal)
+		}
+	}
+}

@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 4.4
-**Last Session Date:** 2026-05-07
-**Notes:** Indexing shipped end-to-end. Pratt entry: `LBRACKET` mapped to `parseIndexExpression`, new `INDEX` precedence tier between `PREFIX` and `CALL` (collapse-to-CALL noted as a stylistic option, kept separate for now). `parseIndex` broadened to parse a full expression (was INT-only); `ast.IndexExpression{Left, Index}` was already in place. Evaluator dispatches over `*Series` → `*Float` and `*CandleSeries` → `*Candle`. Indexing convention locked: 0-based, no negative indices (explicit error before bounds check), out-of-bounds = error. Two bugs surfaced via TDD evaluator tests and fixed: missing negative-index guard (caused Go panic on `closes[-1]`) and `%d` formatting against the `Object` wrapper instead of `indexInt.Value`. Tests: parser shape (`Test_ParseProgram_IndexExpression_*` — literal, identifier, expression, chained, on-call-result, missing-bracket, empty-brackets), parser precedence (added `a + b[0]`, `-a[0]`, `a[0][1]`, `f(x)[0]`, `a.b[0]`, `closes[i + 1] * 2` to `Test_ParseProgram_OperatorPrecedence`), evaluator happy paths (`TestIndexExpressionOnSeries`, `TestIndexExpressionOnCandleSeries`), evaluator errors (`TestIndexExpressionErrors` — oob positive, negative, non-integer index, non-indexable receiver, error-propagation through arg).
+**Current Lesson:** Module 4 complete
+**Last Session Date:** 2026-05-08
+**Notes:** Final project shipped. `main.go` now branches: with a script path arg it loads `data.csv`, registers builtins, parses, evals once; without args it drops into the REPL. `repl.LoadCandlesCSV` exported so the runner can reuse it. Demo at `examples/demo.tas` exercises the full surface — `rsi`/`sma`/`ema` builtins, indexing, member access, multiple bare-`if` signal emissions. On the 30-bar `data.csv` the demo fires four signals (`up_bar`, `above_sma14`, `sma7_over_sma14`, `rsi_overbought`) and correctly skips `rsi_oversold` on the rising trend. One real lexer bug surfaced via the demo and was caught by failing parser tests (`Test_ParseProgram_MultiLineLetChain`, `Test_ParseProgram_DemoScript`): `readIdentifier` only allowed letters, so `s14` lexed as IDENT(`s`)+INT(`14`). User fixed by adding digit support to identifier-continuation. Regression test added (`TestLexer_IdentifierWithDigits`) — verifies digits-after-letter work but a leading-digit token still parses as INT first.
 
 ---
 
@@ -167,18 +167,26 @@ Make the language useful for computing indicators and emitting signals from a ca
   - **Locked:** 0-based (oldest = `[0]`), negative indices rejected with explicit error,
     out-of-bounds = error.
 
-- [ ] **4.4 — Signals & Output**
-  - **Open design question to resolve in this lesson:** is the program evaluated **once**
-    (producing series-valued signals — requires broadcasting comparisons over a Series)
-    or **per-bar** in a host-driven loop (signals emit one row at a time)? Original
-    example `signal("rsi_oversold", r < 30)` where `r` is a Series implies broadcasting.
-  - A `signal(name, value)` builtin that emits a named per-bar value to an output sink.
-  - Output: timestamped CSV/JSON to stdout, format TBD.
-  - Task: run a candle stream through a script that emits two named signals.
+- [x] **4.4 — Signals & Output**
+  - **Resolved:** per-bar host loop wins over broadcasting. Language stays scalar; no
+    broadcasting infix, no `bar` keyword. The host re-evaluates the program each tick
+    with `candles` regrown. Newest-first indexing (`[0]` = latest bar) makes scripts
+    read naturally without any DSL-level loop construct.
+  - `signal(text)` is a one-arg builtin: writes `received signal: %s\n` to
+    `evaluator.SignalOutput` (default stdout, redirectable for tests), returns NULL.
+    Per user: real signal interface will be different in production; this is just
+    enough for the lesson.
+  - Per-bar host driver is OUT OF SCOPE — user explicitly deferred ("real execution
+    environment will be different"). Indexing reversal is the one architectural change
+    that actually persists.
 
-- [ ] **4.5 — Final Project**
+- [x] **4.5 — Final Project**
   - Write a signal-only program using several indicators (e.g. RSI cross + SMA filter).
   - Review: clean up, add tests, reflect on architecture decisions made in 4.1–4.4.
+  - **Shipped:** `examples/demo.tas` runs end-to-end via `tascript examples/demo.tas`,
+    using `rsi`/`sma`, indexing, member access, and 5 signal emissions. 4 of 5 fire on
+    the bundled `data.csv`. Lexer regression fix (digits in identifiers) caught by
+    failing parser tests — added `TestLexer_IdentifierWithDigits` regression test.
 
 ---
 
@@ -230,4 +238,6 @@ itself can enforce.
 | 12      | 2026-05-06 | 4.1             | Candle input (AoS): `Candle` + `CandleSeries{Value []Candle}`, evaluator member access for scalar accessors and column extraction (via `extractColumn` helper, recompute each call). CSV loader + REPL auto-seed of `candles` from `./data.csv`. Module 4 plan reworked: 4.3 now also adds `IndexExpression`. |
 | 13      | 2026-05-07 | 4.2             | Built-in indicators via talive. New `*object.Builtin` kind; FunctionCall arm type-switches `*Function`/`*Builtin`/else. Lowercase `sma`/`ema`/`rsi` share a `runIndicator(name, args, factory)` helper; talive `OHLCV` satisfied by a private `ohlcvAdapter` in `builtin.go` — `object.Candle` stays a plain struct with long field names. Builtins take `*CandleSeries` + `*Integer` → `*Series`. `RegisterBuiltins(env)` lives in evaluator package, called from REPL. Tests cover dispatch mechanism + real talive math. |
 | 14      | 2026-05-07 | 4.3             | Indexing end-to-end. `LBRACKET` Pratt entry → `parseIndexExpression`; new `INDEX` precedence between `PREFIX` and `CALL`; `parseIndex` broadened to a full expression. Evaluator dispatch: `*Series` → `*Float`, `*CandleSeries` → `*Candle`. Convention locked: 0-based, no negatives (explicit error), out-of-bounds = error. TDD-driven: parser tests written first (shape + precedence-string), then evaluator tests surfaced two bugs (Go panic on negative index, `%d` against `Object` wrapper) that user fixed. |
+| 15      | 2026-05-07 | 4.4             | Signals + indexing reversal. Newest-first lookup: `Value[len-i-1]` in evaluator (4.3 tests flipped). `signal(text)` builtin writes `received signal: %s\n` to swappable `SignalOutput` writer, returns NULL. Per-bar host loop deferred — user said real runtime will be different. Scalar-only DSL confirmed: no broadcasting, no bar keyword. Module 4 wraps with one lesson left (4.5 final project). |
+| 16      | 2026-05-08 | 4.5             | Final project. Script-runner mode in `main.go` (one-shot: load candles, register builtins, eval script). `repl.LoadCandlesCSV` exported. `examples/demo.tas` fires 4/5 signals on 30-bar `data.csv`. Lexer bug found via demo: digits in identifiers (`s14`) weren't allowed; fix in `readIdentifier`, regression test added. Module 4 complete. |
 

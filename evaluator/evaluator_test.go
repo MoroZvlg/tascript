@@ -1,6 +1,7 @@
 package evaluator_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/MoroZvlg/tascript/evaluator"
@@ -471,13 +472,13 @@ func TestIndexExpressionOnSeries(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"closes[0]", "10"},
+		{"closes[0]", "30"},
 		{"closes[1]", "20"},
-		{"closes[2]", "30"},
+		{"closes[2]", "10"},
 		{"closes[i]", "20"},
-		{"closes[i + 1]", "30"},
+		{"closes[i + 1]", "10"},
 		{"closes[0] + closes[2]", "40"},
-		{"-closes[0]", "-10"},
+		{"-closes[0]", "-30"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -512,9 +513,9 @@ func TestIndexExpressionOnCandleSeries(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"candles[0].open", "1"},
+		{"candles[0].open", "3"},
 		{"candles[1].close", "2.2"},
-		{"candles[2].volume", "300"},
+		{"candles[2].volume", "100"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -583,6 +584,67 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestSignalBuiltin(t *testing.T) {
+	var buf bytes.Buffer
+	prev := evaluator.SignalOutput
+	evaluator.SignalOutput = &buf
+	defer func() { evaluator.SignalOutput = prev }()
+
+	env := object.NewEnvironment()
+	evaluator.RegisterBuiltins(env)
+
+	input := `signal("buy")`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	got := evaluator.Eval(prog, env)
+	if got.Type() != object.NullKind {
+		t.Errorf("expected NULL return, got %s (%s)", got.Type(), got.Inspect())
+	}
+	if buf.String() != "received signal: buy\n" {
+		t.Errorf("expected log %q, got %q", "received signal: buy\n", buf.String())
+	}
+}
+
+func TestSignalBuiltinErrors(t *testing.T) {
+	var buf bytes.Buffer
+	prev := evaluator.SignalOutput
+	evaluator.SignalOutput = &buf
+	defer func() { evaluator.SignalOutput = prev }()
+
+	tests := []struct {
+		input       string
+		wantErrPart string
+	}{
+		{`signal()`, "wrong number of arguments"},
+		{`signal("a", "b")`, "wrong number of arguments"},
+		{`signal(5)`, "must be String"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			env := object.NewEnvironment()
+			evaluator.RegisterBuiltins(env)
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.ParseProgram()
+			if errs := p.Errors(); len(errs) > 0 {
+				t.Fatalf("parser errors: %v", errs)
+			}
+			got := evaluator.Eval(prog, env)
+			errObj, ok := got.(*object.Error)
+			if !ok {
+				t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
+			}
+			if !contains(errObj.Message, tt.wantErrPart) {
+				t.Errorf("expected error containing %q, got %q", tt.wantErrPart, errObj.Message)
+			}
+		})
+	}
 }
 
 func TestBuiltinAndUserFunctionInterop(t *testing.T) {

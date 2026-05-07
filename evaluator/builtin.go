@@ -1,11 +1,16 @@
 package evaluator
 
 import (
+	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/MoroZvlg/talive"
 	"github.com/MoroZvlg/tascript/object"
 )
+
+var SignalOutput io.Writer = os.Stdout
 
 type ohlcvAdapter struct{ c *object.Candle }
 
@@ -52,8 +57,21 @@ func RsiBuiltin(args []object.Object) object.Object {
 	return runIndicator("rsi", args, func(p int) (talive.Indicator, error) { return talive.NewRSI(p) })
 }
 
+func SignalBuiltin(args []object.Object) object.Object {
+	if len(args) != 1 {
+		return newError("signal: wrong number of arguments. got=%d, want=1", len(args))
+	}
+	name, ok := args[0].(*object.String)
+	if !ok {
+		return newError("signal: argument must be String, got %s", args[0].Type())
+	}
+	fmt.Fprintf(SignalOutput, "received signal: %s\n", name.Value)
+	return NULL
+}
+
 func RegisterBuiltins(env *object.Environment) {
 	env.Set("sma", &object.Builtin{Name: "sma", Fn: SmaBuiltin})
 	env.Set("ema", &object.Builtin{Name: "ema", Fn: EmaBuiltin})
 	env.Set("rsi", &object.Builtin{Name: "rsi", Fn: RsiBuiltin})
+	env.Set("signal", &object.Builtin{Name: "signal", Fn: SignalBuiltin})
 }

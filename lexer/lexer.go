@@ -148,7 +148,7 @@ func (l *Lexer) skipWhitespaces() {
 
 func (l *Lexer) readIdentifier() string {
 	startPos := l.position
-	for isLetter(l.char) {
+	for isLetter(l.char) || isDigit(l.char) {
 		l.readChar()
 	}
 	return l.input[startPos:l.position]
