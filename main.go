@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/user"
@@ -52,7 +53,7 @@ func runScript(path string) {
 		}
 		os.Exit(1)
 	}
-	result := evaluator.Eval(prog, env)
+	result := evaluator.Eval(context.Background(), prog, env)
 	if object.IsError(result) {
 		fmt.Fprintln(os.Stderr, result.Inspect())
 		os.Exit(1)

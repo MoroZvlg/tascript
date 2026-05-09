@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 5.2 complete
+**Current Lesson:** 5.3 complete
 **Last Session Date:** 2026-05-10
-**Notes:** Op budget. Package-level `const opLimit = 10_000` and `var currentOpCount` in evaluator. Increment + check at the top of `Eval` for non-Program nodes; `*ast.Program` is special-cased to reset the counter and skip the check (always the entry node). Comment flags non-reentrancy. One real bug surfaced: first attempt put the reset inside the `case *ast.Program` arm of the switch, but the increment+check ran first and tripped the leftover counter from the previous run, so the reset was unreachable. Caught by a fresh test (`TestOperationsCounterResetsBetweenPrograms`) that runs a tiny script after the runaway test — fails with "exceeded" until reset is moved before the increment. User picked Option B (early-return for Program). Cleanup: split const/var, `++` over `+= 1`, comment rewritten to explain the non-reentrancy constraint.
+**Notes:** Wall-clock deadline via `context.Context`. `Eval` signature gained `ctx context.Context` as the first parameter; threaded through every recursion site (`evalProgram`, `evalBuiltin`, `evalFunc`, `evalBlock`, all infix/prefix/let/if/index/member/call sites). `ctx.Err() != nil` check sits right after the op-budget check at the top of `Eval`. All 14 call sites updated to pass `context.Background()` — main.go, repl/repl.go, and 12 spots in evaluator_test.go. New test `TestEvalRespectsContextDeadline` builds an already-expired context and confirms a `"deadline"` error fires. Order note: op-budget is checked before deadline — if you want "stop *now*" semantics on deadline, swap the order.
 
 ---
 
@@ -222,9 +222,15 @@ itself can enforce.
   - Non-reentrant by design — comment in `evaluator.go` notes that two scripts
     cannot run concurrently in one process. Acceptable for the teaching scope.
 
-- [ ] **5.3 — Wall-Clock Deadline**
-  - Thread `context.Context` through `Eval`. On `ctx.Err()`, halt with a deadline error.
-  - Compose with the op budget — whichever trips first wins.
+- [x] **5.3 — Wall-Clock Deadline**
+  - `Eval` signature: `Eval(ctx context.Context, node ast.Node, env *object.Environment)`.
+    No shim — direct change, every call site updated. `ctx` threaded into all helpers
+    that recurse (`evalProgram`/`evalBuiltin`/`evalFunc`/`evalBlock`).
+  - Check is `ctx.Err() != nil` near the top of `Eval`, right after the op-budget check.
+    Returns `newError("deadline exceeded")`. Op-budget wins when both would trigger
+    on the same call; flagged for future flip if "stop now" deadline semantics are wanted.
+  - Builtins do NOT yet observe `ctx` — talive math is CPU-bound and won't be cancelled
+    mid-flight. Documented as a future concern (e.g. when network-touching builtins land).
 
 - [ ] **5.4 — (Stretch) Static Validation Pass**
   - Pre-eval AST walk that rejects disallowed constructs (e.g. unbounded loops once
@@ -258,4 +264,5 @@ itself can enforce.
 | 16      | 2026-05-08 | 4.5             | Final project. Script-runner mode in `main.go` (one-shot: load candles, register builtins, eval script). `repl.LoadCandlesCSV` exported. `examples/demo.tas` fires 4/5 signals on 30-bar `data.csv`. Lexer bug found via demo: digits in identifiers (`s14`) weren't allowed; fix in `readIdentifier`, regression test added. Module 4 complete. |
 | 17      | 2026-05-09 | 5.1             | Sandbox lesson 1: string + series size caps. Global hardcoded `object.DefaultLimits` (1024/1024); `Environment.Limits()` returns it directly. Three enforcement points (string literal, string concat, builtin input). `extractColumn` skipped intentionally. Builtin signature gained `env`. New `withLimits` test helper + 6 enforcement tests. Three pre-existing tests updated for new builtin signature. |
 | 18      | 2026-05-10 | 5.2             | Op budget. `const opLimit = 10_000` + `var currentOpCount` in evaluator. Increment+check at top of `Eval`; `*ast.Program` early-returns with a counter reset (Option B). One ordering bug found: initial attempt put the reset inside the switch arm — unreachable because the increment+check above it tripped on the leftover counter. Caught by a sequential reset test. Cleanup pass: const/var split, `++` form, comment rewritten to flag non-reentrancy as the actual constraint. |
+| 19      | 2026-05-10 | 5.3             | Wall-clock deadline via `context.Context`. `Eval` gained `ctx` as first arg, threaded through every recursion site. `ctx.Err()` check after op-budget check. All 14 call sites updated (main.go, repl.go, 12 in tests) to pass `context.Background()`. `TestEvalRespectsContextDeadline` confirms an already-expired context trips a `"deadline"` error. |
 

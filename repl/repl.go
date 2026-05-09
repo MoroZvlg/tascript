@@ -2,6 +2,7 @@ package repl
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -45,7 +46,7 @@ func Start(in io.Reader, out io.Writer) {
 			}
 			continue
 		}
-		result := evaluator.Eval(program, env)
+		result := evaluator.Eval(context.Background(), program, env)
 		fmt.Fprintln(out, result.Inspect())
 	}
 }

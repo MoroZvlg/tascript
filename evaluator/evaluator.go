@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/MoroZvlg/tascript/ast"
@@ -19,19 +20,22 @@ const opLimit = 10_000
 
 var currentOpCount = 0
 
-func Eval(node ast.Node, env *object.Environment) object.Object {
+func Eval(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
 	// Program is always the entry node — reset the counter and skip the budget check.
 	if prog, ok := node.(*ast.Program); ok {
 		currentOpCount = 0
-		return evalProgram(prog, env)
+		return evalProgram(ctx, prog, env)
 	}
 	currentOpCount++
 	if currentOpCount >= opLimit {
 		return newError("operations limit exceeded (%d)", opLimit)
 	}
+	if ctx.Err() != nil {
+		return newError("deadline exceeded: %s", ctx.Err())
+	}
 	switch n := node.(type) {
 	case *ast.ExpressionStatement:
-		return Eval(n.Expression, env)
+		return Eval(ctx, n.Expression, env)
 
 	case *ast.IntegerLiteral:
 		return &object.Integer{Value: n.Value}
@@ -49,25 +53,25 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return nativeBool(n.Value)
 
 	case *ast.PrefixExpression:
-		right := Eval(n.Right, env)
+		right := Eval(ctx, n.Right, env)
 		if object.IsError(right) {
 			return right
 		}
 		return evalPrefix(n.Operator, right)
 
 	case *ast.InfixExpression:
-		left := Eval(n.Left, env)
+		left := Eval(ctx, n.Left, env)
 		if object.IsError(left) {
 			return left
 		}
-		right := Eval(n.Right, env)
+		right := Eval(ctx, n.Right, env)
 		if object.IsError(right) {
 			return right
 		}
 		return evalInfix(env, n.Operator, left, right)
 
 	case *ast.LetStatement:
-		val := Eval(n.Value, env)
+		val := Eval(ctx, n.Value, env)
 		if object.IsError(val) {
 			return val
 		}
@@ -75,7 +79,7 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return val
 
 	case *ast.ConstStatement:
-		val := Eval(n.Value, env)
+		val := Eval(ctx, n.Value, env)
 		if object.IsError(val) {
 			return val
 		}
@@ -89,50 +93,50 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return newError("identifier not found: %s", n.Value)
 
 	case *ast.IfExpression:
-		cond := Eval(n.Condition, env)
+		cond := Eval(ctx, n.Condition, env)
 		if object.IsError(cond) {
 			return cond
 		}
 		if isTruthy(cond) {
-			return Eval(n.Consequence, env)
+			return Eval(ctx, n.Consequence, env)
 		} else if n.Alternative != nil {
-			return Eval(n.Alternative, env)
+			return Eval(ctx, n.Alternative, env)
 		}
 		return NULL
 
 	case *ast.BlockStatement:
-		return evalBlock(n, env)
+		return evalBlock(ctx, n, env)
 
 	case *ast.FunctionLiteral:
 		return &object.Function{Parameters: n.Parameters, Body: n.Body, Env: env}
 
 	case *ast.ReturnStatement:
-		result := Eval(n.Value, env)
+		result := Eval(ctx, n.Value, env)
 		if object.IsError(result) {
 			return result
 		}
 		return &object.Return{Value: result}
 
 	case *ast.FunctionCall:
-		fnObj := Eval(n.Function, env)
+		fnObj := Eval(ctx, n.Function, env)
 		if object.IsError(fnObj) {
 			return fnObj
 		}
 		switch funcValue := fnObj.(type) {
 		case *object.Function:
-			return evalFunc(n, funcValue, env)
+			return evalFunc(ctx, n, funcValue, env)
 		case *object.Builtin:
-			return evalBuiltin(n, funcValue, env)
+			return evalBuiltin(ctx, n, funcValue, env)
 		default:
 			return newError("not a function: %s", n.Function.String())
 		}
 
 	case *ast.IndexExpression:
-		leftVal := Eval(n.Left, env)
+		leftVal := Eval(ctx, n.Left, env)
 		if object.IsError(leftVal) {
 			return leftVal
 		}
-		index := Eval(n.Index, env)
+		index := Eval(ctx, n.Index, env)
 		if object.IsError(index) {
 			return index
 		}
@@ -162,7 +166,7 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		}
 
 	case *ast.MemberExpression:
-		obj := Eval(n.Object, env)
+		obj := Eval(ctx, n.Object, env)
 		if object.IsError(obj) {
 			return obj
 		}
@@ -219,10 +223,10 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	return newError("unknown node type: %T", node)
 }
 
-func evalProgram(p *ast.Program, env *object.Environment) object.Object {
+func evalProgram(ctx context.Context, p *ast.Program, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	for _, stmt := range p.Statements {
-		result = Eval(stmt, env)
+		result = Eval(ctx, stmt, env)
 		switch rTyped := result.(type) {
 		case *object.Error:
 			return rTyped
@@ -233,10 +237,10 @@ func evalProgram(p *ast.Program, env *object.Environment) object.Object {
 	return result
 }
 
-func evalBuiltin(funcCall *ast.FunctionCall, funcVal *object.Builtin, env *object.Environment) object.Object {
+func evalBuiltin(ctx context.Context, funcCall *ast.FunctionCall, funcVal *object.Builtin, env *object.Environment) object.Object {
 	args := make([]object.Object, len(funcCall.Arguments))
 	for i, arg := range funcCall.Arguments {
-		argVal := Eval(arg, env)
+		argVal := Eval(ctx, arg, env)
 		if object.IsError(argVal) {
 			return argVal
 		}
@@ -245,29 +249,29 @@ func evalBuiltin(funcCall *ast.FunctionCall, funcVal *object.Builtin, env *objec
 	return funcVal.Fn(env, args)
 }
 
-func evalFunc(funcCall *ast.FunctionCall, funcVal *object.Function, env *object.Environment) object.Object {
+func evalFunc(ctx context.Context, funcCall *ast.FunctionCall, funcVal *object.Function, env *object.Environment) object.Object {
 	if len(funcCall.Arguments) != len(funcVal.Parameters) {
 		return newError("argument(s) number mismatch. expected %d got %d", len(funcVal.Parameters), len(funcCall.Arguments))
 	}
 	funcEnv := object.NewEnclosedEnvironment(funcVal.Env)
 	for i, arg := range funcCall.Arguments {
-		argVal := Eval(arg, env)
+		argVal := Eval(ctx, arg, env)
 		if object.IsError(argVal) {
 			return argVal
 		}
 		funcEnv.Set(funcVal.Parameters[i].Value, argVal)
 	}
-	result := Eval(funcVal.Body, funcEnv)
+	result := Eval(ctx, funcVal.Body, funcEnv)
 	if rv, ok := result.(*object.Return); ok {
 		return rv.Value
 	}
 	return result
 }
 
-func evalBlock(p *ast.BlockStatement, env *object.Environment) object.Object {
+func evalBlock(ctx context.Context, p *ast.BlockStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	for _, stmt := range p.Statements {
-		result = Eval(stmt, env)
+		result = Eval(ctx, stmt, env)
 		if result != nil {
 			rType := result.Type()
 			if rType == object.ErrorKind || rType == object.ReturnKind {

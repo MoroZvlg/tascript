@@ -2,7 +2,9 @@ package evaluator_test
 
 import (
 	"bytes"
+	"context"
 	"testing"
+	"time"
 
 	"github.com/MoroZvlg/tascript/evaluator"
 	"github.com/MoroZvlg/tascript/lexer"
@@ -18,7 +20,7 @@ func testEval(t *testing.T, input string) object.Object {
 	if errs := p.Errors(); len(errs) > 0 {
 		t.Fatalf("parser errors for %q: %v", input, errs)
 	}
-	return evaluator.Eval(prog, object.NewEnvironment())
+	return evaluator.Eval(context.Background(), prog, object.NewEnvironment())
 }
 
 func TestEvalIntegerExpression(t *testing.T) {
@@ -270,7 +272,7 @@ func TestCandleSeriesMemberAccess(t *testing.T) {
 		if errs := p.Errors(); len(errs) > 0 {
 			t.Fatalf("parser errors for %q: %v", tt.input, errs)
 		}
-		got := evaluator.Eval(prog, mk())
+		got := evaluator.Eval(context.Background(), prog, mk())
 		if got.Inspect() != tt.expected {
 			t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
 		}
@@ -302,7 +304,7 @@ func TestCandleMemberAccess(t *testing.T) {
 		if errs := p.Errors(); len(errs) > 0 {
 			t.Fatalf("parser errors for %q: %v", tt.input, errs)
 		}
-		got := evaluator.Eval(prog, mk())
+		got := evaluator.Eval(context.Background(), prog, mk())
 		if got.Inspect() != tt.expected {
 			t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
 		}
@@ -382,7 +384,7 @@ func TestBuiltinDispatch(t *testing.T) {
 		if errs := p.Errors(); len(errs) > 0 {
 			t.Fatalf("parser errors for %q: %v", tt.input, errs)
 		}
-		got := evaluator.Eval(prog, mk())
+		got := evaluator.Eval(context.Background(), prog, mk())
 		if got.Inspect() != tt.expected {
 			t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
 		}
@@ -425,7 +427,7 @@ func TestIndicatorBuiltinsEndToEnd(t *testing.T) {
 		if errs := p.Errors(); len(errs) > 0 {
 			t.Fatalf("parser errors for %q: %v", tt.input, errs)
 		}
-		got := evaluator.Eval(prog, mk())
+		got := evaluator.Eval(context.Background(), prog, mk())
 		if got.Inspect() != tt.expected {
 			t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
 		}
@@ -443,7 +445,7 @@ func TestSmaMathRoundTrip(t *testing.T) {
 	l := lexer.New("sma(candles, 3)")
 	p := parser.New(l)
 	prog := p.ParseProgram()
-	got := evaluator.Eval(prog, env)
+	got := evaluator.Eval(context.Background(), prog, env)
 	series, ok := got.(*object.Series)
 	if !ok {
 		t.Fatalf("expected *object.Series, got %T (%s)", got, got.Inspect())
@@ -488,7 +490,7 @@ func TestIndexExpressionOnSeries(t *testing.T) {
 			if errs := p.Errors(); len(errs) > 0 {
 				t.Fatalf("parser errors: %v", errs)
 			}
-			got := evaluator.Eval(prog, mk())
+			got := evaluator.Eval(context.Background(), prog, mk())
 			if got.Inspect() != tt.expected {
 				t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
 			}
@@ -525,7 +527,7 @@ func TestIndexExpressionOnCandleSeries(t *testing.T) {
 			if errs := p.Errors(); len(errs) > 0 {
 				t.Fatalf("parser errors: %v", errs)
 			}
-			got := evaluator.Eval(prog, mk())
+			got := evaluator.Eval(context.Background(), prog, mk())
 			if got.Inspect() != tt.expected {
 				t.Errorf("input %q: expected %s, got %s", tt.input, tt.expected, got.Inspect())
 			}
@@ -565,7 +567,7 @@ func TestIndexExpressionErrors(t *testing.T) {
 			if errs := p.Errors(); len(errs) > 0 {
 				t.Fatalf("parser errors: %v", errs)
 			}
-			got := evaluator.Eval(prog, mk())
+			got := evaluator.Eval(context.Background(), prog, mk())
 			errObj, ok := got.(*object.Error)
 			if !ok {
 				t.Fatalf("input %q: expected *object.Error, got %T (%s)", tt.input, got, got.Inspect())
@@ -602,7 +604,7 @@ func TestSignalBuiltin(t *testing.T) {
 	if errs := p.Errors(); len(errs) > 0 {
 		t.Fatalf("parser errors: %v", errs)
 	}
-	got := evaluator.Eval(prog, env)
+	got := evaluator.Eval(context.Background(), prog, env)
 	if got.Type() != object.NullKind {
 		t.Errorf("expected NULL return, got %s (%s)", got.Type(), got.Inspect())
 	}
@@ -635,7 +637,7 @@ func TestSignalBuiltinErrors(t *testing.T) {
 			if errs := p.Errors(); len(errs) > 0 {
 				t.Fatalf("parser errors: %v", errs)
 			}
-			got := evaluator.Eval(prog, env)
+			got := evaluator.Eval(context.Background(), prog, env)
 			errObj, ok := got.(*object.Error)
 			if !ok {
 				t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
@@ -719,7 +721,7 @@ func TestSeriesBuiltinExceedsLimit(t *testing.T) {
 	if errs := p.Errors(); len(errs) > 0 {
 		t.Fatalf("parser errors: %v", errs)
 	}
-	got := evaluator.Eval(prog, env)
+	got := evaluator.Eval(context.Background(), prog, env)
 	errObj, ok := got.(*object.Error)
 	if !ok {
 		t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
@@ -746,7 +748,7 @@ func TestSeriesBuiltinWithinLimit(t *testing.T) {
 	if errs := p.Errors(); len(errs) > 0 {
 		t.Fatalf("parser errors: %v", errs)
 	}
-	got := evaluator.Eval(prog, env)
+	got := evaluator.Eval(context.Background(), prog, env)
 	if _, ok := got.(*object.Series); !ok {
 		t.Fatalf("expected *object.Series, got %T (%s)", got, got.Inspect())
 	}
@@ -772,7 +774,7 @@ func TestBuiltinAndUserFunctionInterop(t *testing.T) {
 	if errs := p.Errors(); len(errs) > 0 {
 		t.Fatalf("parser errors: %v", errs)
 	}
-	got := evaluator.Eval(prog, env)
+	got := evaluator.Eval(context.Background(), prog, env)
 	if got.Inspect() != "13" {
 		t.Errorf("expected 13, got %s", got.Inspect())
 	}
@@ -783,13 +785,7 @@ func TestOperationsLimit(t *testing.T) {
 let recursive = function() { recursive() }
 recursive()
 `
-	l := lexer.New(input)
-	p := parser.New(l)
-	prog := p.ParseProgram()
-	if errs := p.Errors(); len(errs) > 0 {
-		t.Fatalf("parser errors: %v", errs)
-	}
-	result := evaluator.Eval(prog, object.NewEnvironment())
+	result := testEval(t, input)
 	if result.Type() != object.ErrorKind {
 		t.Errorf("expected error type, got %s", result.Type())
 	}
@@ -808,5 +804,25 @@ func TestOperationsCounterResetsBetweenPrograms(t *testing.T) {
 	}
 	if i.Value != 2 {
 		t.Errorf("expected 2, got %d", i.Value)
+	}
+}
+
+func TestEvalRespectsContextDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	l := lexer.New("1 + 1")
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	got := evaluator.Eval(ctx, prog, object.NewEnvironment())
+	errObj, ok := got.(*object.Error)
+	if !ok {
+		t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
+	}
+	if !contains(errObj.Message, "deadline") {
+		t.Errorf("expected deadline error, got %q", errObj.Message)
 	}
 }
