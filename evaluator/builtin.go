@@ -21,7 +21,7 @@ func (a ohlcvAdapter) Close() float64       { return a.c.Close }
 func (a ohlcvAdapter) Volume() float64      { return a.c.Volume }
 func (a ohlcvAdapter) Timestamp() time.Time { return time.Time{} }
 
-func runIndicator(name string, args []object.Object, factory func(period int) (talive.Indicator, error)) object.Object {
+func runIndicator(name string, env *object.Environment, args []object.Object, factory func(period int) (talive.Indicator, error)) object.Object {
 	if len(args) != 2 {
 		return newError("%s: wrong number of arguments. got=%d, want=2", name, len(args))
 	}
@@ -32,6 +32,9 @@ func runIndicator(name string, args []object.Object, factory func(period int) (t
 	period, ok := args[1].(*object.Integer)
 	if !ok {
 		return newError("%s: second argument must be Integer, got %s", name, args[1].Type())
+	}
+	if err := enforceSeriesLength(env, len(candles.Value)); err != nil {
+		return err
 	}
 	ind, err := factory(int(period.Value))
 	if err != nil {
@@ -45,19 +48,19 @@ func runIndicator(name string, args []object.Object, factory func(period int) (t
 	return &object.Series{Value: out}
 }
 
-func SmaBuiltin(args []object.Object) object.Object {
-	return runIndicator("sma", args, func(p int) (talive.Indicator, error) { return talive.NewSMA(p) })
+func SmaBuiltin(env *object.Environment, args []object.Object) object.Object {
+	return runIndicator("sma", env, args, func(p int) (talive.Indicator, error) { return talive.NewSMA(p) })
 }
 
-func EmaBuiltin(args []object.Object) object.Object {
-	return runIndicator("ema", args, func(p int) (talive.Indicator, error) { return talive.NewEMA(p) })
+func EmaBuiltin(env *object.Environment, args []object.Object) object.Object {
+	return runIndicator("ema", env, args, func(p int) (talive.Indicator, error) { return talive.NewEMA(p) })
 }
 
-func RsiBuiltin(args []object.Object) object.Object {
-	return runIndicator("rsi", args, func(p int) (talive.Indicator, error) { return talive.NewRSI(p) })
+func RsiBuiltin(env *object.Environment, args []object.Object) object.Object {
+	return runIndicator("rsi", env, args, func(p int) (talive.Indicator, error) { return talive.NewRSI(p) })
 }
 
-func SignalBuiltin(args []object.Object) object.Object {
+func SignalBuiltin(env *object.Environment, args []object.Object) object.Object {
 	if len(args) != 1 {
 		return newError("signal: wrong number of arguments. got=%d, want=1", len(args))
 	}

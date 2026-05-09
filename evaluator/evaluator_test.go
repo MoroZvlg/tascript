@@ -326,7 +326,7 @@ func TestBuiltinDispatch(t *testing.T) {
 		env := object.NewEnvironment()
 		env.Set("double", &object.Builtin{
 			Name: "double",
-			Fn: func(args []object.Object) object.Object {
+			Fn: func(_ *object.Environment, args []object.Object) object.Object {
 				if len(args) != 1 {
 					return &object.Error{Message: "double: expected 1 arg"}
 				}
@@ -339,7 +339,7 @@ func TestBuiltinDispatch(t *testing.T) {
 		})
 		env.Set("addTwo", &object.Builtin{
 			Name: "addTwo",
-			Fn: func(args []object.Object) object.Object {
+			Fn: func(_ *object.Environment, args []object.Object) object.Object {
 				if len(args) != 2 {
 					return &object.Error{Message: "addTwo: expected 2 args"}
 				}
@@ -647,11 +647,116 @@ func TestSignalBuiltinErrors(t *testing.T) {
 	}
 }
 
+func withLimits(t *testing.T, lim object.Limits) {
+	t.Helper()
+	prev := object.DefaultLimits
+	object.DefaultLimits = lim
+	t.Cleanup(func() { object.DefaultLimits = prev })
+}
+
+func TestStringLiteralWithinLimit(t *testing.T) {
+	withLimits(t, object.Limits{MaxStringLength: 8, MaxSeriesLength: 1024})
+	got := testEval(t, `"hello"`)
+	s, ok := got.(*object.String)
+	if !ok {
+		t.Fatalf("expected *object.String, got %T (%s)", got, got.Inspect())
+	}
+	if s.Value != "hello" {
+		t.Errorf("expected %q, got %q", "hello", s.Value)
+	}
+}
+
+func TestStringLiteralExceedsLimit(t *testing.T) {
+	withLimits(t, object.Limits{MaxStringLength: 4, MaxSeriesLength: 1024})
+	got := testEval(t, `"too long"`)
+	errObj, ok := got.(*object.Error)
+	if !ok {
+		t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
+	}
+	if !contains(errObj.Message, "string length 8 exceeds") {
+		t.Errorf("unexpected error message: %q", errObj.Message)
+	}
+}
+
+func TestStringConcatWithinLimit(t *testing.T) {
+	withLimits(t, object.Limits{MaxStringLength: 10, MaxSeriesLength: 1024})
+	got := testEval(t, `"abc" + "de"`)
+	s, ok := got.(*object.String)
+	if !ok {
+		t.Fatalf("expected *object.String, got %T (%s)", got, got.Inspect())
+	}
+	if s.Value != "abcde" {
+		t.Errorf("expected %q, got %q", "abcde", s.Value)
+	}
+}
+
+func TestStringConcatExceedsLimit(t *testing.T) {
+	withLimits(t, object.Limits{MaxStringLength: 5, MaxSeriesLength: 1024})
+	got := testEval(t, `"abc" + "defgh"`)
+	errObj, ok := got.(*object.Error)
+	if !ok {
+		t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
+	}
+	if !contains(errObj.Message, "string length 8 exceeds") {
+		t.Errorf("unexpected error message: %q", errObj.Message)
+	}
+}
+
+func TestSeriesBuiltinExceedsLimit(t *testing.T) {
+	withLimits(t, object.Limits{MaxStringLength: 1024, MaxSeriesLength: 5})
+
+	bars := make([]object.Candle, 10)
+	for i := range bars {
+		bars[i] = object.Candle{Open: 1, High: 1, Low: 1, Close: 1, Volume: 1}
+	}
+	env := object.NewEnvironment()
+	evaluator.RegisterBuiltins(env)
+	env.Set("candles", &object.CandleSeries{Value: bars})
+
+	l := lexer.New(`sma(candles, 3)`)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	got := evaluator.Eval(prog, env)
+	errObj, ok := got.(*object.Error)
+	if !ok {
+		t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
+	}
+	if !contains(errObj.Message, "series length 10 exceeds") {
+		t.Errorf("unexpected error message: %q", errObj.Message)
+	}
+}
+
+func TestSeriesBuiltinWithinLimit(t *testing.T) {
+	withLimits(t, object.Limits{MaxStringLength: 1024, MaxSeriesLength: 100})
+
+	bars := make([]object.Candle, 10)
+	for i := range bars {
+		bars[i] = object.Candle{Open: 1, High: 1, Low: 1, Close: 1, Volume: 1}
+	}
+	env := object.NewEnvironment()
+	evaluator.RegisterBuiltins(env)
+	env.Set("candles", &object.CandleSeries{Value: bars})
+
+	l := lexer.New(`sma(candles, 3)`)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	got := evaluator.Eval(prog, env)
+	if _, ok := got.(*object.Series); !ok {
+		t.Fatalf("expected *object.Series, got %T (%s)", got, got.Inspect())
+	}
+}
+
 func TestBuiltinAndUserFunctionInterop(t *testing.T) {
 	env := object.NewEnvironment()
 	env.Set("triple", &object.Builtin{
 		Name: "triple",
-		Fn: func(args []object.Object) object.Object {
+		Fn: func(_ *object.Environment, args []object.Object) object.Object {
 			n := args[0].(*object.Integer)
 			return &object.Integer{Value: n.Value * 3}
 		},

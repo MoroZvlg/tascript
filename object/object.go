@@ -131,7 +131,7 @@ func (c *CandleSeries) Inspect() string  { return fmt.Sprintf("Candles[%d]", len
 
 type Builtin struct {
 	Name string
-	Fn   func(args []Object) Object
+	Fn   func(env *Environment, args []Object) Object
 }
 
 func (b *Builtin) Type() ObjectType { return BuiltinKind }

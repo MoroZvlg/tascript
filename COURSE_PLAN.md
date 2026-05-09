@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** Module 4 complete
-**Last Session Date:** 2026-05-08
-**Notes:** Final project shipped. `main.go` now branches: with a script path arg it loads `data.csv`, registers builtins, parses, evals once; without args it drops into the REPL. `repl.LoadCandlesCSV` exported so the runner can reuse it. Demo at `examples/demo.tas` exercises the full surface — `rsi`/`sma`/`ema` builtins, indexing, member access, multiple bare-`if` signal emissions. On the 30-bar `data.csv` the demo fires four signals (`up_bar`, `above_sma14`, `sma7_over_sma14`, `rsi_overbought`) and correctly skips `rsi_oversold` on the rising trend. One real lexer bug surfaced via the demo and was caught by failing parser tests (`Test_ParseProgram_MultiLineLetChain`, `Test_ParseProgram_DemoScript`): `readIdentifier` only allowed letters, so `s14` lexed as IDENT(`s`)+INT(`14`). User fixed by adding digit support to identifier-continuation. Regression test added (`TestLexer_IdentifierWithDigits`) — verifies digits-after-letter work but a leading-digit token still parses as INT first.
+**Current Lesson:** 5.1 complete
+**Last Session Date:** 2026-05-09
+**Notes:** Sandbox limits, lesson 1 of 5. Hardcoded global `object.DefaultLimits` (1024 strings, 1024 series); `Environment.Limits()` just returns it (no env-chain inheritance — explicitly out of scope, "no need for production-ready"). `enforceStringLength` / `enforceSeriesLength` helpers in evaluator. Three enforcement points: string literal eval, string concat in `evalInfix`, builtin indicator path via `runIndicator` (checks **input** `len(candles.Value)` — works because talive returns same-length output). User skipped `extractColumn` check on the reasoning that the host owns CSV-loaded candles. Builtin signature changed to `func(env, args)` — propagated to all four builtins (`sma`/`ema`/`rsi`/`signal`) and three test sites. New tests: `withLimits` helper using `t.Cleanup` to mutate/restore `DefaultLimits`, plus 6 enforcement tests covering happy + error paths for both string sites and the series-builtin site.
 
 ---
 
@@ -196,10 +196,19 @@ Make the interpreter safe to run untrusted scripts. Real CPU/RSS limits are OS-l
 (cgroups, `setrlimit`) and out of scope here — these lessons cover what an interpreter
 itself can enforce.
 
-- [ ] **5.1 — String & Collection Size Caps**
-  - Configurable `MaxStringLen`, `MaxSeriesLen` on the evaluator.
-  - Enforced at literal eval, string concat, and any builtin that grows a value.
-  - Violation = runtime error with the limit name and offending size.
+- [x] **5.1 — String & Collection Size Caps**
+  - Hardcoded global `object.DefaultLimits` (`MaxStringLength`, `MaxSeriesLength`,
+    both 1024). User decided against per-env config / chain inheritance — global is
+    enough for now. `Environment.Limits()` just returns the package var.
+  - Enforced at: string literal eval, string concat (`+` on strings), and the
+    builtin indicator path. Builtin check is on **input** `len(candles.Value)` via
+    `runIndicator`, not output — works for talive (same-length output) but is the
+    spot to revisit if a future builtin grows the series.
+  - **Skipped:** `extractColumn` (`candles.closes` etc.) — host owns the CSV, no
+    DSL-side path to grow `candles`. Revisit if a slicing builtin lands.
+  - Violation = `*object.Error` carrying the offending size + the limit name.
+  - Builtin signature changed to `func(env *object.Environment, args ...) Object` —
+    threaded through `evalBuiltin`, `runIndicator`, and the four exported builtins.
 
 - [ ] **5.2 — Operation Budget**
   - Evaluator carries an op counter; bump on every `Eval` call.
@@ -240,4 +249,5 @@ itself can enforce.
 | 14      | 2026-05-07 | 4.3             | Indexing end-to-end. `LBRACKET` Pratt entry → `parseIndexExpression`; new `INDEX` precedence between `PREFIX` and `CALL`; `parseIndex` broadened to a full expression. Evaluator dispatch: `*Series` → `*Float`, `*CandleSeries` → `*Candle`. Convention locked: 0-based, no negatives (explicit error), out-of-bounds = error. TDD-driven: parser tests written first (shape + precedence-string), then evaluator tests surfaced two bugs (Go panic on negative index, `%d` against `Object` wrapper) that user fixed. |
 | 15      | 2026-05-07 | 4.4             | Signals + indexing reversal. Newest-first lookup: `Value[len-i-1]` in evaluator (4.3 tests flipped). `signal(text)` builtin writes `received signal: %s\n` to swappable `SignalOutput` writer, returns NULL. Per-bar host loop deferred — user said real runtime will be different. Scalar-only DSL confirmed: no broadcasting, no bar keyword. Module 4 wraps with one lesson left (4.5 final project). |
 | 16      | 2026-05-08 | 4.5             | Final project. Script-runner mode in `main.go` (one-shot: load candles, register builtins, eval script). `repl.LoadCandlesCSV` exported. `examples/demo.tas` fires 4/5 signals on 30-bar `data.csv`. Lexer bug found via demo: digits in identifiers (`s14`) weren't allowed; fix in `readIdentifier`, regression test added. Module 4 complete. |
+| 17      | 2026-05-09 | 5.1             | Sandbox lesson 1: string + series size caps. Global hardcoded `object.DefaultLimits` (1024/1024); `Environment.Limits()` returns it directly. Three enforcement points (string literal, string concat, builtin input). `extractColumn` skipped intentionally. Builtin signature gained `env`. New `withLimits` test helper + 6 enforcement tests. Three pre-existing tests updated for new builtin signature. |
 

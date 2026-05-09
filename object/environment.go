@@ -2,6 +2,16 @@ package object
 
 import "fmt"
 
+type Limits struct {
+	MaxSeriesLength int
+	MaxStringLength int
+}
+
+var DefaultLimits = Limits{
+	MaxSeriesLength: 1024,
+	MaxStringLength: 1024,
+}
+
 type Environment struct {
 	store map[string]Object
 	outer *Environment
@@ -29,6 +39,10 @@ func (e *Environment) Get(name string) (Object, bool) {
 func (e *Environment) Set(name string, val Object) Object {
 	e.store[name] = val
 	return val
+}
+
+func (e *Environment) Limits() Limits {
+	return DefaultLimits
 }
 
 func (e *Environment) Debug() {

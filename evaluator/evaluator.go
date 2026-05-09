@@ -28,6 +28,9 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return &object.Float{Value: n.Value}
 
 	case *ast.StringLiteral:
+		if err := enforceStringLength(env, len(n.Value)); err != nil {
+			return err
+		}
 		return &object.String{Value: n.Value}
 
 	case *ast.Boolean:
@@ -49,7 +52,7 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		if object.IsError(right) {
 			return right
 		}
-		return evalInfix(n.Operator, left, right)
+		return evalInfix(env, n.Operator, left, right)
 
 	case *ast.LetStatement:
 		val := Eval(n.Value, env)
@@ -227,7 +230,7 @@ func evalBuiltin(funcCall *ast.FunctionCall, funcVal *object.Builtin, env *objec
 		}
 		args[i] = argVal
 	}
-	return funcVal.Fn(args)
+	return funcVal.Fn(env, args)
 }
 
 func evalFunc(funcCall *ast.FunctionCall, funcVal *object.Function, env *object.Environment) object.Object {
@@ -302,7 +305,7 @@ func evalMinusPrefix(o object.Object) object.Object {
 	return newError("unknown operator: -%s", o.Type())
 }
 
-func evalInfix(op string, left, right object.Object) object.Object {
+func evalInfix(env *object.Environment, op string, left, right object.Object) object.Object {
 	if left.Type() == object.IntKind && right.Type() == object.FloatKind {
 		promoted := &object.Float{Value: float64(left.(*object.Integer).Value)}
 		return evalFloatInfix(op, promoted, right)
@@ -318,7 +321,7 @@ func evalInfix(op string, left, right object.Object) object.Object {
 	case left.Type() == object.FloatKind && right.Type() == object.FloatKind:
 		return evalFloatInfix(op, left, right)
 	case left.Type() == object.StringKind && right.Type() == object.StringKind:
-		return evalStringInfix(op, left, right)
+		return evalStringInfix(env, op, left, right)
 	case left.Type() == object.BooleanKind && right.Type() == object.BooleanKind:
 		return evalBoolInfix(op, left, right)
 	}
@@ -391,11 +394,14 @@ func evalFloatInfix(op string, left, right object.Object) object.Object {
 	return newError("unknown operator: float %s float", op)
 }
 
-func evalStringInfix(op string, left, right object.Object) object.Object {
+func evalStringInfix(env *object.Environment, op string, left, right object.Object) object.Object {
 	l := left.(*object.String).Value
 	r := right.(*object.String).Value
 	switch op {
 	case "+":
+		if err := enforceStringLength(env, len(l)+len(r)); err != nil {
+			return err
+		}
 		return &object.String{Value: l + r}
 	case "==":
 		return nativeBool(l == r)
@@ -441,4 +447,18 @@ func isTruthy(o object.Object) bool {
 		return false
 	}
 	return true // ints, floats, strings, etc all truthy
+}
+
+func enforceStringLength(env *object.Environment, n int) *object.Error {
+	if n > env.Limits().MaxStringLength {
+		return newError("string length %d exceeds limits %d.", n, env.Limits().MaxStringLength)
+	}
+	return nil
+}
+
+func enforceSeriesLength(env *object.Environment, n int) *object.Error {
+	if n > env.Limits().MaxSeriesLength {
+		return newError("series length %d exceeds limits %d.", n, env.Limits().MaxSeriesLength)
+	}
+	return nil
 }
