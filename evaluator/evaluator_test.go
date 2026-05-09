@@ -777,3 +777,36 @@ func TestBuiltinAndUserFunctionInterop(t *testing.T) {
 		t.Errorf("expected 13, got %s", got.Inspect())
 	}
 }
+
+func TestOperationsLimit(t *testing.T) {
+	input := `
+let recursive = function() { recursive() }
+recursive()
+`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	result := evaluator.Eval(prog, object.NewEnvironment())
+	if result.Type() != object.ErrorKind {
+		t.Errorf("expected error type, got %s", result.Type())
+	}
+	if result.Inspect() != "ERROR: operations limit exceeded (10000)" {
+		t.Errorf("unexpected result: %s", result.Inspect())
+	}
+}
+
+func TestOperationsCounterResetsBetweenPrograms(t *testing.T) {
+	// Runs after TestOperationsLimit blew the budget. If the op counter
+	// isn't reset per program, this trivial script wrongly errors.
+	got := testEval(t, "1 + 1")
+	i, ok := got.(*object.Integer)
+	if !ok {
+		t.Fatalf("expected *object.Integer, got %T (%s)", got, got.Inspect())
+	}
+	if i.Value != 2 {
+		t.Errorf("expected 2, got %d", i.Value)
+	}
+}

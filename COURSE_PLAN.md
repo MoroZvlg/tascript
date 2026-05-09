@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 5.1 complete
-**Last Session Date:** 2026-05-09
-**Notes:** Sandbox limits, lesson 1 of 5. Hardcoded global `object.DefaultLimits` (1024 strings, 1024 series); `Environment.Limits()` just returns it (no env-chain inheritance — explicitly out of scope, "no need for production-ready"). `enforceStringLength` / `enforceSeriesLength` helpers in evaluator. Three enforcement points: string literal eval, string concat in `evalInfix`, builtin indicator path via `runIndicator` (checks **input** `len(candles.Value)` — works because talive returns same-length output). User skipped `extractColumn` check on the reasoning that the host owns CSV-loaded candles. Builtin signature changed to `func(env, args)` — propagated to all four builtins (`sma`/`ema`/`rsi`/`signal`) and three test sites. New tests: `withLimits` helper using `t.Cleanup` to mutate/restore `DefaultLimits`, plus 6 enforcement tests covering happy + error paths for both string sites and the series-builtin site.
+**Current Lesson:** 5.2 complete
+**Last Session Date:** 2026-05-10
+**Notes:** Op budget. Package-level `const opLimit = 10_000` and `var currentOpCount` in evaluator. Increment + check at the top of `Eval` for non-Program nodes; `*ast.Program` is special-cased to reset the counter and skip the check (always the entry node). Comment flags non-reentrancy. One real bug surfaced: first attempt put the reset inside the `case *ast.Program` arm of the switch, but the increment+check ran first and tripped the leftover counter from the previous run, so the reset was unreachable. Caught by a fresh test (`TestOperationsCounterResetsBetweenPrograms`) that runs a tiny script after the runaway test — fails with "exceeded" until reset is moved before the increment. User picked Option B (early-return for Program). Cleanup: split const/var, `++` over `+= 1`, comment rewritten to explain the non-reentrancy constraint.
 
 ---
 
@@ -210,10 +210,17 @@ itself can enforce.
   - Builtin signature changed to `func(env *object.Environment, args ...) Object` —
     threaded through `evalBuiltin`, `runIndicator`, and the four exported builtins.
 
-- [ ] **5.2 — Operation Budget**
-  - Evaluator carries an op counter; bump on every `Eval` call.
-  - Abort with `"op budget exceeded"` when the counter passes the configured budget.
-  - Budget is a constructor argument; tests use a low budget to force the abort.
+- [x] **5.2 — Operation Budget**
+  - Package-level `const opLimit = 10_000` + `var currentOpCount` in evaluator
+    (no Limits-struct field — kept consistent with 5.1's hardcoded-global stance).
+  - `Eval` increments + checks at the top for every node; `*ast.Program` is
+    special-cased to reset the counter and bypass the check (entry-node-only path).
+  - Lesson gotcha: reset MUST happen before the increment+check, or the leftover
+    counter from a previous run trips immediately. Verified with
+    `TestOperationsCounterResetsBetweenPrograms` (runaway test followed by a
+    trivial `1 + 1`).
+  - Non-reentrant by design — comment in `evaluator.go` notes that two scripts
+    cannot run concurrently in one process. Acceptable for the teaching scope.
 
 - [ ] **5.3 — Wall-Clock Deadline**
   - Thread `context.Context` through `Eval`. On `ctx.Err()`, halt with a deadline error.
@@ -250,4 +257,5 @@ itself can enforce.
 | 15      | 2026-05-07 | 4.4             | Signals + indexing reversal. Newest-first lookup: `Value[len-i-1]` in evaluator (4.3 tests flipped). `signal(text)` builtin writes `received signal: %s\n` to swappable `SignalOutput` writer, returns NULL. Per-bar host loop deferred — user said real runtime will be different. Scalar-only DSL confirmed: no broadcasting, no bar keyword. Module 4 wraps with one lesson left (4.5 final project). |
 | 16      | 2026-05-08 | 4.5             | Final project. Script-runner mode in `main.go` (one-shot: load candles, register builtins, eval script). `repl.LoadCandlesCSV` exported. `examples/demo.tas` fires 4/5 signals on 30-bar `data.csv`. Lexer bug found via demo: digits in identifiers (`s14`) weren't allowed; fix in `readIdentifier`, regression test added. Module 4 complete. |
 | 17      | 2026-05-09 | 5.1             | Sandbox lesson 1: string + series size caps. Global hardcoded `object.DefaultLimits` (1024/1024); `Environment.Limits()` returns it directly. Three enforcement points (string literal, string concat, builtin input). `extractColumn` skipped intentionally. Builtin signature gained `env`. New `withLimits` test helper + 6 enforcement tests. Three pre-existing tests updated for new builtin signature. |
+| 18      | 2026-05-10 | 5.2             | Op budget. `const opLimit = 10_000` + `var currentOpCount` in evaluator. Increment+check at top of `Eval`; `*ast.Program` early-returns with a counter reset (Option B). One ordering bug found: initial attempt put the reset inside the switch arm — unreachable because the increment+check above it tripped on the leftover counter. Caught by a sequential reset test. Cleanup pass: const/var split, `++` form, comment rewritten to flag non-reentrancy as the actual constraint. |
 

@@ -13,11 +13,23 @@ var (
 	NULL  = &object.Null{}
 )
 
-func Eval(node ast.Node, env *object.Environment) object.Object {
-	switch n := node.(type) {
-	case *ast.Program:
-		return evalProgram(n, env)
+// Op-budget state. A package-level counter is fine for a teaching interpreter
+// but makes Eval non-reentrant — two scripts can't run concurrently in one process.
+const opLimit = 10_000
 
+var currentOpCount = 0
+
+func Eval(node ast.Node, env *object.Environment) object.Object {
+	// Program is always the entry node — reset the counter and skip the budget check.
+	if prog, ok := node.(*ast.Program); ok {
+		currentOpCount = 0
+		return evalProgram(prog, env)
+	}
+	currentOpCount++
+	if currentOpCount >= opLimit {
+		return newError("operations limit exceeded (%d)", opLimit)
+	}
+	switch n := node.(type) {
 	case *ast.ExpressionStatement:
 		return Eval(n.Expression, env)
 
