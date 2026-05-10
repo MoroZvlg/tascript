@@ -45,7 +45,7 @@ func runIndicator(name string, env *object.Environment, args []object.Object, fa
 		result := ind.Next(ohlcvAdapter{c: &candles.Value[i]})
 		out[i] = result[0]
 	}
-	return &object.Series{Value: out}
+	return accountFor(&object.Series{Value: out})
 }
 
 func SmaBuiltin(env *object.Environment, args []object.Object) object.Object {

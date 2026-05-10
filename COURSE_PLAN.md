@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 5.4 complete
+**Current Lesson:** 5.5 complete
 **Last Session Date:** 2026-05-10
-**Notes:** Static validation pass. New `evaluator/validator.go` with `Validator` struct (carries `errors []string` + indicator-name set). `Validate(node, scope) ObjectType` mirrors `Eval`'s recursive shape but tracks `object.ObjectType` per name in a new `object.Scope` (sibling to `Environment`, with `outer` chain). Pre-seeded `candles → CandleSeriesKind`; `let`/`const` propagate the RHS kind; identifier lookups resolve transitively. Function literal bodies walked at definition time (the whole point — find violations in unrun code); params bound to `KindAny`. Walks but doesn't validate infix/prefix/index/member nodes — they exist in the switch only to recurse. One real bug surfaced: `append(slice, fmtStr, args...)` doesn't format — adds raw entries; user fixed via `fmt.Sprintf`. Known false positives pinned in tests: function-param case, scoped binding leaking out, alias-through-block. Known minor bug not fixed: `checkIndicatorCall` re-walks arg[0] which the boilerplate's arg loop also walks → duplicate errors for nested indicator calls (`sma(sma(5,14),14)`). 14 tests, all green.
+**Notes:** Best-effort memory accounting shipped. `MaxLiveBytes` (64 KB default) lives in `object.Limits` next to per-object caps; `currentLiveBytes` package var in evaluator resets alongside `currentOpCount` in the `*ast.Program` arm of `Eval`. Single `accountFor(obj) Object` helper sums sizes for tracked types (`*String`=len, `*Series`=len*8, `*CandleSeries`=len*5*8) and returns `*Error` over limit. Wired at four allocation sites: string literal, string concat, `extractColumn`, `runIndicator`. `extractColumn`'s signature widened from `*object.Series` to `object.Object` so the error path can flow — callers already returned `Object` so no other changes needed. Two bugs surfaced and fixed mid-lesson: (1) initial draft did `accountFor(x); return x` at every site, throwing away the error — fix was `return accountFor(...)`; (2) `runIndicator` (the most allocation-heavy path) was unaccounted entirely — added the wrap. Five tests cover within-limit sanity, cumulative concat, cumulative series via `sma()`, `extractColumn` overflow, reset-between-programs. All green; full suite green.
 
 ---
 
@@ -192,9 +192,12 @@ Make the language useful for computing indicators and emitting signals from a ca
 
 ## Module 5: Sandbox & Limits (beyond the book)
 
-Make the interpreter safe to run untrusted scripts. Real CPU/RSS limits are OS-level
-(cgroups, `setrlimit`) and out of scope here — these lessons cover what an interpreter
-itself can enforce.
+Make the interpreter safe to run untrusted scripts. Lessons 5.1–5.5 cover **soft,
+in-process** limits the interpreter enforces itself; 5.6 swaps those for **hard,
+structural** limits by running the interpreter inside a WASM sandbox. Real
+per-process RSS / CPU caps via cgroups or `setrlimit` are OS-level and stay out
+of scope — but 5.6 is the architectural answer to "what does proper sandboxing
+look like in Go," and pays off the soft-vs-hard story the rest of the module sets up.
 
 - [x] **5.1 — String & Collection Size Caps**
   - Hardcoded global `object.DefaultLimits` (`MaxStringLength`, `MaxSeriesLength`,
@@ -246,9 +249,52 @@ itself can enforce.
     leaking out of an if-block. Known minor bug: nested indicator calls produce
     duplicate errors (`checkIndicatorCall` and the arg-loop both walk arg[0]).
 
-- [ ] **5.5 — (Stretch) Best-Effort Memory Accounting**
-  - Track the sum of `len()` of live strings + series via wrapper allocations.
-  - Document the gap: this is NOT real RSS; for true memory caps see OS-level controls.
+- [x] **5.5 — (Stretch) Best-Effort Memory Accounting**
+  - Track the sum of `len()` of live strings + series + candle series via
+    wrapper allocations. Reset counter between program runs (same place as
+    `currentOpCount`); pre-existing host objects (e.g. `candles` from CSV) are
+    intentionally uncounted because they're allocated before `Eval` starts.
+  - `MaxLiveBytes` lives in `object.Limits` next to the per-object caps; default
+    64 KB. Sizes: string = `len(Value)`, series = `len(Value)*8`, candle series
+    = `len(Value)*40`.
+  - Single `accountFor(obj) Object` helper bumps counter for tracked types and
+    returns `*Error` on overflow. Wrap **every** allocation site for the three
+    types: string literal, string concat, `extractColumn`, `runIndicator`.
+    `extractColumn` returns `Object` (not `*Series`) so the error path can flow.
+  - Document the gap in a comment near the helper: cumulative-only (no
+    decrement), intermediate values count even though Go GC reclaims them, host
+    objects don't count, real RSS limits live in WASM/cgroups (see 5.6).
+
+- [ ] **5.6 — (Stretch) WASM Sandbox Runner**
+  - Pay off Module 5 by replacing the soft, in-process limits from 5.1–5.5 with
+    **hard** limits enforced by a WASM runtime. Same tascript surface; same
+    syntax; same `examples/demo.tas` runs; the change is structural — the
+    interpreter now lives inside a sandbox the host process controls.
+  - Architecture (Stage 2 from the WASM evolution discussion): compile the
+    existing Go interpreter for `GOOS=wasip1 GOARCH=wasm`, producing a single
+    `tascript-interp.wasm`. New host program (`cmd/sandbox/main.go`) embeds
+    [wazero](https://github.com/tetratelabs/wazero) (pure-Go, no CGO) and
+    instantiates a fresh sandbox per script run. Each instance gets its own
+    bounded linear memory and its own fuel budget — a runaway script can't
+    escape the byte slice the host allocated.
+  - Host ABI design: minimal at first. The host writes the script source into
+    the module's memory and calls `run()`; the module calls back through
+    imports to read candles (`candle_count()`, `candle_close(i)`, etc.) and
+    to emit signals (`emit_signal(ptr, len)`). Numbers and `(ptr, len)` pairs
+    are the only things that cross the boundary — WASM has no string type.
+  - Limits comparison (the teaching payoff): show the soft 5.1–5.5 caps still
+    work at the language level, then show that even with those disabled the
+    WASM memory cap and fuel limit catch a runaway script. The same script
+    that returns `*Error` in soft mode causes a wazero **trap** in WASM mode.
+    Trap → host receives an error, sandbox is torn down cleanly, host stays
+    healthy. That's the difference between best-effort and structural.
+  - Out of scope (deferred): multi-language host (Stage 4 — running arbitrary
+    user-supplied `.wasm` modules conforming to the ABI); compiling tascript
+    itself to WASM (Stage 3 — replacing the interpreter with a compiler); WASI
+    filesystem/networking. Stays a Stage-2 lesson: same language, hard sandbox.
+  - Likely to split into 5.6a (WASI build of the interpreter + minimal host)
+    and 5.6b (host ABI for candles/signals + comparison tests). Decide when
+    we get there.
 
 ---
 
@@ -276,4 +322,5 @@ itself can enforce.
 | 18      | 2026-05-10 | 5.2             | Op budget. `const opLimit = 10_000` + `var currentOpCount` in evaluator. Increment+check at top of `Eval`; `*ast.Program` early-returns with a counter reset (Option B). One ordering bug found: initial attempt put the reset inside the switch arm — unreachable because the increment+check above it tripped on the leftover counter. Caught by a sequential reset test. Cleanup pass: const/var split, `++` form, comment rewritten to flag non-reentrancy as the actual constraint. |
 | 19      | 2026-05-10 | 5.3             | Wall-clock deadline via `context.Context`. `Eval` gained `ctx` as first arg, threaded through every recursion site. `ctx.Err()` check after op-budget check. All 14 call sites updated (main.go, repl.go, 12 in tests) to pass `context.Background()`. `TestEvalRespectsContextDeadline` confirms an already-expired context trips a `"deadline"` error. |
 | 20      | 2026-05-10 | 5.4             | Static validation pass. New `Validator` struct + `object.Scope` (sibling to `Environment`). `Validate` mirrors `Eval`'s switch, tracks `ObjectType` per name, pre-seeds `candles → CandleSeriesKind`. Indicator-arg rule wired in `checkIndicatorCall`. Real bug found: `append(slice, fmt, args...)` doesn't format — fixed via `fmt.Sprintf`. False-positive cases (function params, block-scoped bindings) pinned in tests. 14 tests, all green. |
+| 21      | 2026-05-10 | 5.5, 5.6 plan   | Best-effort memory accounting. `MaxLiveBytes` (64 KB) in `object.Limits`; `currentLiveBytes` package var resets per program. Single `accountFor` helper at four sites (string lit, string concat, `extractColumn`, `runIndicator`). `extractColumn` return widened to `object.Object` so the error path flows. Two bugs caught by tests during the lesson and fixed: discarded `accountFor` return at every call site, and `runIndicator` not wrapped at all (highest-allocation path). Five tests, all green. Discussion went deep on Go's per-goroutine accounting limits (no — heap is shared, BEAM is the contrast) and WASM evolution path (Stage 2 sandboxed interpreter vs Stage 4 multi-language host). 5.6 added to plan: Stage-2 wazero-based sandbox, Module 5 header rewritten to frame the soft-vs-hard limits arc. |
 

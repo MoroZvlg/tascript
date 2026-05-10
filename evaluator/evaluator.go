@@ -18,12 +18,15 @@ var (
 // but makes Eval non-reentrant — two scripts can't run concurrently in one process.
 const opLimit = 10_000
 
+var currentLiveBytes = 0
+
 var currentOpCount = 0
 
 func Eval(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
 	// Program is always the entry node — reset the counter and skip the budget check.
 	if prog, ok := node.(*ast.Program); ok {
 		currentOpCount = 0
+		currentLiveBytes = 0
 		return evalProgram(ctx, prog, env)
 	}
 	currentOpCount++
@@ -47,7 +50,7 @@ func Eval(ctx context.Context, node ast.Node, env *object.Environment) object.Ob
 		if err := enforceStringLength(env, len(n.Value)); err != nil {
 			return err
 		}
-		return &object.String{Value: n.Value}
+		return accountFor(&object.String{Value: n.Value})
 
 	case *ast.Boolean:
 		return nativeBool(n.Value)
@@ -418,7 +421,7 @@ func evalStringInfix(env *object.Environment, op string, left, right object.Obje
 		if err := enforceStringLength(env, len(l)+len(r)); err != nil {
 			return err
 		}
-		return &object.String{Value: l + r}
+		return accountFor(&object.String{Value: l + r})
 	case "==":
 		return nativeBool(l == r)
 	case "!=":
@@ -445,12 +448,12 @@ func newError(format string, args ...any) *object.Error {
 	return &object.Error{Message: fmt.Sprintf(format, args...)}
 }
 
-func extractColumn(cs *object.CandleSeries, pick func(object.Candle) float64) *object.Series {
+func extractColumn(cs *object.CandleSeries, pick func(object.Candle) float64) object.Object {
 	out := make([]float64, len(cs.Value))
 	for i, c := range cs.Value {
 		out[i] = pick(c)
 	}
-	return &object.Series{Value: out}
+	return accountFor(&object.Series{Value: out})
 }
 
 func isTruthy(o object.Object) bool {
@@ -477,4 +480,24 @@ func enforceSeriesLength(env *object.Environment, n int) *object.Error {
 		return newError("series length %d exceeds limits %d.", n, env.Limits().MaxSeriesLength)
 	}
 	return nil
+}
+
+func accountFor(obj object.Object) object.Object {
+	var size int
+	switch v := obj.(type) {
+	case *object.String:
+		size = len(v.Value)
+	case *object.Series:
+		size = len(v.Value) * 8 // float64
+	case *object.CandleSeries:
+		size = len(v.Value) * 5 * 8 // 5 float64 fields per candle
+	default:
+		return obj
+	}
+	currentLiveBytes += size
+	if currentLiveBytes > object.DefaultLimits.MaxLiveBytes {
+		return newError("memory limit exceeded: %d bytes (limit %d)",
+			currentLiveBytes, object.DefaultLimits.MaxLiveBytes)
+	}
+	return obj
 }

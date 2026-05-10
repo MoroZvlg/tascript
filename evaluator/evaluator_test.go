@@ -657,7 +657,7 @@ func withLimits(t *testing.T, lim object.Limits) {
 }
 
 func TestStringLiteralWithinLimit(t *testing.T) {
-	withLimits(t, object.Limits{MaxStringLength: 8, MaxSeriesLength: 1024})
+	withLimits(t, object.Limits{MaxLiveBytes: 6 * 1024, MaxStringLength: 8, MaxSeriesLength: 1024})
 	got := testEval(t, `"hello"`)
 	s, ok := got.(*object.String)
 	if !ok {
@@ -669,7 +669,7 @@ func TestStringLiteralWithinLimit(t *testing.T) {
 }
 
 func TestStringLiteralExceedsLimit(t *testing.T) {
-	withLimits(t, object.Limits{MaxStringLength: 4, MaxSeriesLength: 1024})
+	withLimits(t, object.Limits{MaxLiveBytes: 6 * 1024, MaxStringLength: 4, MaxSeriesLength: 1024})
 	got := testEval(t, `"too long"`)
 	errObj, ok := got.(*object.Error)
 	if !ok {
@@ -681,7 +681,7 @@ func TestStringLiteralExceedsLimit(t *testing.T) {
 }
 
 func TestStringConcatWithinLimit(t *testing.T) {
-	withLimits(t, object.Limits{MaxStringLength: 10, MaxSeriesLength: 1024})
+	withLimits(t, object.Limits{MaxLiveBytes: 6 * 1024, MaxStringLength: 10, MaxSeriesLength: 1024})
 	got := testEval(t, `"abc" + "de"`)
 	s, ok := got.(*object.String)
 	if !ok {
@@ -693,7 +693,7 @@ func TestStringConcatWithinLimit(t *testing.T) {
 }
 
 func TestStringConcatExceedsLimit(t *testing.T) {
-	withLimits(t, object.Limits{MaxStringLength: 5, MaxSeriesLength: 1024})
+	withLimits(t, object.Limits{MaxLiveBytes: 6 * 1024, MaxStringLength: 5, MaxSeriesLength: 1024})
 	got := testEval(t, `"abc" + "defgh"`)
 	errObj, ok := got.(*object.Error)
 	if !ok {
@@ -705,7 +705,7 @@ func TestStringConcatExceedsLimit(t *testing.T) {
 }
 
 func TestSeriesBuiltinExceedsLimit(t *testing.T) {
-	withLimits(t, object.Limits{MaxStringLength: 1024, MaxSeriesLength: 5})
+	withLimits(t, object.Limits{MaxLiveBytes: 6 * 1024, MaxStringLength: 1024, MaxSeriesLength: 5})
 
 	bars := make([]object.Candle, 10)
 	for i := range bars {
@@ -732,7 +732,7 @@ func TestSeriesBuiltinExceedsLimit(t *testing.T) {
 }
 
 func TestSeriesBuiltinWithinLimit(t *testing.T) {
-	withLimits(t, object.Limits{MaxStringLength: 1024, MaxSeriesLength: 100})
+	withLimits(t, object.Limits{MaxLiveBytes: 6 * 1024, MaxStringLength: 1024, MaxSeriesLength: 100})
 
 	bars := make([]object.Candle, 10)
 	for i := range bars {
@@ -824,5 +824,112 @@ func TestEvalRespectsContextDeadline(t *testing.T) {
 	}
 	if !contains(errObj.Message, "deadline") {
 		t.Errorf("expected deadline error, got %q", errObj.Message)
+	}
+}
+
+func TestLiveBytesStringWithinLimit(t *testing.T) {
+	withLimits(t, object.Limits{MaxStringLength: 1024, MaxSeriesLength: 1024, MaxLiveBytes: 64})
+	got := testEval(t, `"hello"`)
+	if _, ok := got.(*object.String); !ok {
+		t.Fatalf("expected *object.String, got %T (%s)", got, got.Inspect())
+	}
+}
+
+func TestLiveBytesCumulativeStringConcatExceeds(t *testing.T) {
+	// Each concat allocates a new *String. After enough rounds, total live
+	// bytes should trip MaxLiveBytes even though no single string exceeds
+	// MaxStringLength.
+	withLimits(t, object.Limits{MaxStringLength: 1024, MaxSeriesLength: 1024, MaxLiveBytes: 32})
+	input := `
+let s = "abcdefgh"
+let a = s + s
+let b = a + s
+let c = b + s
+let d = c + s
+d
+`
+	got := testEval(t, input)
+	errObj, ok := got.(*object.Error)
+	if !ok {
+		t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
+	}
+	if !contains(errObj.Message, "memory limit exceeded") {
+		t.Errorf("expected memory limit error, got %q", errObj.Message)
+	}
+}
+
+func TestLiveBytesCumulativeSeriesExceeds(t *testing.T) {
+	// Each sma() call allocates a fresh *Series. Three calls of length 100
+	// = 3 * 100 * 8 = 2400 bytes, which exceeds the 1024-byte cap.
+	withLimits(t, object.Limits{MaxStringLength: 1024, MaxSeriesLength: 1024, MaxLiveBytes: 1024})
+
+	bars := make([]object.Candle, 100)
+	for i := range bars {
+		bars[i] = object.Candle{Open: 1, High: 1, Low: 1, Close: 1, Volume: 1}
+	}
+	env := object.NewEnvironment()
+	evaluator.RegisterBuiltins(env)
+	env.Set("candles", &object.CandleSeries{Value: bars})
+
+	input := `
+sma(candles, 3)
+sma(candles, 5)
+sma(candles, 7)
+`
+	l := lexer.New(input)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	got := evaluator.Eval(context.Background(), prog, env)
+	errObj, ok := got.(*object.Error)
+	if !ok {
+		t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
+	}
+	if !contains(errObj.Message, "memory limit exceeded") {
+		t.Errorf("expected memory limit error, got %q", errObj.Message)
+	}
+}
+
+func TestLiveBytesExtractColumnExceeds(t *testing.T) {
+	// candles.closes returns a fresh *Series of length len(candles).
+	// 200 candles * 8 bytes = 1600 bytes, over the 512-byte cap.
+	withLimits(t, object.Limits{MaxStringLength: 1024, MaxSeriesLength: 1024, MaxLiveBytes: 512})
+
+	bars := make([]object.Candle, 200)
+	for i := range bars {
+		bars[i] = object.Candle{Open: 1, High: 1, Low: 1, Close: 1, Volume: 1}
+	}
+	env := object.NewEnvironment()
+	evaluator.RegisterBuiltins(env)
+	env.Set("candles", &object.CandleSeries{Value: bars})
+
+	l := lexer.New(`candles.closes`)
+	p := parser.New(l)
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	got := evaluator.Eval(context.Background(), prog, env)
+	errObj, ok := got.(*object.Error)
+	if !ok {
+		t.Fatalf("expected *object.Error, got %T (%s)", got, got.Inspect())
+	}
+	if !contains(errObj.Message, "memory limit exceeded") {
+		t.Errorf("expected memory limit error, got %q", errObj.Message)
+	}
+}
+
+func TestLiveBytesResetsBetweenPrograms(t *testing.T) {
+	// Runs after the cumulative tests above blew the budget. If liveBytes
+	// isn't reset per program, this trivial script wrongly errors.
+	got := testEval(t, `"ok"`)
+	s, ok := got.(*object.String)
+	if !ok {
+		t.Fatalf("expected *object.String, got %T (%s)", got, got.Inspect())
+	}
+	if s.Value != "ok" {
+		t.Errorf("expected \"ok\", got %q", s.Value)
 	}
 }

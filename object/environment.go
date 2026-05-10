@@ -5,11 +5,13 @@ import "fmt"
 type Limits struct {
 	MaxSeriesLength int
 	MaxStringLength int
+	MaxLiveBytes    int
 }
 
 var DefaultLimits = Limits{
 	MaxSeriesLength: 1024,
 	MaxStringLength: 1024,
+	MaxLiveBytes:    64 * 1024,
 }
 
 type Environment struct {
