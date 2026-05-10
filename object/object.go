@@ -22,6 +22,8 @@ const (
 	CandleSeriesKind ObjectType = "CandleSeries"
 	BuiltinKind      ObjectType = "builtin"
 	ErrorKind        ObjectType = "error"
+
+	KindAny ObjectType = "any" // used for validator. In our version we don't need anything except candle series
 )
 
 type Object interface {

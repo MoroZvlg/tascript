@@ -22,9 +22,9 @@
 
 ## Current Status
 
-**Current Lesson:** 5.3 complete
+**Current Lesson:** 5.4 complete
 **Last Session Date:** 2026-05-10
-**Notes:** Wall-clock deadline via `context.Context`. `Eval` signature gained `ctx context.Context` as the first parameter; threaded through every recursion site (`evalProgram`, `evalBuiltin`, `evalFunc`, `evalBlock`, all infix/prefix/let/if/index/member/call sites). `ctx.Err() != nil` check sits right after the op-budget check at the top of `Eval`. All 14 call sites updated to pass `context.Background()` — main.go, repl/repl.go, and 12 spots in evaluator_test.go. New test `TestEvalRespectsContextDeadline` builds an already-expired context and confirms a `"deadline"` error fires. Order note: op-budget is checked before deadline — if you want "stop *now*" semantics on deadline, swap the order.
+**Notes:** Static validation pass. New `evaluator/validator.go` with `Validator` struct (carries `errors []string` + indicator-name set). `Validate(node, scope) ObjectType` mirrors `Eval`'s recursive shape but tracks `object.ObjectType` per name in a new `object.Scope` (sibling to `Environment`, with `outer` chain). Pre-seeded `candles → CandleSeriesKind`; `let`/`const` propagate the RHS kind; identifier lookups resolve transitively. Function literal bodies walked at definition time (the whole point — find violations in unrun code); params bound to `KindAny`. Walks but doesn't validate infix/prefix/index/member nodes — they exist in the switch only to recurse. One real bug surfaced: `append(slice, fmtStr, args...)` doesn't format — adds raw entries; user fixed via `fmt.Sprintf`. Known false positives pinned in tests: function-param case, scoped binding leaking out, alias-through-block. Known minor bug not fixed: `checkIndicatorCall` re-walks arg[0] which the boilerplate's arg loop also walks → duplicate errors for nested indicator calls (`sma(sma(5,14),14)`). 14 tests, all green.
 
 ---
 
@@ -232,9 +232,19 @@ itself can enforce.
   - Builtins do NOT yet observe `ctx` — talive math is CPU-bound and won't be cancelled
     mid-flight. Documented as a future concern (e.g. when network-touching builtins land).
 
-- [ ] **5.4 — (Stretch) Static Validation Pass**
-  - Pre-eval AST walk that rejects disallowed constructs (e.g. unbounded loops once
-    those exist, blacklisted builtins) before any code runs. Cheap lint layer.
+- [x] **5.4 — (Stretch) Static Validation Pass**
+  - `evaluator/validator.go`: `Validator` struct + `Validate(node, scope) ObjectType`.
+    Recursive walk mirroring `Eval`'s shape but tracking `ObjectType` per name in a
+    new `object.Scope` (sibling to `Environment`, `outer` chain). Pre-seeded with
+    `candles → CandleSeriesKind`; let/const propagate RHS kind; identifier lookup
+    resolves transitively.
+  - Concrete rule shipped: indicator builtins (`sma`/`ema`/`rsi`) require first arg
+    to be `CandleSeriesKind`. `checkIndicatorCall` enforces; runs before `Eval`.
+  - Function literal bodies walked at definition time — finds violations in code
+    that may never run. Params get `KindAny` (no caller info statically).
+  - Known false positives pinned in tests: function-param case, scoped binding
+    leaking out of an if-block. Known minor bug: nested indicator calls produce
+    duplicate errors (`checkIndicatorCall` and the arg-loop both walk arg[0]).
 
 - [ ] **5.5 — (Stretch) Best-Effort Memory Accounting**
   - Track the sum of `len()` of live strings + series via wrapper allocations.
@@ -265,4 +275,5 @@ itself can enforce.
 | 17      | 2026-05-09 | 5.1             | Sandbox lesson 1: string + series size caps. Global hardcoded `object.DefaultLimits` (1024/1024); `Environment.Limits()` returns it directly. Three enforcement points (string literal, string concat, builtin input). `extractColumn` skipped intentionally. Builtin signature gained `env`. New `withLimits` test helper + 6 enforcement tests. Three pre-existing tests updated for new builtin signature. |
 | 18      | 2026-05-10 | 5.2             | Op budget. `const opLimit = 10_000` + `var currentOpCount` in evaluator. Increment+check at top of `Eval`; `*ast.Program` early-returns with a counter reset (Option B). One ordering bug found: initial attempt put the reset inside the switch arm — unreachable because the increment+check above it tripped on the leftover counter. Caught by a sequential reset test. Cleanup pass: const/var split, `++` form, comment rewritten to flag non-reentrancy as the actual constraint. |
 | 19      | 2026-05-10 | 5.3             | Wall-clock deadline via `context.Context`. `Eval` gained `ctx` as first arg, threaded through every recursion site. `ctx.Err()` check after op-budget check. All 14 call sites updated (main.go, repl.go, 12 in tests) to pass `context.Background()`. `TestEvalRespectsContextDeadline` confirms an already-expired context trips a `"deadline"` error. |
+| 20      | 2026-05-10 | 5.4             | Static validation pass. New `Validator` struct + `object.Scope` (sibling to `Environment`). `Validate` mirrors `Eval`'s switch, tracks `ObjectType` per name, pre-seeds `candles → CandleSeriesKind`. Indicator-arg rule wired in `checkIndicatorCall`. Real bug found: `append(slice, fmt, args...)` doesn't format — fixed via `fmt.Sprintf`. False-positive cases (function params, block-scoped bindings) pinned in tests. 14 tests, all green. |
 
