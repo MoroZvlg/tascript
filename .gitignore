@@ -6,7 +6,7 @@ coverage.*
 
 # WASI build artifact (cmd/tascript-wasm) — rebuild with:
 # GOOS=wasip1 GOARCH=wasm go build -o tascript.wasm ./cmd/tascript-wasm
-tascript.wasm
+/lessons/tascript.wasm
 
-# Sandbox host binary (cmd/sandbox) — rebuild with `go build ./cmd/sandbox`
-/sandbox
+# Sandbox host binary (lessons/cmd/sandbox) — rebuild with `go build ./cmd/sandbox`
+/lessons/sandbox
