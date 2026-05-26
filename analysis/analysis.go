@@ -134,8 +134,13 @@ func (a *analyzer) checkStmt(fnName string, s ast.Stmt) {
 		a.checkExprImplemented(x.Target)
 		a.checkExprImplemented(x.Value)
 	case *ast.IfStmt:
-		a.addErrf(x.IfPos, diag.CatNotImplemented,
-			"if statements are not implemented in this slice")
+		a.checkExprImplemented(x.Condition)
+		for _, nested := range x.Consequence {
+			a.checkStmt(fnName, nested)
+		}
+		for _, nested := range x.Alternative {
+			a.checkStmt(fnName, nested)
+		}
 	case *ast.ExprStmt:
 		a.addErrf(x.Pos(), diag.CatNotImplemented,
 			"expression statements are not implemented in this slice")
@@ -201,9 +206,28 @@ func (a *analyzer) checkExprImplemented(x ast.Expr) {
 	case *ast.NumberLit, *ast.StringLit, *ast.Ident:
 		return
 	case *ast.BoolLit:
-		a.addErrf(v.Pos(), diag.CatNotImplemented,
-			"Bool expressions are not implemented in this slice")
-	case *ast.UnaryExpr, *ast.BinaryExpr, *ast.MemberExpr, *ast.IndexExpr, *ast.CallExpr:
+		return
+	case *ast.UnaryExpr:
+		if v.Op != token.MINUS && v.Op != token.BANG {
+			a.addErrf(v.OpPos, diag.CatNotImplemented,
+				"unary operator %s is not implemented in this slice", v.Op)
+		}
+		a.checkExprImplemented(v.Right)
+	case *ast.BinaryExpr:
+		switch v.Op {
+		case token.PLUS, token.MINUS, token.ASTERISK, token.SLASH, token.PERCENT:
+			a.checkExprImplemented(v.Left)
+			a.checkExprImplemented(v.Right)
+		case token.EQ, token.NEQ, token.LT, token.LTE, token.GT, token.GTE, token.AND, token.OR:
+			a.checkExprImplemented(v.Left)
+			a.checkExprImplemented(v.Right)
+		default:
+			a.addErrf(v.OpPos, diag.CatNotImplemented,
+				"binary operator %s is not implemented in this slice", v.Op)
+		}
+	case *ast.MemberExpr:
+		a.checkExprImplemented(v.Object)
+	case *ast.IndexExpr, *ast.CallExpr:
 		a.addErrf(x.Pos(), diag.CatNotImplemented,
 			"expression %T is not implemented in this slice", x)
 	default:

@@ -2,6 +2,7 @@ package tascript_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -288,7 +289,135 @@ function Run() {}
 	}
 }
 
+func TestSlice1_CandleSourceFeedsRun(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output ticks {
+  price: Number
+  volume: Number
+  mid: Number
+  adjusted: Number
+}
+
+function Init() {}
+function Run() {
+  emit(ticks,
+       price=btc.closes,
+       volume=btc.volumes,
+       mid=btc.hl2,
+       adjusted=btc.closes + 2 * 3)
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{Open: 90, High: 110, Low: 80, Close: 100, Volume: 5},
+				{Open: 95, High: 120, Low: 90, Close: 115, Volume: 7},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 {
+		t.Fatalf("step 1 events = %#v, want one event", got)
+	}
+	if got[0].Data["price"] != float64(100) ||
+		got[0].Data["volume"] != float64(5) ||
+		got[0].Data["mid"] != float64(95) ||
+		got[0].Data["adjusted"] != float64(106) {
+		t.Fatalf("step 1 data = %#v", got[0].Data)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	got = r.DrainEvents()
+	if len(got) != 1 {
+		t.Fatalf("step 2 events = %#v, want one event", got)
+	}
+	if got[0].Data["price"] != float64(115) ||
+		got[0].Data["volume"] != float64(7) ||
+		got[0].Data["mid"] != float64(105) ||
+		got[0].Data["adjusted"] != float64(121) {
+		t.Fatalf("step 2 data = %#v", got[0].Data)
+	}
+}
+
+func TestSlice2_IfComparisonsAndLogicalOperators(t *testing.T) {
+	src := []byte(`THRESHOLD = 110
+
+input btc: CandleSeries
+
+output alerts {
+  price: Number
+}
+
+function Init() {}
+function Run() {
+  if (btc.closes > THRESHOLD && !false) {
+    emit(alerts, price=btc.closes)
+  }
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{High: 105, Low: 95, Close: 100},
+				{High: 120, Low: 100, Close: 115},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	if got := r.DrainEvents(); len(got) != 0 {
+		t.Fatalf("step 1 events = %#v, want none", got)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 || got[0].Output != "alerts" || got[0].Data["price"] != float64(115) {
+		t.Fatalf("step 2 events = %#v, want one alert at 115", got)
+	}
+}
+
 // --- helpers ---
+
+type sliceSource struct {
+	candles []tascript.Candle
+	cursor  int
+}
+
+func (s *sliceSource) NextCandle() (tascript.Candle, error) {
+	if s.cursor >= len(s.candles) {
+		return tascript.Candle{}, errors.New("no more candles")
+	}
+	c := s.candles[s.cursor]
+	s.cursor++
+	return c, nil
+}
 
 func readFile(t *testing.T, path string) []byte {
 	t.Helper()

@@ -198,6 +198,25 @@ came out.
 - `DataSource` interface: a method that produces the next candle.
 
 **Not yet:** history (`[n]`), comparisons, conditions, state, indicators.
+Launch-time `INPUT_NOT_WIRED` remains deferred; an unwired input is still
+accepted for compatibility with slice-0 placeholder declarations, but reading
+it at runtime is an error.
+
+**Public Go API addition:**
+
+```go
+type Candle struct {
+    Open, High, Low, Close, Volume float64
+}
+
+type DataSource interface {
+    NextCandle() (Candle, error)
+}
+
+tascript.Launch(prog, tascript.Wiring{
+    DataSources: map[string]tascript.DataSource{"btc": source},
+})
+```
 
 **Project's integration test:**
 

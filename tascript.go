@@ -1,6 +1,6 @@
 // Package tascript is the public entrypoint for the tascript DSL.
 //
-// Surface (slice 0):
+// Surface:
 //
 //	prog, diags, err := tascript.Compile(src)
 //	runner, err := tascript.Launch(prog, tascript.Wiring{})
@@ -24,8 +24,14 @@ import (
 // Diagnostic re-exports diag.Diagnostic so callers can stay in tascript.*.
 type Diagnostic = diag.Diagnostic
 
+// Candle is a single OHLCV bar fed by a host DataSource.
+type Candle = eval.Candle
+
+// DataSource produces one candle per Runner.Step for a declared input port.
+type DataSource = eval.DataSource
+
 // Event is what a program emits via emit(...). Mirror of eval.Event and the
-// §2 event record: { output, ts, value, data }. In slice 0 Ts is unset and
+// §2 event record: { output, ts, value, data }. Ts is not exposed yet and
 // Value is nil for structured outputs.
 type Event struct {
 	Output string
@@ -60,14 +66,15 @@ func (p *Program) Outputs() []string {
 	return out
 }
 
-// Wiring is the host-side configuration passed to [Launch]. Slice 0 only
-// knows that input ports may be enumerated. Real DataSource / Sink types
-// land in later slices.
+// Wiring is the host-side configuration passed to [Launch].
 type Wiring struct {
 	// InputPorts is the optional set of input port names the host has
-	// prepared. Slice 0 does not require it to be non-empty; later slices
-	// will validate against the program's declared ports (INPUT_NOT_WIRED).
+	// prepared. It is retained for slice-0 callers; DataSources carries real
+	// candle feeds.
 	InputPorts map[string]struct{}
+
+	// DataSources maps declared input port names to candle sources.
+	DataSources map[string]DataSource
 }
 
 // Compile lexes, parses, and validates source. It returns the compiled
@@ -113,11 +120,10 @@ func Launch(p *Program, w Wiring) (*Runner, error) {
 	if p == nil {
 		return nil, errors.New("tascript.Launch: nil program")
 	}
-	r := &Runner{prog: p, eng: eval.New(p.ast)}
+	r := &Runner{prog: p, eng: eval.New(p.ast, w.DataSources)}
 	if d := r.eng.Prepare(); d != nil {
 		return nil, *d
 	}
-	_ = w // slice 0: wiring fields are advisory only
 	return r, nil
 }
 
