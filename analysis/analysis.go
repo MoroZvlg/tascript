@@ -129,9 +129,10 @@ func (a *analyzer) checkStmt(fnName string, s ast.Stmt) {
 		}
 		a.checkEmit(x)
 	case *ast.AssignStmt:
-		a.addErrf(x.Pos(), diag.CatNotImplemented,
-			"assignment statements are not implemented in this slice")
-		a.checkExprImplemented(x.Target)
+		if !isStateMember(x.Target) {
+			a.addErrf(x.Pos(), diag.CatNotImplemented,
+				"only state.* assignment is implemented in this slice")
+		}
 		a.checkExprImplemented(x.Value)
 	case *ast.IfStmt:
 		a.checkExprImplemented(x.Condition)
@@ -227,13 +228,37 @@ func (a *analyzer) checkExprImplemented(x ast.Expr) {
 		}
 	case *ast.MemberExpr:
 		a.checkExprImplemented(v.Object)
-	case *ast.IndexExpr, *ast.CallExpr:
+	case *ast.CallExpr:
+		if !isMathCall(v) {
+			a.addErrf(x.Pos(), diag.CatNotImplemented,
+				"expression %T is not implemented in this slice", x)
+			return
+		}
+		for _, arg := range v.Args {
+			a.checkExprImplemented(arg.Value)
+		}
+	case *ast.IndexExpr:
 		a.addErrf(x.Pos(), diag.CatNotImplemented,
 			"expression %T is not implemented in this slice", x)
 	default:
 		a.addErrf(x.Pos(), diag.CatNotImplemented,
 			"expression %T is not implemented in this slice", x)
 	}
+}
+
+func isStateMember(x ast.Expr) bool {
+	m, ok := x.(*ast.MemberExpr)
+	return ok && isIdent(m.Object, "state")
+}
+
+func isMathCall(x *ast.CallExpr) bool {
+	m, ok := x.Callee.(*ast.MemberExpr)
+	return ok && isIdent(m.Object, "math") && (m.Name == "max" || m.Name == "min")
+}
+
+func isIdent(x ast.Expr, name string) bool {
+	id, ok := x.(*ast.Ident)
+	return ok && id.Name == name
 }
 
 func (a *analyzer) addErrf(pos token.Pos, cat diag.Category, format string, args ...any) {

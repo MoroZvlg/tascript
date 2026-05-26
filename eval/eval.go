@@ -56,6 +56,7 @@ type Engine struct {
 	inputTypes map[string]string
 	inputs     map[string]*CandleSeries
 	sources    map[string]DataSource
+	state      map[string]Value
 	events     []Event
 }
 
@@ -66,6 +67,7 @@ func New(prog *ast.Program, sources map[string]DataSource) *Engine {
 		inputTypes: map[string]string{},
 		inputs:     map[string]*CandleSeries{},
 		sources:    sources,
+		state:      map[string]Value{},
 	}
 }
 
@@ -137,6 +139,8 @@ func (e *Engine) runStmt(s ast.Stmt) *diag.Diagnostic {
 		return e.runEmit(x)
 	case *ast.IfStmt:
 		return e.runIf(x)
+	case *ast.AssignStmt:
+		return e.runAssign(x)
 	default:
 		return &diag.Diagnostic{
 			Phase: diag.PhaseRuntime, Category: diag.CatNotImplemented,
@@ -162,6 +166,28 @@ func (e *Engine) runEmit(em *ast.EmitStmt) *diag.Diagnostic {
 		ev.Data[kw.Name] = v
 	}
 	e.events = append(e.events, ev)
+	return nil
+}
+
+func (e *Engine) runAssign(stmt *ast.AssignStmt) *diag.Diagnostic {
+	member, ok := stmt.Target.(*ast.MemberExpr)
+	if !ok {
+		return &diag.Diagnostic{
+			Phase: diag.PhaseRuntime, Category: diag.CatNotImplemented,
+			Pos: stmt.Target.Pos(), Msg: "only state.* assignment is supported in this slice",
+		}
+	}
+	if !isIdent(member.Object, "state") {
+		return &diag.Diagnostic{
+			Phase: diag.PhaseRuntime, Category: diag.CatNotImplemented,
+			Pos: stmt.Target.Pos(), Msg: "only state.* assignment is supported in this slice",
+		}
+	}
+	val, err := e.evalExpr(stmt.Value)
+	if err != nil {
+		return err
+	}
+	e.state[member.Name] = val
 	return nil
 }
 
@@ -211,6 +237,8 @@ func (e *Engine) evalExpr(x ast.Expr) (Value, *diag.Diagnostic) {
 		return e.evalBinary(v)
 	case *ast.MemberExpr:
 		return e.evalMember(v)
+	case *ast.CallExpr:
+		return e.evalCall(v)
 	}
 	return nil, &diag.Diagnostic{
 		Phase: diag.PhaseRuntime, Category: diag.CatNotImplemented,
@@ -341,6 +369,17 @@ func (e *Engine) evalOr(x *ast.BinaryExpr) (Value, *diag.Diagnostic) {
 }
 
 func (e *Engine) evalMember(x *ast.MemberExpr) (Value, *diag.Diagnostic) {
+	if isIdent(x.Object, "state") {
+		val, ok := e.state[x.Name]
+		if !ok {
+			return nil, &diag.Diagnostic{
+				Phase: diag.PhaseRuntime, Category: diag.CatStateUnset,
+				Pos: x.NamePos, Msg: fmt.Sprintf("state.%s is unset", x.Name),
+			}
+		}
+		return val, nil
+	}
+
 	obj, err := e.evalExpr(x.Object)
 	if err != nil {
 		return nil, err
@@ -374,6 +413,43 @@ func (e *Engine) evalMember(x *ast.MemberExpr) (Value, *diag.Diagnostic) {
 	default:
 		return nil, typeErr(x.NamePos, fmt.Sprintf("unknown CandleSeries member %q", x.Name))
 	}
+}
+
+func (e *Engine) evalCall(x *ast.CallExpr) (Value, *diag.Diagnostic) {
+	member, ok := x.Callee.(*ast.MemberExpr)
+	if !ok || !isIdent(member.Object, "math") || (member.Name != "max" && member.Name != "min") {
+		return nil, &diag.Diagnostic{
+			Phase: diag.PhaseRuntime, Category: diag.CatNotImplemented,
+			Pos: x.Pos(), Msg: "only math.max(...) and math.min(...) calls are supported in this slice",
+		}
+	}
+	if len(x.Args) == 0 {
+		return nil, typeErr(x.LPos, fmt.Sprintf("math.%s requires at least one argument", member.Name))
+	}
+	var result float64
+	for i, arg := range x.Args {
+		if arg.Name != "" {
+			return nil, typeErr(arg.NamePos, fmt.Sprintf("math.%s does not accept keyword arguments", member.Name))
+		}
+		val, err := e.evalExpr(arg.Value)
+		if err != nil {
+			return nil, err
+		}
+		n, ok := asNumber(val)
+		if !ok {
+			return nil, typeErr(arg.Value.Pos(), fmt.Sprintf("math.%s arguments must be Number", member.Name))
+		}
+		if i == 0 {
+			result = n
+			continue
+		}
+		if member.Name == "max" {
+			result = math.Max(result, n)
+		} else {
+			result = math.Min(result, n)
+		}
+	}
+	return result, nil
 }
 
 func asNumber(v Value) (float64, bool) {
@@ -439,6 +515,11 @@ func applyEquality(op token.Kind, equal bool) bool {
 		return !equal
 	}
 	return equal
+}
+
+func isIdent(x ast.Expr, name string) bool {
+	id, ok := x.(*ast.Ident)
+	return ok && id.Name == name
 }
 
 func typeErr(pos token.Pos, msg string) *diag.Diagnostic {

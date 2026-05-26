@@ -403,6 +403,67 @@ function Run() {
 	}
 }
 
+func TestSlice3_StateAndMathMinMax(t *testing.T) {
+	src := []byte(`COOLDOWN_BARS = 2
+
+input btc: CandleSeries
+
+output alerts {
+  price: Number
+}
+
+function Init() {
+  state.cooldown = 0
+}
+function Run() {
+  state.cooldown = math.max(0, state.cooldown - 1)
+  if (btc.closes > 100 && state.cooldown == 0) {
+    emit(alerts, price=btc.closes)
+    state.cooldown = COOLDOWN_BARS
+  }
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{Close: 101},
+				{Close: 105},
+				{Close: 110},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 || got[0].Data["price"] != float64(101) {
+		t.Fatalf("step 1 events = %#v, want one alert at 101", got)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	if got := r.DrainEvents(); len(got) != 0 {
+		t.Fatalf("step 2 events = %#v, want none during cooldown", got)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 3: %v", err)
+	}
+	got = r.DrainEvents()
+	if len(got) != 1 || got[0].Data["price"] != float64(110) {
+		t.Fatalf("step 3 events = %#v, want one alert at 110", got)
+	}
+}
+
 // --- helpers ---
 
 type sliceSource struct {
