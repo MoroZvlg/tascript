@@ -84,6 +84,39 @@ against:
 The private project never modifies `tascript/`; it only registers against
 these APIs.
 
+## Configurable core
+
+tascript is intended to build as a dedicated standalone module. The host
+project configures the engine through `tascript.Config`, not by changing
+parser/evaluator internals:
+
+```go
+reg := tascript.NewRegistry()
+reg.RegisterType(tascript.TypeSpec{Name: "Score", Value: true, Field: true})
+reg.RegisterHelper(tascript.HelperSpec{
+    Namespace: "custom",
+    Name:      "double",
+    MinArgs:   1,
+    MaxArgs:   1,
+    Eval:      func(args []tascript.Value) (tascript.Value, error) { ... },
+})
+
+prog, diags, err := tascript.CompileWithConfig(src, tascript.Config{
+    Registry: reg,
+})
+```
+
+The default config registers the built-in value/input types and stdlib helpers
+needed by the implemented slices. Custom registries can add:
+
+- input/value/field type names accepted by declarations;
+- helper functions under custom namespaces;
+- indicator metadata, with execution wired in when the indicator slice lands;
+- later, resource policies and host-specific limits.
+
+The parser remains registry-agnostic. Registry lookups happen in the static
+analyser and evaluator, so custom names do not require grammar changes.
+
 ---
 
 ## Slices

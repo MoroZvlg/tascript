@@ -464,6 +464,51 @@ function Run() {
 	}
 }
 
+func TestConfig_CustomTypesAndHelpers(t *testing.T) {
+	reg := tascript.NewRegistry()
+	must(t, reg.RegisterType(tascript.TypeSpec{Name: "Number", Value: true, Field: true}))
+	must(t, reg.RegisterType(tascript.TypeSpec{Name: "String", Value: true, Field: true}))
+	must(t, reg.RegisterType(tascript.TypeSpec{Name: "Bool", Value: true, Field: true}))
+	must(t, reg.RegisterType(tascript.TypeSpec{Name: "Score", Value: true, Field: true}))
+	must(t, reg.RegisterHelper(tascript.HelperSpec{
+		Namespace: "custom",
+		Name:      "double",
+		MinArgs:   1,
+		MaxArgs:   1,
+		Eval: func(args []tascript.Value) (tascript.Value, error) {
+			return args[0].(float64) * 2, nil
+		},
+	}))
+
+	src := []byte(`output scored {
+  score: Score
+}
+
+function Init() {}
+function Run() {
+  emit(scored, score=custom.double(21))
+}
+`)
+	prog, diags, err := tascript.CompileWithConfig(src, tascript.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 || got[0].Data["score"] != float64(42) {
+		t.Fatalf("events = %#v, want score 42", got)
+	}
+}
+
 // --- helpers ---
 
 type sliceSource struct {
@@ -478,6 +523,13 @@ func (s *sliceSource) NextCandle() (tascript.Candle, error) {
 	c := s.candles[s.cursor]
 	s.cursor++
 	return c, nil
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func readFile(t *testing.T, path string) []byte {

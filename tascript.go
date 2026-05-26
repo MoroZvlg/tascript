@@ -18,6 +18,7 @@ import (
 	"github.com/MoroZvlg/tascript/eval"
 	"github.com/MoroZvlg/tascript/lexer"
 	"github.com/MoroZvlg/tascript/parser"
+	"github.com/MoroZvlg/tascript/registry"
 	"github.com/MoroZvlg/tascript/token"
 )
 
@@ -30,6 +31,25 @@ type Candle = eval.Candle
 // DataSource produces one candle per Runner.Step for a declared input port.
 type DataSource = eval.DataSource
 
+type Registry = registry.Registry
+type TypeSpec = registry.TypeSpec
+type HelperSpec = registry.HelperSpec
+type IndicatorSpec = registry.IndicatorSpec
+type HelperFunc = registry.HelperFunc
+type Value = registry.Value
+
+type Config struct {
+	Registry *registry.Registry
+}
+
+func DefaultConfig() Config {
+	return Config{Registry: registry.Default()}
+}
+
+func NewRegistry() *registry.Registry {
+	return registry.New()
+}
+
 // Event is what a program emits via emit(...). Mirror of eval.Event and the
 // §2 event record: { output, ts, value, data }. Ts is not exposed yet and
 // Value is nil for structured outputs.
@@ -41,7 +61,8 @@ type Event struct {
 
 // Program is a compiled tascript module.
 type Program struct {
-	ast *ast.Program
+	ast      *ast.Program
+	registry *registry.Registry
 }
 
 // Inputs returns the declared input port names.
@@ -86,6 +107,15 @@ func Compile(src []byte) (*Program, []Diagnostic, error) {
 
 // CompileFile is [Compile] with a filename used in diagnostic locations.
 func CompileFile(src []byte, file string) (*Program, []Diagnostic, error) {
+	return CompileFileWithConfig(src, file, DefaultConfig())
+}
+
+func CompileWithConfig(src []byte, cfg Config) (*Program, []Diagnostic, error) {
+	return CompileFileWithConfig(src, "", cfg)
+}
+
+func CompileFileWithConfig(src []byte, file string, cfg Config) (*Program, []Diagnostic, error) {
+	reg := normalizeConfig(cfg).Registry.Clone()
 	lx := lexer.New(src, file)
 	toks := lx.Tokenize()
 	var diags []Diagnostic
@@ -101,12 +131,19 @@ func CompileFile(src []byte, file string) (*Program, []Diagnostic, error) {
 	ps := parser.New(toks)
 	prog := ps.Parse()
 	diags = append(diags, ps.Diagnostics()...)
-	diags = append(diags, analysis.Analyze(prog)...)
+	diags = append(diags, analysis.Analyze(prog, reg)...)
 
 	if len(diags) > 0 {
 		return nil, diags, errors.New("tascript: compilation failed")
 	}
-	return &Program{ast: prog}, diags, nil
+	return &Program{ast: prog, registry: reg}, diags, nil
+}
+
+func normalizeConfig(cfg Config) Config {
+	if cfg.Registry == nil {
+		cfg.Registry = registry.Default()
+	}
+	return cfg
 }
 
 // Runner is a launched program ready to be driven by the host.
@@ -120,7 +157,7 @@ func Launch(p *Program, w Wiring) (*Runner, error) {
 	if p == nil {
 		return nil, errors.New("tascript.Launch: nil program")
 	}
-	r := &Runner{prog: p, eng: eval.New(p.ast, w.DataSources)}
+	r := &Runner{prog: p, eng: eval.New(p.ast, w.DataSources, p.registry)}
 	if d := r.eng.Prepare(); d != nil {
 		return nil, *d
 	}

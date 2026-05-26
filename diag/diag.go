@@ -27,6 +27,8 @@ const (
 	CatOutputNotWired    Category = "OUTPUT_NOT_WIRED"
 	CatTypeMismatch      Category = "TYPE_MISMATCH"
 	CatStateUnset        Category = "STATE_UNSET"
+	CatHistoryOutOfRange Category = "HISTORY_OUT_OF_RANGE"
+	CatHistoryLimit      Category = "HISTORY_LIMIT"
 	CatNotImplemented    Category = "NOT_IMPLEMENTED"
 )
 

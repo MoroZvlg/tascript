@@ -9,6 +9,7 @@ import (
 
 	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/diag"
+	"github.com/MoroZvlg/tascript/registry"
 	"github.com/MoroZvlg/tascript/token"
 )
 
@@ -57,10 +58,11 @@ type Engine struct {
 	inputs     map[string]*CandleSeries
 	sources    map[string]DataSource
 	state      map[string]Value
+	registry   *registry.Registry
 	events     []Event
 }
 
-func New(prog *ast.Program, sources map[string]DataSource) *Engine {
+func New(prog *ast.Program, sources map[string]DataSource, reg *registry.Registry) *Engine {
 	return &Engine{
 		prog:       prog,
 		constBinds: map[string]Value{},
@@ -68,6 +70,7 @@ func New(prog *ast.Program, sources map[string]DataSource) *Engine {
 		inputs:     map[string]*CandleSeries{},
 		sources:    sources,
 		state:      map[string]Value{},
+		registry:   reg.Clone(),
 	}
 }
 
@@ -417,39 +420,45 @@ func (e *Engine) evalMember(x *ast.MemberExpr) (Value, *diag.Diagnostic) {
 
 func (e *Engine) evalCall(x *ast.CallExpr) (Value, *diag.Diagnostic) {
 	member, ok := x.Callee.(*ast.MemberExpr)
-	if !ok || !isIdent(member.Object, "math") || (member.Name != "max" && member.Name != "min") {
+	if !ok {
 		return nil, &diag.Diagnostic{
 			Phase: diag.PhaseRuntime, Category: diag.CatNotImplemented,
-			Pos: x.Pos(), Msg: "only math.max(...) and math.min(...) calls are supported in this slice",
+			Pos: x.Pos(), Msg: "only registered namespace helpers are supported in this slice",
 		}
 	}
-	if len(x.Args) == 0 {
-		return nil, typeErr(x.LPos, fmt.Sprintf("math.%s requires at least one argument", member.Name))
+	ns, ok := member.Object.(*ast.Ident)
+	if !ok {
+		return nil, &diag.Diagnostic{
+			Phase: diag.PhaseRuntime, Category: diag.CatNotImplemented,
+			Pos: x.Pos(), Msg: "only registered namespace helpers are supported in this slice",
+		}
 	}
-	var result float64
-	for i, arg := range x.Args {
+	spec, ok := e.registry.Helper(ns.Name, member.Name)
+	if !ok || spec.Eval == nil {
+		return nil, &diag.Diagnostic{
+			Phase: diag.PhaseRuntime, Category: diag.CatNotImplemented,
+			Pos: x.Pos(), Msg: fmt.Sprintf("helper %s.%s is not registered", ns.Name, member.Name),
+		}
+	}
+	if err := registry.ValidateArgCount(spec.Namespace+"."+spec.Name, spec.MinArgs, spec.MaxArgs, len(x.Args)); err != nil {
+		return nil, typeErr(x.LPos, err.Error())
+	}
+	args := make([]registry.Value, 0, len(x.Args))
+	for _, arg := range x.Args {
 		if arg.Name != "" {
-			return nil, typeErr(arg.NamePos, fmt.Sprintf("math.%s does not accept keyword arguments", member.Name))
+			return nil, typeErr(arg.NamePos, fmt.Sprintf("%s.%s does not accept keyword arguments", spec.Namespace, spec.Name))
 		}
 		val, err := e.evalExpr(arg.Value)
 		if err != nil {
 			return nil, err
 		}
-		n, ok := asNumber(val)
-		if !ok {
-			return nil, typeErr(arg.Value.Pos(), fmt.Sprintf("math.%s arguments must be Number", member.Name))
-		}
-		if i == 0 {
-			result = n
-			continue
-		}
-		if member.Name == "max" {
-			result = math.Max(result, n)
-		} else {
-			result = math.Min(result, n)
-		}
+		args = append(args, val)
 	}
-	return result, nil
+	out, callErr := spec.Eval(args)
+	if callErr != nil {
+		return nil, typeErr(x.LPos, callErr.Error())
+	}
+	return out, nil
 }
 
 func asNumber(v Value) (float64, bool) {

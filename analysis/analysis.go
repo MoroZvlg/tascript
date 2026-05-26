@@ -6,6 +6,7 @@ import (
 
 	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/diag"
+	"github.com/MoroZvlg/tascript/registry"
 	"github.com/MoroZvlg/tascript/token"
 )
 
@@ -13,15 +14,16 @@ import (
 // language slice. Diagnostics still use PhaseParse because they are surfaced
 // to users before launch/runtime, but this package is deliberately separate
 // from syntax parsing.
-func Analyze(prog *ast.Program) []diag.Diagnostic {
-	a := &analyzer{outputs: map[string]*ast.OutputDecl{}}
+func Analyze(prog *ast.Program, reg *registry.Registry) []diag.Diagnostic {
+	a := &analyzer{outputs: map[string]*ast.OutputDecl{}, registry: reg.Clone()}
 	a.analyze(prog)
 	return a.diags
 }
 
 type analyzer struct {
-	diags   []diag.Diagnostic
-	outputs map[string]*ast.OutputDecl
+	diags    []diag.Diagnostic
+	outputs  map[string]*ast.OutputDecl
+	registry *registry.Registry
 }
 
 // reservedKwargs are emit() keyword names the runtime injects itself; user
@@ -94,6 +96,27 @@ func (a *analyzer) checkTopDecls(prog *ast.Program) {
 			default:
 				a.addErrf(x.Value.Pos(), diag.CatTopLevelForm,
 					"top-level constants must be Number or String literal values in this slice")
+			}
+		case *ast.InputDecl:
+			spec, ok := a.registry.Type(x.Type)
+			if !ok || !spec.Input {
+				a.addErrf(x.TypePos, diag.CatTopLevelForm,
+					"%q is not a registered input type", x.Type)
+			}
+		case *ast.OutputDecl:
+			if x.ValueType != "" {
+				spec, ok := a.registry.Type(x.ValueType)
+				if !ok || !spec.Value {
+					a.addErrf(x.ValueTypePos, diag.CatTopLevelForm,
+						"%q is not a registered output value type", x.ValueType)
+				}
+			}
+			for _, field := range x.Fields {
+				spec, ok := a.registry.Type(field.Type)
+				if !ok || !spec.Field {
+					a.addErrf(field.TypePos, diag.CatTopLevelForm,
+						"%q is not a registered output field type", field.Type)
+				}
 			}
 		}
 	}
@@ -229,12 +252,21 @@ func (a *analyzer) checkExprImplemented(x ast.Expr) {
 	case *ast.MemberExpr:
 		a.checkExprImplemented(v.Object)
 	case *ast.CallExpr:
-		if !isMathCall(v) {
+		spec, ok := a.helperSpec(v)
+		if !ok {
 			a.addErrf(x.Pos(), diag.CatNotImplemented,
 				"expression %T is not implemented in this slice", x)
 			return
 		}
+		if err := registry.ValidateArgCount(spec.Namespace+"."+spec.Name, spec.MinArgs, spec.MaxArgs, len(v.Args)); err != nil {
+			a.addErrf(v.LPos, diag.CatTypeMismatch, "%s", err)
+		}
 		for _, arg := range v.Args {
+			if arg.Name != "" {
+				a.addErrf(arg.NamePos, diag.CatTypeMismatch,
+					"%s.%s does not accept keyword arguments", spec.Namespace, spec.Name)
+				continue
+			}
 			a.checkExprImplemented(arg.Value)
 		}
 	case *ast.IndexExpr:
@@ -251,9 +283,16 @@ func isStateMember(x ast.Expr) bool {
 	return ok && isIdent(m.Object, "state")
 }
 
-func isMathCall(x *ast.CallExpr) bool {
+func (a *analyzer) helperSpec(x *ast.CallExpr) (registry.HelperSpec, bool) {
 	m, ok := x.Callee.(*ast.MemberExpr)
-	return ok && isIdent(m.Object, "math") && (m.Name == "max" || m.Name == "min")
+	if !ok {
+		return registry.HelperSpec{}, false
+	}
+	ns, ok := m.Object.(*ast.Ident)
+	if !ok {
+		return registry.HelperSpec{}, false
+	}
+	return a.registry.Helper(ns.Name, m.Name)
 }
 
 func isIdent(x ast.Expr, name string) bool {
