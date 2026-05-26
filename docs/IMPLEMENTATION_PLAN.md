@@ -7,12 +7,12 @@
 
 ## Why slices, not phases
 
-The earlier draft of this document grouped work by component (lexer →
-parser → analyser → eval). That's a textbook compiler-bring-up shape, but
-it leaves the downstream project blocked until most of the compiler is
-built. Vertical slicing inverts that: every slice produces a working
-tascript that the project can wire against, expose to real candle data, and
-report problems with.
+The earlier draft of this document grouped delivery by component (finish the
+lexer, then the parser, then the analyser, then eval). That leaves the
+downstream project blocked until most of the compiler is built. Vertical
+slicing inverts delivery order: every slice produces a working tascript that
+the project can wire against, expose to real candle data, and report problems
+with. The internal compiler architecture still keeps those layers separate.
 
 It also forces extensibility points to be designed early. When slice 5
 adds the *first* indicator, the registry API has to be sharp enough for
@@ -27,9 +27,34 @@ subset; constructs not yet supported produce a clear `NOT_IMPLEMENTED`
 parse error with a pointer to the slice that will land them. Each slice
 also extends the test corpus.
 
+## Compiler architecture
+
+Vertical slices describe delivery order, not a reason to collapse compiler
+layers. The implementation should keep the classic shape:
+
+```
+source -> lexer -> parser -> static analyser -> evaluator/runtime plan
+```
+
+- **Lexer** tokenises only. It does not know language semantics.
+- **Parser** builds an AST for valid syntax. This includes tascript-specific
+  syntax such as `input`, `output`, `function`, blocks, statements, and Pratt
+  expression parsing. It may reject malformed grammar, but it should not answer
+  semantic questions.
+- **Static analyser** validates declarations and names, required `Init`/`Run`,
+  `emit(...)` targets and payloads, type rules, registry lookups, history
+  bounds, warmup call-site discovery, and resource limits.
+- **Evaluator/runtime** executes a checked program. It should not rediscover
+  static facts that the analyser already proved.
+
+Diagnostics that come from the analyser are still surfaced as `PhaseParse`
+when they happen before launch/runtime. Internally, keeping syntax parsing and
+static analysis separate prevents the parser from becoming a symbol table,
+type checker, registry resolver, and resource planner all at once.
+
 ## Repository topology
 
-- **`tascript/`** — public Go module. Lexer, parser, analyser, evaluator,
+- **`tascript/`** — public Go module. Lexer, parser, static analyser, evaluator,
   registry framework, history wrapper. **Not** data sources, **not** sinks,
   **not** ergo wiring.
 - **Private project repo** — depends on `tascript` as a Go module. Owns
@@ -50,7 +75,7 @@ against:
 
 | Extension point | First slice | What it lets you add |
 |-----------------|-------------|----------------------|
-| `DataSource`     | 1 | A source of candles to wire into an `input("...")` slot |
+| `DataSource`     | 1 | A source of candles to wire into a declared `input` port |
 | `Sink`           | 0 | A destination for emitted events |
 | Indicator registry | 5 | Custom indicators callable as `<series>.<name>(...)` in DSL |
 | Helper registry   | 7 | Custom `ns.fn(...)` helpers under existing or new namespaces |
@@ -71,19 +96,46 @@ up, sees an event come out.
 **Language subset:**
 
 - Lexer + parser for: `Number` and `String` literals, identifiers,
-  comments, function declarations with empty parameter lists, `{ }`
-  blocks, statement-level `=` assignment.
+  comments, `:` (port/field type annotations), function declarations with
+  empty parameter lists, `{ }` blocks, statement-level `=` assignment.
 - Top-level: `K = expr` constant declarations (literals only),
+  `input <name>: <Type>` and `output <name>` declarations (see below),
   `function Init() { ... }`, `function Run() { ... }`. Both `Init` and
   `Run` mandatory.
-- `emit(NAME_LITERAL, ident=expr*)` where expressions are constants or
-  references to top-level constants.
-- `input("slot_name")` parsed and recorded but **the resulting binding
-  carries no data** — it's a placeholder that the runtime registers as
-  "this program declared an input slot."
+- **Input declarations** — `input btc: CandleSeries`. The name becomes a
+  read-only top-level binding; the declared type is recorded but, in this
+  slice, **the binding carries no data** — it is a placeholder the runtime
+  registers as "this program declared an input port of this type."
+- **Output declarations** — all three §3.3 shapes parse:
+  `output logs: String` (value), `output alerts { kind: String }`
+  (structured; multi-line schemas allowed), and the combined
+  `output x: String { price: Number }`. Field/value *types* are parsed and
+  recorded but **not type-checked** in this slice (no type system yet).
+- `emit(OUTPUT [, ident=expr]*)` where `OUTPUT` is a declared output
+  **identifier** (not a string literal) and expressions are literals or
+  references to top-level constants. Validation in this slice:
+  - target must be a declared output → else `UNKNOWN_OUTPUT`;
+  - `emit(...)` only inside `Run()` → else `EMIT_OUTSIDE_RUN`;
+  - kwargs must match the output's declared field **names** exactly — all
+    present, none extra → else `EMIT_PAYLOAD`. (Field-value *type* matching
+    is deferred to slice 2, when `Bool`/comparisons bring a type system.)
+
+**Implementation note:** Slice 0 still uses the full compiler pipeline. The
+parser accepts the grammar and builds AST nodes; the static analyser enforces
+the slice's currently supported subset and emits `NOT_IMPLEMENTED` for syntax
+that parses but is not executable yet.
 
 **Not yet:** indicators, helpers, history, state, conditions, types beyond
-`Number`/`String`, candles.
+`Number`/`String`, candles, output-payload *type*-checking, launch-time
+wiring validation (`INPUT_NOT_WIRED` / `OUTPUT_NOT_WIRED`).
+
+**Lexer note — multi-line `{ }`.** §3.1 locks "newlines ignored inside an
+open `(` `[` `{`", but a `{` is *also* a function body where newlines
+separate statements. This slice resolves the tension at the **parser**
+level (skip newlines while reading an output schema or a multi-line
+`emit(...)` arg list) rather than baking a bracket-depth rule into the
+lexer. Full lexer-level continuation (§3.1 / §8 gap 5) stays deferred and
+the `{` ambiguity should be pinned in the spec before then.
 
 **Public Go API:**
 
@@ -91,9 +143,9 @@ up, sees an event come out.
 // Compile turns source into a runnable Program.
 tascript.Compile(src []byte) (*Program, []Diagnostic, error)
 
-// A Program is launched against a wiring map.
-prog.Inputs()  []string   // slot names declared by the program
-prog.Outputs() []string   // output names used in emit() calls
+// A Program is launched against a wiring map keyed by port name.
+prog.Inputs()  []string   // declared input port names
+prog.Outputs() []string   // declared output port names
 
 // Launch validates wiring and produces a Runner.
 tascript.Launch(prog, wiring) (*Runner, error)
@@ -104,19 +156,28 @@ runner.Step()                  // runs Run() once
 events := runner.DrainEvents() // returns []Event since last drain
 ```
 
+An `Event` mirrors §2: `{ output, ts, value, data }`. In this slice `ts`
+is unset (no candle clock yet) and `value` is `null` for structured
+outputs.
+
 **Project's integration test for this slice:**
 
 ```js
 GREETING = "hello world"
 
+output alerts {
+  message: String
+}
+
 function Init() {}
 function Run() {
-  emit("alerts", message=GREETING)
+  emit(alerts, message=GREETING)
 }
 ```
 
 Project calls `Init` then `Step` once, asserts that a single
-`Event{name:"alerts", data:{"message":"hello world"}}` came out.
+`Event{output:"alerts", value:null, data:{"message":"hello world"}}`
+came out.
 
 ---
 
@@ -129,8 +190,8 @@ Project calls `Init` then `Step` once, asserts that a single
 - `Candle` and `CandleSeries` value types with their property surfaces
   (`.open`, `.close`, etc.; `.opens`, `.closes`, etc.; derived `.hl2`,
   `.hlc3` lazy-computed per tick).
-- `input("slot")` now produces a real `CandleSeries`. The runtime feeds
-  candles into the slot each tick.
+- A declared `input <name>: CandleSeries` port now produces a real
+  `CandleSeries`. The runtime feeds candles into the port each tick.
 - The **lift rule** (§3.6) so `Series` in scalar context auto-extracts to
   its current value.
 - Binary `+ - * / %` and unary `-` on `Number`.
@@ -141,10 +202,16 @@ Project calls `Init` then `Step` once, asserts that a single
 **Project's integration test:**
 
 ```js
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output ticks {
+  price: Number
+  volume: Number
+}
+
 function Init() {}
 function Run() {
-  emit("ticks", price=btc.closes, volume=btc.volumes)
+  emit(ticks, price=btc.closes, volume=btc.volumes)
 }
 ```
 
@@ -172,11 +239,16 @@ with the right per-candle prices.
 ```js
 THRESHOLD = 100
 
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  price: Number
+}
+
 function Init() {}
 function Run() {
   if (btc.closes > THRESHOLD) {
-    emit("alerts", price=btc.closes)
+    emit(alerts, price=btc.closes)
   }
 }
 ```
@@ -203,14 +275,19 @@ function Run() {
 ```js
 COOLDOWN_BARS = 5
 
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  price: Number
+}
+
 function Init() {
   state.cooldown = 0
 }
 function Run() {
   state.cooldown = math.max(0, state.cooldown - 1)
   if (btc.closes > 100 && state.cooldown == 0) {
-    emit("alerts", price=btc.closes)
+    emit(alerts, price=btc.closes)
     state.cooldown = COOLDOWN_BARS
   }
 }
@@ -229,7 +306,7 @@ module).
 - `[n]` postfix on `Series` (the operator already exists on `Tuple` once
   multi-output indicators land, but in this slice tuples aren't a value
   type yet, so `[n]` means "history" exclusively).
-- Static analysis: parser tracks the maximum literal `n` per series and
+- Static analysis: the analyser tracks the maximum literal `n` per series and
   sizes a ring buffer accordingly (§4.2).
 - `HISTORY_OUT_OF_RANGE` runtime error.
 - `HISTORY_LIMIT` parse error at the 5000-bar cap (§7).
@@ -239,11 +316,17 @@ module).
 **Project's integration test:**
 
 ```js
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  curr: Number
+  prev: Number
+}
+
 function Init() {}
 function Run() {
   if (btc.closes > btc.closes[1]) {
-    emit("alerts", curr=btc.closes, prev=btc.closes[1])
+    emit(alerts, curr=btc.closes, prev=btc.closes[1])
   }
 }
 ```
@@ -272,7 +355,7 @@ designed for the second indicator to slot in without changes.
 - The registry is open: the private project can `RegisterIndicator(...)`
   its own indicators against tascript at launch.
 - Wires EMA from talive as the first registered indicator.
-- **Warmup phase:** parser enumerates every indicator call site, runtime
+- **Warmup phase:** the analyser enumerates every indicator call site, runtime
   computes `max(WarmUpPeriod)`, requests that many historical candles from
   the `DataSource`, feeds them through, then begins live `Run()`.
 - Indicator-output `Series` go through the history wrapper from slice 4
@@ -282,11 +365,17 @@ designed for the second indicator to slot in without changes.
 **Project's integration test:**
 
 ```js
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  price: Number
+  ema: Number
+}
+
 function Init() {}
 function Run() {
   if (btc.closes > btc.ema(50)) {
-    emit("alerts", price=btc.closes, ema=btc.ema(50))
+    emit(alerts, price=btc.closes, ema=btc.ema(50))
   }
 }
 ```
@@ -310,7 +399,7 @@ function Run() {
   `btc.rsi(14).sma(15)`).
 - Reserved constants: `CLOSE`, `OPEN`, `HIGH`, `LOW`, `HL2`, `HLC3`, `SMA`,
   `EMA`, `SMMA`, `WMA`, `DEMA`, `TEMA`, `NONE`, `DAILY`, `WEEKLY`,
-  `MONTHLY`, `QUARTERLY`, `YEARLY`, `ALL`.
+  `MONTHLY`, `QUARTERLY`, `YEARLY`.
 - Indicator kwarg config: `source=HLC3`, `ma=SMMA`, etc. with
   parse-time validation against the registry spec.
 
@@ -354,10 +443,12 @@ function Run() {
 
 **Adds:**
 
-- Multiple `input(...)` declarations.
-- `INPUT_DUPLICATE` parse error for repeated slot names.
-- Wiring: `Launch` accepts a map `slot_name → DataSource`. Missing wirings
-  produce `INPUT_NOT_WIRED` at launch.
+- Multiple `input <name>: <Type>` declarations.
+- `PORT_DUPLICATE` parse error for any repeated top-level name (inputs,
+  outputs, constants, functions share one namespace — §3.3).
+- Wiring: `Launch` accepts a map `port_name → DataSource`. Missing wirings
+  produce `INPUT_NOT_WIRED` at launch; unwired outputs produce
+  `OUTPUT_NOT_WIRED`.
 - The synchronizer that decides when `Run()` fires under multiple feeds
   lives **in the private project**, not in tascript. tascript exposes a
   simple "drive one tick now" entry point; the project wraps it.
@@ -439,5 +530,6 @@ programs never regress.
 
 ## What to build first
 
-Start **Slice 0**. Hours of work. Zero external dependencies. Drops a real
-public Go API the project can integrate against. From there, slice-by-slice.
+Start and keep **Slice 0** on the compiler pipeline above. It has zero external
+dependencies, drops a real public Go API the project can integrate against,
+and leaves the parser/analyser/evaluator split ready for the next slices.

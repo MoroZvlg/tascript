@@ -17,26 +17,48 @@ outside the language.
 
 ## 2. Signal Output
 
-The output of every tascript program is a stream of **structured signal
-events**. An event has the shape:
+The output of every tascript program is a stream of events emitted through
+declared **output ports**. An event has the shape:
 
 ```
 {
-  name: string,         // user-defined identifier for the signal kind
-  ts:   timestamp,      // candle time the signal was produced at
-  data: { ...fields }   // arbitrary user-defined payload
+  output: string,        // declared output port name
+  ts:     timestamp,     // candle time the event was produced at
+  value:  String | null, // present for value outputs (String); null for structured
+  data:   { ...fields }  // arbitrary user-defined payload fields
 }
 ```
 
 A program may emit zero or more events per candle, and may emit events to
-different named outputs within the same program. Emission is performed via
-the built-in call `emit(...)` — see section 5.2 for the full signature.
+different declared outputs within the same program. Emission is performed
+via the built-in runtime action `emit(...)` — see section 5.2 for the full
+signature.
 
-The first argument of `emit(...)` names a **logical output slot**, mirroring
-how `input(...)` names a data-source slot. Output slots are wired to actual
-delivery destinations (Telegram, Slack, webhook, internal queue, etc.)
-**outside the DSL**, in the host runtime / UI / deployment manifest. The
-language itself knows nothing about transports, formats, or credentials.
+Inputs and outputs are both declared in the script, but wired to real blocks
+outside the DSL:
+
+```js
+input btc: CandleSeries
+
+output alerts {
+  kind: String
+  price: Number
+}
+output logs: String
+```
+
+The host runtime / UI / deployment manifest maps `btc`, `alerts`, and `logs`
+to concrete blocks. The language itself knows nothing about exchanges,
+symbols, transports, formats, or credentials.
+
+**Why this shape:**
+- The script stays self-describing; `btc` and `alerts` are not magic external
+  names.
+- Runtime wiring stays outside the DSL, matching the block-based product
+  model.
+- `input` declarations are static dependencies; `emit(...)` remains runtime
+  behaviour.
+- The compiler can validate port names and output payload schemas.
 
 **Out of scope for the DSL:**
 - Delivery destinations (Telegram, Slack, webhooks, …)
@@ -55,6 +77,9 @@ tascript leans on a JavaScript-flavoured surface syntax with deliberate
 deviations:
 
 - **No statement terminators.** Newlines end statements; `;` is not used.
+  Newlines are ignored while inside an open `(`, `[`, or `{`, so output
+  schemas and long calls may span multiple lines. Broader trailing-token
+  continuation is deferred (see §"Gaps surfaced by these examples", item 5).
 - **C-style blocks.** `if (cond) { ... } else { ... }` — parentheses around
   conditions, braces around bodies.
 - **C-style logical operators.** `&&`, `||`, `!` (not `and`, `or`, `not`).
@@ -79,16 +104,19 @@ Every tascript program is composed of:
    inside any function is a parse-time error** — top-level constants are
    read-only after load.
 
-2. **One or more input declarations.** A top-level binding of the form
-   `name = input("slot_name")` declares that the program consumes a candle
-   feed wired to the slot named `"slot_name"`. The binding is a read-only
-   top-level constant of type `CandleSeries`. See section 3.4 for full
-   semantics.
+2. **One or more input declarations.** A top-level declaration of the form
+   `input name: Type` declares that the program consumes a runtime-wired
+   input port. The binding is a read-only top-level value with the declared
+   type. See section 3.3 for full semantics.
 
-3. **A required `function Init() { ... }`.** Runs **exactly once** before the
+3. **One or more output declarations.** A top-level declaration of the form
+   `output name: Type` declares that the program can emit to a runtime-wired
+   output port. Optional output schemas describe valid payload fields.
+
+4. **A required `function Init() { ... }`.** Runs **exactly once** before the
    first candle is processed. Intended for initialising `state.*` fields.
 
-4. **A required `function Run() { ... }`.** Runs **once per candle**, in
+5. **A required `function Run() { ... }`.** Runs **once per candle**, in
    order. This is where indicators are read, conditions evaluated, and
    `emit(...)` calls produced.
 
@@ -101,8 +129,15 @@ Canonical program shape:
 ```js
 COOLDOWN_BARS = 20
 
-btc = input("btc_feed")
-eth = input("eth_feed")
+input btc: CandleSeries
+input eth: CandleSeries
+
+output alerts {
+  kind: String
+  price: Number
+  rsi: Number
+  eth_rsi: Number
+}
 
 function Init() {
   state.cooldown = 0
@@ -116,51 +151,105 @@ function Run() {
   context_ok = eth.rsi(14) < 50
 
   if (uptrend && crossed && context_ok && state.cooldown == 0) {
-    emit("alerts",                          // named output slot, wired outside the DSL
-         kind     = "btc_rsi_oversold_uptrend",
-         price    = btc.closes[0],
-         rsi      = btc.rsi(14),
-         eth_rsi  = eth.rsi(14))
+    emit(alerts,
+         kind    = "btc_rsi_oversold_uptrend",
+         price   = btc.closes[0],
+         rsi     = btc.rsi(14),
+         eth_rsi = eth.rsi(14))
     state.cooldown = COOLDOWN_BARS
   }
 }
 ```
 
-### 3.3 Inputs — dependency-injected data feeds
+### 3.3 Ports — dependency-injected block IO
 
-The DSL does not name exchanges, symbols, or timeframes. Instead, every
-program declares one or more **named input slots** at the top level:
+The DSL does not name exchanges, symbols, timeframes, Telegram chats, or
+webhook URLs. Instead, every program declares named **ports** at the top
+level:
 
 ```js
-btc = input("btc_feed")
-eth = input("eth_feed")
+input btc: CandleSeries
+input sentiment: Series
+
+output alerts {
+  kind: String
+  price: Number
+}
+output logs: String
 ```
 
-`input(name)` is a top-level-only built-in. Each declaration produces a
-read-only module-level binding of type `CandleSeries`. The actual data feed
-attached to each slot is configured **outside** the DSL — by the runtime, the
-launching UI, or a deployment manifest — when the program is started. The
-same program can therefore run unchanged against Binance, Coinbase, a replay
-file, or a synthetic test feed.
+The actual blocks attached to those ports are configured **outside** the DSL
+by the runtime, launching UI, or deployment manifest. The same program can
+therefore run unchanged against Binance, Coinbase, a replay file, synthetic
+test data, or future custom input blocks.
 
-**Rules:**
+Input and output declarations are not normal function calls. They are static
+port declarations used for validation, tooling, and runtime wiring.
 
-- `input(name)` may appear **only at the top level**. Use inside `Init()` or
-  `Run()` → parse-time error.
-- `name` must be a **string literal** at parse time.
-- Two `input(...)` declarations with the same `name` → parse-time error.
-- Binding produced by `input(...)` is **read-only**; reassignment inside a
-  function → parse-time error.
-- A program that references an `input(...)` slot the launcher did not wire →
-  **launch-time error before any candle is processed**. The program never
+#### Input declarations
+
+An input declaration has the form:
+
+```js
+input <name>: <InputType>
+```
+
+Current input types:
+
+| Type | Meaning |
+|------|---------|
+| `CandleSeries` | A stream of OHLCV candles. Needed by candle-based indicators such as `atr`/`dmi`. |
+| `Series` | A numeric stream (`Series` of `Number`) from a custom block or external metric. Scalar indicators may be called on it. |
+
+The declared name becomes a read-only top-level value. For example, `btc`
+above is readable inside `Init()` and `Run()` as a `CandleSeries`.
+
+#### Output declarations
+
+An output is **either** a value output, a structured output, or both. The
+type after `:` (if present) is the primary emitted `value`; a `{ … }` block
+(if present) declares structured `data` fields.
+
+```js
+output <name>: <ValueType>             // value output  — emit a single value
+output <name> { field: Type, … }       // structured    — emit keyword fields
+output <name>: <ValueType> { field: Type, … }   // both: value + fields
+```
+
+`<ValueType>` is an ordinary value type. Current revision allows `String` and
+`Number`; structured `data` fields may be any value type. The three shapes map
+directly onto the event record: a value output sets `value` and leaves `data`
+empty, a structured output leaves `value` `null` and fills `data`, and the
+combined form sets both.
+
+Output names are not readable values and cannot be assigned, passed around,
+or called as objects. They are valid only as the first argument to
+`emit(...)` inside `Run()`.
+
+#### Port rules
+
+- Port declarations may appear **only at the top level**.
+- Port names are normal identifiers, not string literals.
+- Input, output, constant, function, namespace, and reserved names share one
+  top-level namespace; duplicate names are parse-time errors.
+- An input binding is **read-only**; reassignment inside a function is a
+  parse-time error.
+- An output name is **emit-only**; reading or assigning it is a parse-time
+  error.
+- A declared input or output that the launcher did not wire is a
+  **launch-time error before any data is processed**. The program never
   enters a partially-broken state.
+- An `emit(...)` call that targets an undeclared output is a parse-time error.
 
 **Out of scope for the current revision** (may be added later):
 
-- Non-`CandleSeries` inputs (e.g. `number_input("period", default=14)` for
-  user-tunable config).
+- User-tunable config inputs (`input period: Number = 14` or similar).
+- **Named, reusable custom types** (e.g. `type Alert { … }` then
+  `output x: Alert`). v1 only has the *anonymous* inline `{ … }` schema per
+  output; a named type-declaration system is an open question deferred until
+  real demand. Anonymous schemas cover the rich-payload use case without it.
 - Per-input metadata (`btc.symbol`, `btc.exchange`, `btc.timeframe`). For
-  now, payload identifiers in `emit(...)` are user-provided string literals.
+  now, payload identifiers are explicit fields emitted by the program.
 
 ### 3.4 Value types
 
@@ -298,7 +387,11 @@ the delivery boundary), and assigned to per-call locals.
 ```js
 COOLDOWN = 30 * time.MINUTE
 
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  price: Number
+}
 
 function Init() {
   state.last_signal = btc.timestamps[0] - time.DAY   // bootstrap to "yesterday"
@@ -307,7 +400,7 @@ function Init() {
 function Run() {
   if (btc.rsi(14) < 30
       && btc.timestamps[0] - state.last_signal > COOLDOWN) {
-    emit("alerts", price=btc.closes[0])
+    emit(alerts, price=btc.closes[0])
     state.last_signal = btc.timestamps[0]
   }
 }
@@ -448,7 +541,7 @@ per-candle so that repeated reads (e.g. `rsi(14) < 30` and a later
 
 ### Run() cadence is a runtime concern, not a DSL concern
 
-When a program declares multiple input slots, the rate at which `Run()`
+When a program declares multiple input ports, the rate at which `Run()`
 fires is **not** specified by the DSL. The host runtime sits a configurable
 *synchronizer* in front of the program's execution loop. Today's planned
 synchronizer modes (more may be added later):
@@ -491,13 +584,13 @@ makes the `[n]` history operator possible. The buffer size is determined by
 
 #### What contributes to a series' buffer size
 
-For each `Series`-typed expression in the program, the parser takes the
-maximum lookback across all of its references:
+For each `Series`-typed expression in the program, the static analyser takes
+the maximum lookback across all of its references:
 
 1. **Explicit literal indices.** `btc.closes[5]` contributes 5 to
    `btc.closes`.
 2. **Helper-signature lookback.** Each helper that consumes a `Series`
-   declares its lookback in the stdlib registry; the analysis adds that
+   declares its lookback in the stdlib registry; the analyser adds that
    value to the series' bound. Initial entries:
 
    | Helper | Lookback contribution |
@@ -657,58 +750,98 @@ the registry — no DSL change required.
 ### 5.2 emit(...) — signal emission
 
 ```
-emit(OUTPUT_NAME [, ident=expr]*)
+emit(OUTPUT [, ident=expr]*)
+emit(OUTPUT, value_expr [, ident=expr]*)
 ```
 
 Where:
 
-- `OUTPUT_NAME` is **either** a string literal naming a configured output
-  slot, **or** the reserved identifier `ALL`, which broadcasts the event to
-  every output slot configured for the program.
+- `OUTPUT` is a declared output identifier, not a string literal.
+- `emit(...)` is a built-in runtime action. It is valid **only inside
+  `Run()`**. Use in `Init()` or at the top level is a parse-time error.
+- For a **structured** output (`{ … }`), the payload is keyword arguments
+  only — no leading value.
+- For a **value** output (`: <ValueType>`), the second argument is the value
+  and must match the declared type. If the output *also* declares a `{ … }`
+  schema, keyword arguments may follow.
 - `ident` is a normal identifier — letters and digits and underscores
   (initial revision may restrict to letters only and relax later).
-- `expr` evaluates to a primitive value: `Number`, `Bool`, `String`, or
-  `Null`. Passing a `Series`, `CandleSeries`, `Candle`, or `Tuple` is a
-  runtime error. (A `Time` value type may be added later.)
-- Keyword arguments are the only payload mechanism — no positional args
-  after `OUTPUT_NAME`.
-- Empty payload is legal: `emit("heartbeat")` produces an event with
-  `data: {}`.
+- `expr` must evaluate to a serialisable value: `Number`, `Bool`, `String`,
+  `Null`, `Time`, or `Duration`. A `Series` is read at its current value per
+  the lift rule (§3.6). Passing a `CandleSeries`, `Candle`, or `Tuple` is a
+  runtime error.
+- Empty structured payload is legal: `emit(heartbeat)` produces an event
+  with `data: {}` when `heartbeat` is a declared structured output.
+
+Examples:
+
+```js
+input btc: CandleSeries
+
+output logs: String
+
+function Init() {}
+
+function Run() {
+  emit(logs, "BTC crossed above EMA")
+}
+```
+
+```js
+input btc: CandleSeries
+
+output price_alert: String {
+  price: Number
+}
+
+function Init() {}
+
+function Run() {
+  emit(price_alert, "BTC crossed above EMA", price=btc.closes[0])
+}
+```
+
+There is no in-language string interpolation in v1. Parameters attached to a
+value output are structured `data` for the host-side renderer, not template
+variables interpreted by tascript.
 
 **Reserved kwarg names** — runtime-injected, cannot be passed by the user.
 Using any reserved name as a kwarg is a parse-time error. The set is
 expected to grow as the runtime exposes more context. Currently reserved:
 
 - `ts` — the current candle timestamp at the moment `emit(...)` is called.
-- `name` — the event name (the `OUTPUT_NAME` argument resolves into this).
+- `output` — the declared output port name.
 
-**Schema enforcement.** Output slots may declare an expected payload
-schema in host wiring (field names and types). Mismatches between what a
-program emits and what the slot declares are **not** runtime errors — the
-program continues to run, downstream rendering may look ugly. A future
-static-analysis pass over the program AST is expected to flag schema
-violations at parse time / deploy time.
+**Schema enforcement.** A structured output's `{ … }` schema is **strict and
+closed** in this revision:
 
-**`ALL` semantics.** `emit(ALL, ...)` is delivered to every output slot in
-the program's wiring. Schema checking, if and when it lands, is applied
-per-slot.
+- every declared field **must** be supplied by each `emit(...)` to that output;
+- **no** undeclared fields may be supplied;
+- each field's value **must** match the declared type.
 
-**Output discovery.** Tooling can statically enumerate the set of output
-slots a program targets by scanning every `emit(...)` call site for its
-first argument. `ALL` indicates the program also wants to fan out, useful
-information for the deployment UI.
+Any violation is a parse-time error when statically detectable, otherwise a
+runtime error before the event is delivered. (Strict is the safe starting
+point: relaxing to optional fields later stays backward-compatible, whereas
+tightening a loose schema would break existing programs.)
+
+**Output discovery.** Tooling can statically enumerate available outputs by
+reading top-level `output` declarations. Routing and fan-out rules remain a
+host concern.
+
+Broadcast helpers such as `emit(ALL, ...)` are not part of v1. If fan-out is
+needed, configure one output port to route to multiple delivery blocks in the
+host layer.
 
 ### 5.3 String formatting — deferred
 
 The v1 language does **not** offer any in-program string composition
-mechanism. Programs emit structured fields via `emit(...)`; rendering to
-human-readable form is the responsibility of the output sink (Telegram
-template, webhook formatter, etc.), configured outside the DSL.
+mechanism. Programs emit either a literal/string-valued message or structured
+fields via `emit(...)`; rendering to human-readable form is the
+responsibility of the output sink (Telegram template, webhook formatter,
+etc.), configured outside the DSL.
 
-When string composition is eventually added, the planned direction is
-**JS-style template literals** with backticks and `${expr}` interpolation —
-matching the surrounding JS-flavoured syntax, not a Python-style
-`format(...)` function. This is a forward-looking note, not a v1 commitment.
+No template syntax is reserved in v1. If string composition is needed later,
+it will be designed separately.
 
 ### 5.4 Helpers — `math` and `ta` namespaces
 
@@ -765,12 +898,12 @@ Every error a tascript program can produce belongs to one of two phases:
 
 - **Parse-time** — produced before any candle is processed. Examples:
   unknown identifier, reassignment of a reserved name, indicator called with
-  a non-integer literal for a whole-number parameter, `input(...)` used
-  inside a function, `==` between mismatched types when statically
-  detectable.
+  a non-integer literal for a whole-number parameter, a port declaration used
+  inside a function, `emit(...)` used outside `Run()`, `==` between
+  mismatched types when statically detectable.
 - **Runtime** — produced during execution of `Init()` or `Run()`. Examples:
   read of an unassigned `state.*` field, history index out of range,
-  cross-type comparison the parser could not statically rule out,
+  cross-type comparison the analyser could not statically rule out,
   zero-period indicator from a runtime expression.
 
 ### 6.2 Every error carries
@@ -792,12 +925,13 @@ Every error a tascript program can produce belongs to one of two phases:
 
 ### 6.3 Parse-time policy
 
-The parser **collects multiple errors before aborting**, with a sensible
-upper bound (initial target: 100 errors per program; configurable). Users
-should be able to fix many errors in one editing pass, not chase them
-one-at-a-time. Error recovery uses statement-level resynchronisation:
-after an error, the parser skips to the next statement boundary and
-continues.
+The compiler **collects multiple parse-time errors before aborting**, with a
+sensible upper bound (initial target: 100 errors per program; configurable).
+Users should be able to fix many errors in one editing pass, not chase them
+one-at-a-time. Parser recovery uses statement-level resynchronisation:
+after a syntax error, the parser skips to the next statement boundary and
+continues; the analyser then reports additional static errors on the AST that
+was recovered successfully.
 
 ### 6.4 Stable category codes
 
@@ -812,8 +946,12 @@ message strings. The initial set, expanded as the implementation lands:
 | `RESERVED_REASSIGN`     | parse | Attempt to assign to a reserved identifier or namespace. |
 | `STATE_UNSET`           | runtime | Read of a `state.*` field never assigned. |
 | `HISTORY_OUT_OF_RANGE`  | runtime | `series[n]` where insufficient history. |
-| `INPUT_NOT_WIRED`       | launch | A declared `input(...)` slot has no data source configured. |
-| `INPUT_DUPLICATE`       | parse | Two `input(name)` declarations with the same name. |
+| `INPUT_NOT_WIRED`       | launch | A declared input port has no source block configured. |
+| `OUTPUT_NOT_WIRED`      | launch | A declared output port has no destination block configured. |
+| `PORT_DUPLICATE`        | parse | Two top-level ports/bindings declare the same name. |
+| `UNKNOWN_OUTPUT`        | parse | `emit(...)` targets a name that is not a declared output. |
+| `EMIT_OUTSIDE_RUN`      | parse | `emit(...)` appears outside `function Run()`. |
+| `EMIT_PAYLOAD`          | parse / runtime | Emitted value or kwargs do not match the output declaration. |
 | `INDICATOR_PARAM`       | parse / runtime | Indicator parameter constraint violated (e.g. non-integer period). |
 | `TOP_LEVEL_FORM`        | parse | A construct used at the top level that is not permitted there (e.g. `state.*`, `if`). |
 | `MISSING_REQUIRED_FN`   | parse | Program does not declare `function Init()` or `function Run()`. |
@@ -870,7 +1008,13 @@ indicator crossing condition, and a context-trend filter.
 ```js
 COOLDOWN_BARS = 20
 
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  kind: String
+  price: Number
+  rsi: Number
+}
 
 function Init() {
   state.cooldown = 0
@@ -883,7 +1027,7 @@ function Run() {
   crossed = ta.crossunder(btc.rsi(14), 30)
 
   if (uptrend && crossed && state.cooldown == 0) {
-    emit("alerts",
+    emit(alerts,
          kind  = "rsi_oversold_uptrend",
          price = btc.closes[0],
          rsi   = btc.rsi(14))
@@ -898,7 +1042,14 @@ Exercises the `Tuple` return shape and per-tick local aliasing of indicator
 output series.
 
 ```js
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  kind: String
+  price: Number
+  line: Number
+  signal: Number
+}
 
 function Init() {
 }
@@ -908,7 +1059,7 @@ function Run() {
   signal = btc.macd(12, 26, 9)[1]
 
   if (ta.crossover(line, signal)) {
-    emit("alerts",
+    emit(alerts,
          kind   = "macd_bullish_cross",
          price  = btc.closes[0],
          line   = line,
@@ -925,7 +1076,13 @@ and a multi-output indicator with one slot ignored.
 ```js
 COOLDOWN = 10 * time.MINUTE
 
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  kind: String
+  price: Number
+  volume: Number
+}
 
 function Init() {
   state.last_alert = btc.timestamps[0] - time.DAY
@@ -940,7 +1097,7 @@ function Run() {
   cooled_down  = btc.timestamps[0] - state.last_alert > COOLDOWN
 
   if (breakout && volume_spike && cooled_down) {
-    emit("alerts",
+    emit(alerts,
          kind   = "bb_breakout_up",
          price  = btc.closes[0],
          volume = btc.volumes[0])
@@ -956,7 +1113,12 @@ that without an early-return form the natural style is to wrap the body in
 a filter `if`.
 
 ```js
-btc = input("btc_feed")
+input btc: CandleSeries
+
+output alerts {
+  kind: String
+  price: Number
+}
 
 function Init() {
   state.cooldown = 0
@@ -971,7 +1133,7 @@ function Run() {
   if (on_weekday) {
     cross = ta.crossover(btc.ema(20), btc.ema(50))
     if (cross && state.cooldown == 0) {
-      emit("alerts",
+      emit(alerts,
            kind  = "ema_golden_cross",
            price = btc.closes[0])
       state.cooldown = 10
@@ -992,8 +1154,15 @@ with the `state.last_alert` time cooldown.
 SPREAD_THRESHOLD = 0.05
 COOLDOWN         = 15 * time.MINUTE
 
-btc = input("btc_feed")
-eth = input("eth_feed")
+input btc: CandleSeries
+input eth: CandleSeries
+
+output alerts {
+  kind: String
+  btc_change: Number
+  eth_change: Number
+  divergence: Number
+}
 
 function Init() {
   state.last_alert = btc.timestamps[0] - time.HOUR
@@ -1008,7 +1177,7 @@ function Run() {
   cooled_down   = btc.timestamps[0] - state.last_alert > COOLDOWN
 
   if (large_split && cooled_down) {
-    emit("alerts",
+    emit(alerts,
          kind       = "btc_eth_divergence",
          btc_change = btc_change,
          eth_change = eth_change,
@@ -1038,3 +1207,28 @@ down. They will be picked up when implementation begins:
    through such aliases to attribute lookback (`ta.crossover(line, signal)`)
    to the underlying `Series`. Doable but worth calling out explicitly in
    the static-analysis pass.
+5. **Multi-line expressions / line continuation.** Bracket-depth suppression
+   is locked: a NEWLINE is swallowed while inside an open `(` `[` `{`. This
+   permits multi-line output schemas, multi-line `emit(...)` calls, and
+   parenthesised splits:
+   ```js
+   x = (long_a + long_b +
+        long_c)
+   ```
+
+   A broader trailing-token continuation rule is still deferred. Under that
+   future rule, a NEWLINE only ends a statement when the preceding token can
+   legally end an expression. If a line ends on a binary operator, `&&`,
+   `||`, `,`, `.`, or an open bracket, the statement continues — so
+   unparenthesised splits work:
+   ```js
+   x = long_a + long_b +
+     long_c
+   ```
+
+   **Locked invariant for trailing-token continuation:** continuation is
+   decided by the token at the **end** of a line, never the start. A line
+   ending in a complete expression terminates there; a *leading* operator on
+   the next line begins a new statement (unary), it does not retroactively
+   continue the previous one. This avoids the JS automatic-semicolon-insertion
+   ambiguity where `x = a` / `  + b` could be misread as `x = a + b`.

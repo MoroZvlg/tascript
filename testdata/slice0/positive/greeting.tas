@@ -1,0 +1,10 @@
+GREETING = "hello world"
+
+output alerts {
+  message: String
+}
+
+function Init() {}
+function Run() {
+  emit(alerts, message=GREETING)
+}
