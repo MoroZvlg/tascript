@@ -24,6 +24,10 @@ type DataSource interface {
 	NextCandle() (Candle, error)
 }
 
+type Options struct {
+	MaxStringLength int
+}
+
 type CandleSeries struct {
 	current Candle
 	ready   bool
@@ -116,21 +120,34 @@ type Engine struct {
 	state      map[string]Value
 	registry   *registry.Registry
 	indicators map[string]*indicatorState
+	options    Options
 	events     []Event
 }
 
 type indicatorState struct {
-	receiver *CandleSeries
-	instance registry.Indicator
-	argsKey  string
-	lastSeq  int
-	value    Value
-	history  []Value
-	ready    bool
+	receiverKey    string
+	candleReceiver *CandleSeries
+	seriesReceiver registry.Series
+	candleInstance registry.Indicator
+	scalarInstance registry.ScalarIndicator
+	argsKey        string
+	lastSeq        int
+	value          Value
+	history        []Value
+	ready          bool
 }
 
 type indicatorSeries struct {
 	state *indicatorState
+}
+
+type indicatorTuple struct {
+	state *indicatorState
+}
+
+type tupleElementSeries struct {
+	state *indicatorState
+	index int
 }
 
 func (s *indicatorSeries) Current() (float64, error) {
@@ -147,7 +164,21 @@ func (s *indicatorSeries) History(n int) (float64, error) {
 	return numericIndicatorValue(s.state.history[len(s.state.history)-1-n])
 }
 
-func New(prog *ast.Program, sources map[string]DataSource, sinks map[string]Sink, reg *registry.Registry) *Engine {
+func (s *tupleElementSeries) Current() (float64, error) {
+	if s == nil || s.state == nil || !s.state.ready {
+		return 0, fmt.Errorf("tuple element has no current value")
+	}
+	return tupleElement(s.state.value, s.index)
+}
+
+func (s *tupleElementSeries) History(n int) (float64, error) {
+	if s == nil || s.state == nil || n < 0 || n >= len(s.state.history) {
+		return 0, fmt.Errorf("tuple element history[%d] is out of range", n)
+	}
+	return tupleElement(s.state.history[len(s.state.history)-1-n], s.index)
+}
+
+func New(prog *ast.Program, sources map[string]DataSource, sinks map[string]Sink, reg *registry.Registry, opts Options) *Engine {
 	return &Engine{
 		prog:       prog,
 		constBinds: map[string]Value{},
@@ -158,6 +189,7 @@ func New(prog *ast.Program, sources map[string]DataSource, sinks map[string]Sink
 		state:      map[string]Value{},
 		registry:   reg.Clone(),
 		indicators: map[string]*indicatorState{},
+		options:    opts,
 	}
 }
 
@@ -298,7 +330,7 @@ func (e *Engine) isIndicatorCall(x *ast.CallExpr) bool {
 		return false
 	}
 	spec, ok := e.registry.Indicator(member.Name)
-	return ok && spec.Build != nil
+	return ok && (spec.Build != nil || spec.BuildScalar != nil)
 }
 
 func (e *Engine) runStmt(s ast.Stmt) *diag.Diagnostic {
@@ -618,8 +650,19 @@ func (e *Engine) evalIndex(x *ast.IndexExpr) (Value, *diag.Diagnostic) {
 			return nil, historyErr(x.LPos, seriesErr.Error())
 		}
 		return n, nil
+	case *indicatorTuple:
+		n, tupleErr := v.element(idx)
+		if tupleErr != nil {
+			return nil, typeErr(x.LPos, tupleErr.Error())
+		}
+		return n, nil
+	case registry.Tuple:
+		if idx >= len(v) {
+			return nil, typeErr(x.LPos, fmt.Sprintf("Tuple index %d is out of range", idx))
+		}
+		return v[idx], nil
 	default:
-		return nil, typeErr(x.LPos, "indexing requires Series or CandleSeries")
+		return nil, typeErr(x.LPos, "indexing requires Series, CandleSeries, or Tuple")
 	}
 }
 
@@ -638,7 +681,7 @@ func (e *Engine) evalCall(x *ast.CallExpr) (Value, *diag.Diagnostic) {
 		}
 	}
 
-	if spec, ok := e.registry.Indicator(member.Name); ok && spec.Build != nil {
+	if spec, ok := e.registry.Indicator(member.Name); ok && (spec.Build != nil || spec.BuildScalar != nil) {
 		return e.evalIndicator(x, member, spec)
 	}
 
@@ -675,13 +718,6 @@ func (e *Engine) evalIndicator(x *ast.CallExpr, member *ast.MemberExpr, spec reg
 	if err != nil {
 		return nil, err
 	}
-	receiver, ok := receiverVal.(*CandleSeries)
-	if !ok {
-		return nil, typeErr(member.NamePos, fmt.Sprintf("indicator %s requires CandleSeries receiver", spec.Name))
-	}
-	if !receiver.ready {
-		return nil, typeErr(member.NamePos, fmt.Sprintf("indicator %s receiver has no current candle", spec.Name))
-	}
 	if err := registry.ValidateArgCount(spec.Name, spec.MinArgs, spec.MaxArgs, len(x.Args)); err != nil {
 		return nil, typeErr(x.LPos, err.Error())
 	}
@@ -698,35 +734,134 @@ func (e *Engine) evalIndicator(x *ast.CallExpr, member *ast.MemberExpr, spec reg
 	}
 
 	argsKey := fmt.Sprintf("%#v", args)
-	key := fmt.Sprintf("%p:%s:%s", receiver, spec.Name, argsKey)
+	key, kind, keyErr := receiverKey(receiverVal)
+	if keyErr != nil {
+		return nil, typeErr(member.NamePos, fmt.Sprintf("indicator %s receiver is not supported: %v", spec.Name, keyErr))
+	}
+	key = fmt.Sprintf("%s:%s:%s", key, spec.Name, argsKey)
 	state := e.indicators[key]
-	if state == nil || state.receiver != receiver || state.argsKey != argsKey {
-		instance, buildErr := spec.Build(args)
-		if buildErr != nil {
-			return nil, typeErr(x.LPos, buildErr.Error())
-		}
+	if state == nil || state.receiverKey != key || state.argsKey != argsKey {
 		state = &indicatorState{
-			receiver: receiver,
-			instance: instance,
-			argsKey:  argsKey,
-			lastSeq:  -1,
+			receiverKey: key,
+			argsKey:     argsKey,
+			lastSeq:     -1,
+		}
+		switch kind {
+		case "candle":
+			receiver := receiverVal.(*CandleSeries)
+			if !receiver.ready {
+				return nil, typeErr(member.NamePos, fmt.Sprintf("indicator %s receiver has no current candle", spec.Name))
+			}
+			if spec.Build == nil {
+				return nil, typeErr(member.NamePos, fmt.Sprintf("indicator %s is not callable on CandleSeries", spec.Name))
+			}
+			instance, buildErr := spec.Build(args)
+			if buildErr != nil {
+				return nil, typeErr(x.LPos, buildErr.Error())
+			}
+			state.candleReceiver = receiver
+			state.candleInstance = instance
+		case "series":
+			series := receiverVal.(registry.Series)
+			if !spec.Scalar || spec.BuildScalar == nil {
+				return nil, typeErr(member.NamePos, fmt.Sprintf("indicator %s is not callable on Series", spec.Name))
+			}
+			instance, buildErr := spec.BuildScalar(args)
+			if buildErr != nil {
+				return nil, typeErr(x.LPos, buildErr.Error())
+			}
+			state.seriesReceiver = series
+			state.scalarInstance = instance
 		}
 		e.indicators[key] = state
 	}
-	if state.lastSeq != receiver.seq {
-		value, nextErr := state.instance.NextCandle(receiver.current)
+	seq, seqErr := state.seq()
+	if seqErr != nil {
+		return nil, typeErr(member.NamePos, fmt.Sprintf("indicator %s receiver is not ready: %v", spec.Name, seqErr))
+	}
+	if state.lastSeq != seq {
+		value, nextErr := state.next()
 		if nextErr != nil {
 			return nil, typeErr(x.LPos, nextErr.Error())
 		}
 		state.value = value
 		state.history = append(state.history, value)
 		state.ready = true
-		state.lastSeq = receiver.seq
+		state.lastSeq = seq
 	}
 	if !state.ready {
 		return nil, typeErr(x.LPos, fmt.Sprintf("indicator %s has no value yet", spec.Name))
 	}
+	if isTupleValue(state.value) {
+		return &indicatorTuple{state: state}, nil
+	}
 	return &indicatorSeries{state: state}, nil
+}
+
+func (s *indicatorState) seq() (int, error) {
+	if s.candleReceiver != nil {
+		if !s.candleReceiver.ready {
+			return 0, fmt.Errorf("CandleSeries has no current candle")
+		}
+		return s.candleReceiver.seq, nil
+	}
+	if s.seriesReceiver != nil {
+		return seriesSeq(s.seriesReceiver)
+	}
+	return 0, fmt.Errorf("missing receiver")
+}
+
+func (s *indicatorState) next() (Value, error) {
+	if s.candleReceiver != nil {
+		return s.candleInstance.NextCandle(s.candleReceiver.current)
+	}
+	if s.seriesReceiver != nil {
+		n, err := s.seriesReceiver.Current()
+		if err != nil {
+			return nil, err
+		}
+		return s.scalarInstance.NextNumber(n)
+	}
+	return nil, fmt.Errorf("missing receiver")
+}
+
+func receiverKey(v Value) (string, string, error) {
+	switch x := v.(type) {
+	case *CandleSeries:
+		return fmt.Sprintf("candle:%p", x), "candle", nil
+	case *numberSeries:
+		return fmt.Sprintf("series:candle:%p:%s", x.source, x.field), "series", nil
+	case *indicatorSeries:
+		return fmt.Sprintf("series:indicator:%p", x.state), "series", nil
+	case *tupleElementSeries:
+		return fmt.Sprintf("series:tuple:%p:%d", x.state, x.index), "series", nil
+	case registry.Series:
+		return "", "", fmt.Errorf("custom Series receivers need a stable runtime identity")
+	default:
+		return "", "", fmt.Errorf("got %T", v)
+	}
+}
+
+func seriesSeq(s registry.Series) (int, error) {
+	switch x := s.(type) {
+	case *numberSeries:
+		if !x.source.ready {
+			return 0, fmt.Errorf("Series has no current value")
+		}
+		return x.source.seq, nil
+	case *indicatorSeries:
+		if x.state == nil || !x.state.ready {
+			return 0, fmt.Errorf("indicator Series has no current value")
+		}
+		return x.state.lastSeq, nil
+	case *tupleElementSeries:
+		if x.state == nil || !x.state.ready {
+			return 0, fmt.Errorf("tuple element Series has no current value")
+		}
+		return x.state.lastSeq, nil
+	default:
+		return 0, fmt.Errorf("Series receiver does not expose a sequence")
+	}
 }
 
 func asNumber(v Value) (float64, bool) {
@@ -822,6 +957,61 @@ func numericIndicatorValue(v Value) (float64, error) {
 	return n, nil
 }
 
+func isTupleValue(v Value) bool {
+	switch v.(type) {
+	case registry.Tuple, []registry.Value, []Value:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *indicatorTuple) element(index int) (Value, error) {
+	if t == nil || t.state == nil || !t.state.ready {
+		return nil, fmt.Errorf("Tuple has no current value")
+	}
+	tuple, err := asTuple(t.state.value)
+	if err != nil {
+		return nil, err
+	}
+	if index >= len(tuple) {
+		return nil, fmt.Errorf("Tuple index %d is out of range", index)
+	}
+	return &tupleElementSeries{state: t.state, index: index}, nil
+}
+
+func tupleElement(v Value, index int) (float64, error) {
+	tuple, err := asTuple(v)
+	if err != nil {
+		return 0, err
+	}
+	if index >= len(tuple) {
+		return 0, fmt.Errorf("Tuple index %d is out of range", index)
+	}
+	n, ok := tuple[index].(float64)
+	if !ok {
+		return 0, fmt.Errorf("Tuple element %d must be Number", index)
+	}
+	return n, nil
+}
+
+func asTuple(v Value) (registry.Tuple, error) {
+	switch x := v.(type) {
+	case registry.Tuple:
+		return x, nil
+	case []registry.Value:
+		return registry.Tuple(x), nil
+	case []Value:
+		out := make(registry.Tuple, len(x))
+		for i, v := range x {
+			out[i] = v
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("value is not a Tuple")
+	}
+}
+
 func candleMember(c Candle, name string, pos token.Pos) (Value, *diag.Diagnostic) {
 	switch name {
 	case "open":
@@ -847,7 +1037,15 @@ func (e *Engine) scalarValue(v Value, pos token.Pos) (Value, *diag.Diagnostic) {
 			return nil, historyErr(pos, err.Error())
 		}
 		return n, nil
-	case *CandleSeries, Candle:
+	case string:
+		if e.options.MaxStringLength > 0 && len(x) > e.options.MaxStringLength {
+			return nil, &diag.Diagnostic{
+				Phase: diag.PhaseRuntime, Category: diag.CatStringLimit,
+				Pos: pos, Msg: "string value exceeds configured length limit",
+			}
+		}
+		return x, nil
+	case *CandleSeries, Candle, *indicatorTuple, registry.Tuple:
 		return nil, typeErr(pos, "value is not serializable in emit payload")
 	default:
 		return v, nil

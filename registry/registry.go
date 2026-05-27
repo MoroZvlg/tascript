@@ -10,6 +10,8 @@ import (
 
 type Value any
 
+type Tuple []Value
+
 type Series interface {
 	Current() (float64, error)
 	History(n int) (float64, error)
@@ -43,6 +45,12 @@ type Indicator interface {
 
 type IndicatorFactory func(args []Value) (Indicator, error)
 
+type ScalarIndicator interface {
+	NextNumber(float64) (Value, error)
+}
+
+type ScalarIndicatorFactory func(args []Value) (ScalarIndicator, error)
+
 type HelperSpec struct {
 	Namespace string
 	Name      string
@@ -53,13 +61,14 @@ type HelperSpec struct {
 }
 
 type IndicatorSpec struct {
-	Name      string
-	Receiver  []string
-	MinArgs   int
-	MaxArgs   int
-	Scalar    bool
-	Build     IndicatorFactory
-	BuildInfo any
+	Name        string
+	Receiver    []string
+	MinArgs     int
+	MaxArgs     int
+	Scalar      bool
+	Build       IndicatorFactory
+	BuildScalar ScalarIndicatorFactory
+	BuildInfo   any
 }
 
 type Registry struct {
@@ -89,7 +98,8 @@ func Default() *Registry {
 	must(r.RegisterType(TypeSpec{Name: "Series", Input: true}))
 	must(r.RegisterType(TypeSpec{Name: "CandleSeries", Input: true}))
 	must(r.RegisterType(TypeSpec{Name: "Candle"}))
-	must(r.RegisterIndicator(IndicatorSpec{Name: "ema", Receiver: []string{"CandleSeries"}, MinArgs: 1, MaxArgs: 1, Scalar: true, Build: newEMA}))
+	must(r.RegisterIndicator(IndicatorSpec{Name: "ema", Receiver: []string{"CandleSeries", "Series"}, MinArgs: 1, MaxArgs: 1, Scalar: true, Build: newEMA, BuildScalar: newScalarEMA}))
+	must(r.RegisterIndicator(IndicatorSpec{Name: "bb", Receiver: []string{"CandleSeries"}, MinArgs: 2, MaxArgs: 2, Build: newBB}))
 	must(r.RegisterHelper(HelperSpec{
 		Namespace: "math",
 		Name:      "max",
@@ -455,6 +465,14 @@ type emaIndicator struct {
 }
 
 func newEMA(args []Value) (Indicator, error) {
+	return newEMAState(args)
+}
+
+func newScalarEMA(args []Value) (ScalarIndicator, error) {
+	return newEMAState(args)
+}
+
+func newEMAState(args []Value) (*emaIndicator, error) {
 	if err := ValidateArgCount("ema", 1, 1, len(args)); err != nil {
 		return nil, err
 	}
@@ -466,11 +484,62 @@ func newEMA(args []Value) (Indicator, error) {
 }
 
 func (i *emaIndicator) NextCandle(c Candle) (Value, error) {
+	return i.NextNumber(c.Close)
+}
+
+func (i *emaIndicator) NextNumber(n float64) (Value, error) {
 	if !i.ready {
-		i.value = c.Close
+		i.value = n
 		i.ready = true
 		return i.value, nil
 	}
-	i.value = c.Close*i.alpha + i.value*(1-i.alpha)
+	i.value = n*i.alpha + i.value*(1-i.alpha)
 	return i.value, nil
+}
+
+type bbIndicator struct {
+	period int
+	mult   float64
+	values []float64
+}
+
+func newBB(args []Value) (Indicator, error) {
+	if err := ValidateArgCount("bb", 2, 2, len(args)); err != nil {
+		return nil, err
+	}
+	period, err := positiveInteger("bb", args[0])
+	if err != nil {
+		return nil, err
+	}
+	mult, err := number("bb", args[1])
+	if err != nil {
+		return nil, err
+	}
+	if mult < 0 {
+		return nil, fmt.Errorf("bb multiplier must be non-negative")
+	}
+	return &bbIndicator{period: period, mult: mult}, nil
+}
+
+func (i *bbIndicator) NextCandle(c Candle) (Value, error) {
+	i.values = append(i.values, c.Close)
+	if len(i.values) > i.period {
+		i.values = i.values[len(i.values)-i.period:]
+	}
+
+	var sum float64
+	for _, v := range i.values {
+		sum += v
+	}
+	middle := sum / float64(len(i.values))
+
+	var variance float64
+	for _, v := range i.values {
+		delta := v - middle
+		variance += delta * delta
+	}
+	stddev := math.Sqrt(variance / float64(len(i.values)))
+	upper := middle + i.mult*stddev
+	lower := middle - i.mult*stddev
+	return Tuple{upper, middle, lower}, nil
 }

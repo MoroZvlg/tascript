@@ -123,6 +123,10 @@ needed by the implemented slices. Custom registries can add:
 - helper functions under custom namespaces;
 - stateful method-style indicators such as `btc.myIndicator(14)`;
 - resource policies and host-specific limits.
+- tuple-valued indicator outputs, whose elements behave as history-backed
+  numeric `Series`.
+- scalar indicators on numeric `Series` receivers, e.g.
+  `btc.closes.ema(3)`.
 
 Indicator instances are built per `(receiver, indicator name, normalised args)`
 and memoized across all matching call sites. Within a tick, repeated reads of
@@ -471,8 +475,14 @@ function Run() {
 - `Tuple` becomes a first-class value type.
 - `[n]` on a `Tuple` is element access; on a `Series` it's history. The
   evaluator dispatches by type (§3.4 Indexing).
+- The standalone core includes a small default `bb(period, multiplier)` as
+  the first tuple-producing indicator. Talive-backed `macd`, `atr`, and `dmi`
+  can be registered through the same public indicator API.
 - Scalar indicators callable on `Series` (the chaining form
   `btc.rsi(14).sma(15)`).
+- The scalar-indicator registry path is implemented; default EMA works on
+  `CandleSeries`, candle-field `Series`, indicator-output `Series`, and
+  tuple-element `Series`.
 - Reserved constants: `CLOSE`, `OPEN`, `HIGH`, `LOW`, `HL2`, `HLC3`, `SMA`,
   `EMA`, `SMMA`, `WMA`, `DEMA`, `TEMA`, `NONE`, `DAILY`, `WEEKLY`,
   `MONTHLY`, `QUARTERLY`, `YEARLY`.
@@ -562,7 +572,9 @@ function Run() {
 
 - Rust/Elm-style error rendering: file path, line, column, source line
   with caret highlight (§6.2).
-- All §7 resource limits enforced.
+- Configurable §7 resource limits enforced for source size, identifier length,
+  string literal length, runtime string values, emit kwarg count, expression
+  depth, diagnostic count, and history indexes.
 - All §6.4 / §7 category codes wired through.
 - Negative-sample test suite covering every category code.
 

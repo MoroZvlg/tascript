@@ -29,6 +29,11 @@ const (
 	CatStateUnset        Category = "STATE_UNSET"
 	CatHistoryOutOfRange Category = "HISTORY_OUT_OF_RANGE"
 	CatHistoryLimit      Category = "HISTORY_LIMIT"
+	CatStringLimit       Category = "STRING_LIMIT"
+	CatKwargLimit        Category = "KWARG_LIMIT"
+	CatIdentLimit        Category = "IDENT_LIMIT"
+	CatDepthLimit        Category = "DEPTH_LIMIT"
+	CatSourceSizeLimit   Category = "SOURCE_SIZE_LIMIT"
 	CatNotImplemented    Category = "NOT_IMPLEMENTED"
 )
 

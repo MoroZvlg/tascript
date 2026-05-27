@@ -865,6 +865,235 @@ function Run() {
 	}
 }
 
+func TestDefaultIndicator_ScalarSeriesReceiver(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output alerts {
+  curr: Number
+  prev: Number
+}
+
+function Init() {
+  state.seen = 0
+}
+function Run() {
+  if (state.seen > 0) {
+    emit(alerts, curr=btc.closes.ema(1).ema(1), prev=btc.closes.ema(1).ema(1)[1])
+  }
+  state.seen = state.seen + 1
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{Close: 10},
+				{Close: 14},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 {
+		t.Fatalf("events = %#v, want one", got)
+	}
+	if got[0].Data["curr"] != float64(14) || got[0].Data["prev"] != float64(10) {
+		t.Fatalf("chained EMA data = %#v, want curr=14 prev=10", got[0].Data)
+	}
+}
+
+func TestDefaultIndicator_TupleOutputHistory(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output alerts {
+  upper: Number
+  middle: Number
+  lower: Number
+  prevUpper: Number
+}
+
+function Init() {
+  state.seen = 0
+}
+function Run() {
+  if (state.seen > 0) {
+    emit(alerts,
+      upper=btc.bb(2, 1)[0],
+      middle=btc.bb(2, 1)[1],
+      lower=btc.bb(2, 1)[2],
+      prevUpper=btc.bb(2, 1)[0][1])
+  }
+  state.seen = state.seen + 1
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{Close: 10},
+				{Close: 14},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 {
+		t.Fatalf("events = %#v, want one", got)
+	}
+	want := map[string]any{
+		"upper":     float64(14),
+		"middle":    float64(12),
+		"lower":     float64(10),
+		"prevUpper": float64(10),
+	}
+	if !reflect.DeepEqual(got[0].Data, want) {
+		t.Fatalf("BB data = %#v, want %#v", got[0].Data, want)
+	}
+}
+
+func TestResourceLimits_CompileDiagnostics(t *testing.T) {
+	t.Run("source size", func(t *testing.T) {
+		cfg := tascript.DefaultConfig()
+		cfg.ResourceLimits.MaxSourceBytes = 8
+		_, diags, err := tascript.CompileWithConfig([]byte(`output alerts {}
+function Init() {}
+function Run() { emit(alerts) }
+`), cfg)
+		if err == nil || !containsDiag(diags, wantDiag{Phase: "parse", Category: "SOURCE_SIZE_LIMIT"}) {
+			t.Fatalf("diags = %#v, err = %v; want SOURCE_SIZE_LIMIT", diags, err)
+		}
+	})
+
+	t.Run("string literal", func(t *testing.T) {
+		cfg := tascript.DefaultConfig()
+		cfg.ResourceLimits.MaxStringLiteralLength = 2
+		_, diags, err := tascript.CompileWithConfig([]byte(`output alerts {
+  message: String
+}
+function Init() {}
+function Run() {
+  emit(alerts, message="hello")
+}
+`), cfg)
+		if err == nil || !containsDiag(diags, wantDiag{Phase: "parse", Category: "STRING_LIMIT"}) {
+			t.Fatalf("diags = %#v, err = %v; want STRING_LIMIT", diags, err)
+		}
+	})
+
+	t.Run("identifier", func(t *testing.T) {
+		cfg := tascript.DefaultConfig()
+		cfg.ResourceLimits.MaxIdentLength = 3
+		_, diags, err := tascript.CompileWithConfig([]byte(`output alerts {}
+function Init() {}
+function Run() {
+  emit(alerts)
+}
+`), cfg)
+		if err == nil || !containsDiag(diags, wantDiag{Phase: "parse", Category: "IDENT_LIMIT"}) {
+			t.Fatalf("diags = %#v, err = %v; want IDENT_LIMIT", diags, err)
+		}
+	})
+
+	t.Run("emit kwargs", func(t *testing.T) {
+		cfg := tascript.DefaultConfig()
+		cfg.ResourceLimits.MaxEmitKwargs = 1
+		_, diags, err := tascript.CompileWithConfig([]byte(`output alerts {
+  a: Number
+  b: Number
+}
+function Init() {}
+function Run() {
+  emit(alerts, a=1, b=2)
+}
+`), cfg)
+		if err == nil || !containsDiag(diags, wantDiag{Phase: "parse", Category: "KWARG_LIMIT"}) {
+			t.Fatalf("diags = %#v, err = %v; want KWARG_LIMIT", diags, err)
+		}
+	})
+
+	t.Run("expression depth", func(t *testing.T) {
+		cfg := tascript.DefaultConfig()
+		cfg.ResourceLimits.MaxExprDepth = 2
+		_, diags, err := tascript.CompileWithConfig([]byte(`output alerts {
+  value: Number
+}
+function Init() {}
+function Run() {
+  emit(alerts, value=1 + 2 * 3)
+}
+`), cfg)
+		if err == nil || !containsDiag(diags, wantDiag{Phase: "parse", Category: "DEPTH_LIMIT"}) {
+			t.Fatalf("diags = %#v, err = %v; want DEPTH_LIMIT", diags, err)
+		}
+	})
+}
+
+func TestResourceLimits_RuntimeStringValue(t *testing.T) {
+	cfg := tascript.DefaultConfig()
+	cfg.ResourceLimits.MaxRuntimeStringLength = 2
+	must(t, cfg.Registry.RegisterHelper(tascript.HelperSpec{
+		Namespace: "custom",
+		Name:      "long",
+		MinArgs:   0,
+		MaxArgs:   0,
+		Eval: func(args []tascript.Value) (tascript.Value, error) {
+			return "hello", nil
+		},
+	}))
+
+	prog, diags, err := tascript.CompileWithConfig([]byte(`output alerts {
+  message: String
+}
+function Init() {}
+function Run() {
+  emit(alerts, message=custom.long())
+}
+`), cfg)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	err = r.Step()
+	d, ok := err.(tascript.Diagnostic)
+	if !ok || string(d.Category) != "STRING_LIMIT" || string(d.Phase) != "runtime" {
+		t.Fatalf("step error = %#v, want runtime STRING_LIMIT diagnostic", err)
+	}
+}
+
 // --- helpers ---
 
 var indicatorCalls int

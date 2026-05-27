@@ -39,7 +39,10 @@ type HelperFunc = registry.HelperFunc
 type HelperLookbackFunc = registry.HelperLookbackFunc
 type Indicator = registry.Indicator
 type IndicatorFactory = registry.IndicatorFactory
+type ScalarIndicator = registry.ScalarIndicator
+type ScalarIndicatorFactory = registry.ScalarIndicatorFactory
 type Value = registry.Value
+type Tuple = registry.Tuple
 
 type Sink interface {
 	Emit(Event) error
@@ -51,16 +54,28 @@ type Config struct {
 }
 
 type ResourceLimits struct {
-	MaxHistoryIndex int
-	MaxDiagnostics  int
+	MaxHistoryIndex        int
+	MaxDiagnostics         int
+	MaxStringLiteralLength int
+	MaxRuntimeStringLength int
+	MaxEmitKwargs          int
+	MaxIdentLength         int
+	MaxExprDepth           int
+	MaxSourceBytes         int
 }
 
 func DefaultConfig() Config {
 	return Config{
 		Registry: registry.Default(),
 		ResourceLimits: ResourceLimits{
-			MaxHistoryIndex: 5000,
-			MaxDiagnostics:  100,
+			MaxHistoryIndex:        5000,
+			MaxDiagnostics:         100,
+			MaxStringLiteralLength: 4096,
+			MaxRuntimeStringLength: 4096,
+			MaxEmitKwargs:          32,
+			MaxIdentLength:         128,
+			MaxExprDepth:           64,
+			MaxSourceBytes:         256 * 1024,
 		},
 	}
 }
@@ -82,6 +97,7 @@ type Event struct {
 type Program struct {
 	ast      *ast.Program
 	registry *registry.Registry
+	limits   ResourceLimits
 }
 
 // Inputs returns the declared input port names.
@@ -144,6 +160,14 @@ func CompileWithConfig(src []byte, cfg Config) (*Program, []Diagnostic, error) {
 func CompileFileWithConfig(src []byte, file string, cfg Config) (*Program, []Diagnostic, error) {
 	cfg = normalizeConfig(cfg)
 	reg := cfg.Registry.Clone()
+	if cfg.ResourceLimits.MaxSourceBytes > 0 && len(src) > cfg.ResourceLimits.MaxSourceBytes {
+		diags := []Diagnostic{{
+			Phase: diag.PhaseParse, Category: diag.CatSourceSizeLimit,
+			Pos: token.Pos{File: file, Line: 1, Column: 1},
+			Msg: "source file exceeds configured size limit",
+		}}
+		return nil, diags, errors.New("tascript: compilation failed")
+	}
 	lx := lexer.New(src, file)
 	toks := lx.Tokenize()
 	var diags []Diagnostic
@@ -155,6 +179,7 @@ func CompileFileWithConfig(src []byte, file string, cfg Config) (*Program, []Dia
 			Msg:      le.Msg,
 		})
 	}
+	diags = append(diags, tokenLimitDiagnostics(toks, cfg.ResourceLimits)...)
 
 	ps := parser.New(toks)
 	prog := ps.Parse()
@@ -162,12 +187,15 @@ func CompileFileWithConfig(src []byte, file string, cfg Config) (*Program, []Dia
 	diags = append(diags, analysis.Analyze(prog, reg, analysis.Options{
 		MaxHistoryIndex: cfg.ResourceLimits.MaxHistoryIndex,
 		MaxDiagnostics:  cfg.ResourceLimits.MaxDiagnostics,
+		MaxEmitKwargs:   cfg.ResourceLimits.MaxEmitKwargs,
+		MaxExprDepth:    cfg.ResourceLimits.MaxExprDepth,
 	})...)
+	diags = trimDiagnostics(diags, cfg.ResourceLimits.MaxDiagnostics)
 
 	if len(diags) > 0 {
 		return nil, diags, errors.New("tascript: compilation failed")
 	}
-	return &Program{ast: prog, registry: reg}, diags, nil
+	return &Program{ast: prog, registry: reg, limits: cfg.ResourceLimits}, diags, nil
 }
 
 func normalizeConfig(cfg Config) Config {
@@ -181,7 +209,55 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.ResourceLimits.MaxDiagnostics == 0 {
 		cfg.ResourceLimits.MaxDiagnostics = def.ResourceLimits.MaxDiagnostics
 	}
+	if cfg.ResourceLimits.MaxStringLiteralLength == 0 {
+		cfg.ResourceLimits.MaxStringLiteralLength = def.ResourceLimits.MaxStringLiteralLength
+	}
+	if cfg.ResourceLimits.MaxRuntimeStringLength == 0 {
+		cfg.ResourceLimits.MaxRuntimeStringLength = def.ResourceLimits.MaxRuntimeStringLength
+	}
+	if cfg.ResourceLimits.MaxEmitKwargs == 0 {
+		cfg.ResourceLimits.MaxEmitKwargs = def.ResourceLimits.MaxEmitKwargs
+	}
+	if cfg.ResourceLimits.MaxIdentLength == 0 {
+		cfg.ResourceLimits.MaxIdentLength = def.ResourceLimits.MaxIdentLength
+	}
+	if cfg.ResourceLimits.MaxExprDepth == 0 {
+		cfg.ResourceLimits.MaxExprDepth = def.ResourceLimits.MaxExprDepth
+	}
+	if cfg.ResourceLimits.MaxSourceBytes == 0 {
+		cfg.ResourceLimits.MaxSourceBytes = def.ResourceLimits.MaxSourceBytes
+	}
 	return cfg
+}
+
+func tokenLimitDiagnostics(toks []token.Token, limits ResourceLimits) []Diagnostic {
+	var diags []Diagnostic
+	for _, tok := range toks {
+		switch tok.Kind {
+		case token.IDENT:
+			if limits.MaxIdentLength > 0 && len(tok.Literal) > limits.MaxIdentLength {
+				diags = append(diags, Diagnostic{
+					Phase: diag.PhaseParse, Category: diag.CatIdentLimit,
+					Pos: tok.Pos, Msg: "identifier exceeds configured length limit",
+				})
+			}
+		case token.STRING:
+			if limits.MaxStringLiteralLength > 0 && len(tok.Literal) > limits.MaxStringLiteralLength {
+				diags = append(diags, Diagnostic{
+					Phase: diag.PhaseParse, Category: diag.CatStringLimit,
+					Pos: tok.Pos, Msg: "string literal exceeds configured length limit",
+				})
+			}
+		}
+	}
+	return diags
+}
+
+func trimDiagnostics(diags []Diagnostic, limit int) []Diagnostic {
+	if limit <= 0 || len(diags) <= limit {
+		return diags
+	}
+	return diags[:limit]
 }
 
 // Runner is a launched program ready to be driven by the host.
@@ -198,7 +274,9 @@ func Launch(p *Program, w Wiring) (*Runner, error) {
 	if d := validateWiring(p, w); d != nil {
 		return nil, *d
 	}
-	r := &Runner{prog: p, eng: eval.New(p.ast, w.DataSources, adaptSinks(w.Sinks), p.registry)}
+	r := &Runner{prog: p, eng: eval.New(p.ast, w.DataSources, adaptSinks(w.Sinks), p.registry, eval.Options{
+		MaxStringLength: p.limits.MaxRuntimeStringLength,
+	})}
 	if d := r.eng.Prepare(); d != nil {
 		return nil, *d
 	}

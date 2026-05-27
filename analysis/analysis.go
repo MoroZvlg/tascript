@@ -14,6 +14,8 @@ import (
 type Options struct {
 	MaxHistoryIndex int
 	MaxDiagnostics  int
+	MaxEmitKwargs   int
+	MaxExprDepth    int
 }
 
 // Analyze validates a parsed program against the currently implemented
@@ -28,6 +30,8 @@ func Analyze(prog *ast.Program, reg *registry.Registry, opts Options) []diag.Dia
 		registry:        reg.Clone(),
 		maxHistoryIndex: opts.MaxHistoryIndex,
 		maxDiagnostics:  opts.MaxDiagnostics,
+		maxEmitKwargs:   opts.MaxEmitKwargs,
+		maxExprDepth:    opts.MaxExprDepth,
 	}
 	a.analyze(prog)
 	return a.diags
@@ -41,6 +45,8 @@ type analyzer struct {
 	registry        *registry.Registry
 	maxHistoryIndex int
 	maxDiagnostics  int
+	maxEmitKwargs   int
+	maxExprDepth    int
 }
 
 // reservedKwargs are emit() keyword names the runtime injects itself; user
@@ -213,6 +219,10 @@ func (a *analyzer) checkEmit(em *ast.EmitStmt) {
 	if em.Value != nil {
 		a.checkExprImplemented(em.Value)
 	}
+	if a.maxEmitKwargs > 0 && len(em.Kwargs) > a.maxEmitKwargs {
+		a.addErrf(em.CallPos, diag.CatKwargLimit,
+			"emit() has %d keyword arguments, exceeding the %d-argument limit", len(em.Kwargs), a.maxEmitKwargs)
+	}
 	for _, kw := range em.Kwargs {
 		a.checkExprImplemented(kw.Value)
 	}
@@ -254,6 +264,11 @@ func (a *analyzer) checkEmit(em *ast.EmitStmt) {
 }
 
 func (a *analyzer) checkExprImplemented(x ast.Expr) {
+	a.checkExprDepth(x, 1)
+	a.checkExprImplementedNode(x)
+}
+
+func (a *analyzer) checkExprImplementedNode(x ast.Expr) {
 	switch v := x.(type) {
 	case *ast.NumberLit, *ast.StringLit, *ast.Ident:
 		return
@@ -305,6 +320,9 @@ func (a *analyzer) checkExprImplemented(x ast.Expr) {
 		if err := registry.ValidateArgCount(ind.Name, ind.MinArgs, ind.MaxArgs, len(v.Args)); err != nil {
 			a.addErrf(v.LPos, diag.CatTypeMismatch, "%s", err)
 		}
+		if member, ok := v.Callee.(*ast.MemberExpr); ok {
+			a.checkExprImplemented(member.Object)
+		}
 		for _, arg := range v.Args {
 			if arg.Name != "" {
 				a.addErrf(arg.NamePos, diag.CatTypeMismatch,
@@ -323,6 +341,34 @@ func (a *analyzer) checkExprImplemented(x ast.Expr) {
 	default:
 		a.addErrf(x.Pos(), diag.CatNotImplemented,
 			"expression %T is not implemented in this slice", x)
+	}
+}
+
+func (a *analyzer) checkExprDepth(x ast.Expr, depth int) {
+	if x == nil {
+		return
+	}
+	if a.maxExprDepth > 0 && depth > a.maxExprDepth {
+		a.addErrf(x.Pos(), diag.CatDepthLimit,
+			"expression depth exceeds the %d-level limit", a.maxExprDepth)
+		return
+	}
+	switch v := x.(type) {
+	case *ast.UnaryExpr:
+		a.checkExprDepth(v.Right, depth+1)
+	case *ast.BinaryExpr:
+		a.checkExprDepth(v.Left, depth+1)
+		a.checkExprDepth(v.Right, depth+1)
+	case *ast.MemberExpr:
+		a.checkExprDepth(v.Object, depth+1)
+	case *ast.IndexExpr:
+		a.checkExprDepth(v.Object, depth+1)
+		a.checkExprDepth(v.Index, depth+1)
+	case *ast.CallExpr:
+		a.checkExprDepth(v.Callee, depth+1)
+		for _, arg := range v.Args {
+			a.checkExprDepth(arg.Value, depth+1)
+		}
 	}
 }
 
@@ -411,19 +457,19 @@ func (a *analyzer) indicatorSpec(x *ast.CallExpr) (registry.IndicatorSpec, bool)
 	if !ok {
 		return registry.IndicatorSpec{}, false
 	}
-	root, ok := m.Object.(*ast.Ident)
-	if !ok {
-		return registry.IndicatorSpec{}, false
+	if root, ok := m.Object.(*ast.Ident); ok {
+		if in, ok := a.inputs[root.Name]; ok {
+			if in.Type != "CandleSeries" {
+				a.addErrf(m.NamePos, diag.CatTypeMismatch,
+					"indicator %s requires CandleSeries receiver", spec.Name)
+			}
+			return spec, true
+		}
 	}
-	in, ok := a.inputs[root.Name]
-	if !ok {
-		return registry.IndicatorSpec{}, false
+	if spec.Scalar {
+		return spec, true
 	}
-	if in.Type != "CandleSeries" {
-		a.addErrf(m.NamePos, diag.CatTypeMismatch,
-			"indicator %s requires CandleSeries receiver", spec.Name)
-	}
-	return spec, true
+	return registry.IndicatorSpec{}, false
 }
 
 func isIdent(x ast.Expr, name string) bool {
