@@ -1,0 +1,7 @@
+output alerts {
+  message: String
+}
+
+function Run() {
+  emit(alerts, message="hi")
+}
