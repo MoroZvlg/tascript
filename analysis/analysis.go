@@ -18,6 +18,23 @@ type Options struct {
 	MaxExprDepth    int
 }
 
+type valueType string
+
+const (
+	typeUnknown      valueType = ""
+	typeNumber       valueType = "Number"
+	typeString       valueType = "String"
+	typeBool         valueType = "Bool"
+	typeTime         valueType = "Time"
+	typeDuration     valueType = "Duration"
+	typeSeries       valueType = "Series"
+	typeTimeSeries   valueType = "TimeSeries"
+	typeCandle       valueType = "Candle"
+	typeCandleSeries valueType = "CandleSeries"
+	typeTuple        valueType = "Tuple"
+	typeNamespace    valueType = "Namespace"
+)
+
 // Analyze validates a parsed program against the currently implemented
 // language slice. Diagnostics still use PhaseParse because they are surfaced
 // to users before launch/runtime, but this package is deliberately separate
@@ -27,6 +44,8 @@ func Analyze(prog *ast.Program, reg *registry.Registry, opts Options) []diag.Dia
 		outputs:         map[string]*ast.OutputDecl{},
 		inputs:          map[string]*ast.InputDecl{},
 		constants:       map[string]registry.Value{},
+		constTypes:      map[string]valueType{},
+		stateTypes:      map[string]valueType{},
 		registry:        reg.Clone(),
 		maxHistoryIndex: opts.MaxHistoryIndex,
 		maxDiagnostics:  opts.MaxDiagnostics,
@@ -42,6 +61,8 @@ type analyzer struct {
 	outputs         map[string]*ast.OutputDecl
 	inputs          map[string]*ast.InputDecl
 	constants       map[string]registry.Value
+	constTypes      map[string]valueType
+	stateTypes      map[string]valueType
 	registry        *registry.Registry
 	maxHistoryIndex int
 	maxDiagnostics  int
@@ -122,14 +143,15 @@ func (a *analyzer) checkTopDecls(prog *ast.Program) {
 	for _, d := range prog.Decls {
 		switch x := d.(type) {
 		case *ast.ConstDecl:
-			switch v := x.Value.(type) {
-			case *ast.NumberLit:
-				a.constants[x.Name] = v.Val
-			case *ast.StringLit:
-				a.constants[x.Name] = v.Val
-			default:
+			typ := a.exprType(x.Value)
+			if typ != typeNumber && typ != typeString && typ != typeBool && typ != typeDuration {
 				a.addErrf(x.Value.Pos(), diag.CatTopLevelForm,
-					"top-level constants must be Number or String literal values in this slice")
+					"top-level constants must be Number, String, Bool, or Duration constant expressions")
+				break
+			}
+			a.constTypes[x.Name] = typ
+			if val, ok := a.staticValue(x.Value); ok {
+				a.constants[x.Name] = val
 			}
 		case *ast.InputDecl:
 			spec, ok := a.registry.Type(x.Type)
@@ -191,8 +213,19 @@ func (a *analyzer) checkStmt(fnName string, s ast.Stmt) {
 				"only state.* assignment is implemented in this slice")
 		}
 		a.checkExprImplemented(x.Value)
+		if member, ok := x.Target.(*ast.MemberExpr); ok && isIdent(member.Object, "state") {
+			typ := a.exprType(x.Value)
+			if prev, ok := a.stateTypes[member.Name]; ok && prev != typeUnknown && typ != typeUnknown && prev != typ {
+				a.addErrf(x.Pos(), diag.CatTypeMismatch,
+					"state.%s was previously assigned %s, cannot assign %s", member.Name, prev, typ)
+			}
+			if typ != typeUnknown {
+				a.stateTypes[member.Name] = typ
+			}
+		}
 	case *ast.IfStmt:
 		a.checkExprImplemented(x.Condition)
+		a.requireAssignable(typeBool, a.exprType(x.Condition), x.Condition.Pos(), "if condition")
 		for _, nested := range x.Consequence {
 			a.checkStmt(fnName, nested)
 		}
@@ -232,6 +265,10 @@ func (a *analyzer) checkEmit(em *ast.EmitStmt) {
 		a.addErrf(em.Value.Pos(), diag.CatEmitPayload,
 			"output %q declares no value type; remove the positional value", em.Output)
 	}
+	if em.Value != nil && out.ValueType != "" {
+		a.requireAssignable(valueType(out.ValueType), a.exprType(em.Value), em.Value.Pos(),
+			fmt.Sprintf("output %q value", em.Output))
+	}
 	if em.Value == nil && out.ValueType != "" {
 		a.addErrf(em.CallPos, diag.CatEmitPayload,
 			"output %q declares value type %q; emit() must supply a positional value", em.Output, out.ValueType)
@@ -253,6 +290,13 @@ func (a *analyzer) checkEmit(em *ast.EmitStmt) {
 		if !declared[kw.Name] {
 			a.addErrf(kw.NamePos, diag.CatEmitPayload,
 				"output %q has no declared field %q", em.Output, kw.Name)
+		}
+		for _, field := range out.Fields {
+			if field.Name == kw.Name {
+				a.requireAssignable(valueType(field.Type), a.exprType(kw.Value), kw.Value.Pos(),
+					fmt.Sprintf("output %q field %q", em.Output, kw.Name))
+				break
+			}
 		}
 	}
 	for _, f := range out.Fields {
@@ -372,6 +416,255 @@ func (a *analyzer) checkExprDepth(x ast.Expr, depth int) {
 	}
 }
 
+func (a *analyzer) exprType(x ast.Expr) valueType {
+	switch v := x.(type) {
+	case *ast.NumberLit:
+		return typeNumber
+	case *ast.StringLit:
+		return typeString
+	case *ast.BoolLit:
+		return typeBool
+	case *ast.Ident:
+		switch v.Name {
+		case "math", "ta", "time", "state":
+			return typeNamespace
+		}
+		if typ, ok := a.constTypes[v.Name]; ok {
+			return typ
+		}
+		if in, ok := a.inputs[v.Name]; ok {
+			return valueType(in.Type)
+		}
+		return typeUnknown
+	case *ast.UnaryExpr:
+		right := a.exprType(v.Right)
+		switch v.Op {
+		case token.MINUS:
+			if right == typeDuration {
+				return typeDuration
+			}
+			if isNumberLike(right) {
+				return typeNumber
+			}
+			if right != typeUnknown {
+				a.addErrf(v.OpPos, diag.CatTypeMismatch, "unary '-' requires Number or Duration, got %s", right)
+			}
+		case token.BANG:
+			if right == typeBool {
+				return typeBool
+			}
+			if right != typeUnknown {
+				a.addErrf(v.OpPos, diag.CatTypeMismatch, "unary '!' requires Bool, got %s", right)
+			}
+		}
+		return typeUnknown
+	case *ast.BinaryExpr:
+		return a.binaryType(v)
+	case *ast.MemberExpr:
+		return a.memberType(v)
+	case *ast.IndexExpr:
+		obj := a.exprType(v.Object)
+		switch obj {
+		case typeSeries:
+			return typeNumber
+		case typeTimeSeries:
+			return typeTime
+		case typeCandleSeries:
+			return typeCandle
+		case typeTuple:
+			return typeSeries
+		case typeUnknown:
+			return typeUnknown
+		default:
+			a.addErrf(v.LPos, diag.CatTypeMismatch, "indexing requires Series, TimeSeries, CandleSeries, or Tuple, got %s", obj)
+			return typeUnknown
+		}
+	case *ast.CallExpr:
+		if spec, ok := a.helperSpec(v); ok {
+			if spec.ReturnType != "" {
+				return valueType(spec.ReturnType)
+			}
+			return typeUnknown
+		}
+		if spec, ok := a.indicatorSpec(v); ok {
+			if spec.ReturnType != "" {
+				return valueType(spec.ReturnType)
+			}
+			return typeSeries
+		}
+		return typeUnknown
+	default:
+		return typeUnknown
+	}
+}
+
+func (a *analyzer) memberType(x *ast.MemberExpr) valueType {
+	if isIdent(x.Object, "state") {
+		if typ, ok := a.stateTypes[x.Name]; ok {
+			return typ
+		}
+		return typeUnknown
+	}
+	if isIdent(x.Object, "time") {
+		switch x.Name {
+		case "MILLISECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK":
+			return typeDuration
+		default:
+			a.addErrf(x.NamePos, diag.CatTypeMismatch, "unknown time constant %q", x.Name)
+			return typeUnknown
+		}
+	}
+
+	obj := a.exprType(x.Object)
+	switch obj {
+	case typeCandleSeries:
+		switch x.Name {
+		case "opens", "highs", "lows", "closes", "volumes", "hl2", "hlc3":
+			return typeSeries
+		case "timestamps":
+			return typeTimeSeries
+		case "open", "high", "low", "close", "volume":
+			return typeNumber
+		case "ts":
+			return typeTime
+		}
+	case typeCandle:
+		switch x.Name {
+		case "open", "high", "low", "close", "volume":
+			return typeNumber
+		case "ts":
+			return typeTime
+		}
+	case typeTime:
+		switch x.Name {
+		case "unix_ms", "year", "month", "day", "weekday", "hour", "minute", "second", "millisecond":
+			return typeNumber
+		}
+	case typeDuration:
+		switch x.Name {
+		case "unix_ms", "seconds", "minutes", "hours", "days", "weeks":
+			return typeNumber
+		}
+	case typeUnknown, typeNamespace, typeSeries, typeTuple, typeTimeSeries:
+		return typeUnknown
+	}
+	a.addErrf(x.NamePos, diag.CatTypeMismatch, "unknown member %q on %s", x.Name, obj)
+	return typeUnknown
+}
+
+func (a *analyzer) binaryType(x *ast.BinaryExpr) valueType {
+	left := a.exprType(x.Left)
+	right := a.exprType(x.Right)
+	switch x.Op {
+	case token.AND, token.OR:
+		if left != typeBool && left != typeUnknown {
+			a.addErrf(x.OpPos, diag.CatTypeMismatch, "left operand of %s must be Bool, got %s", x.Op, left)
+		}
+		if right != typeBool && right != typeUnknown {
+			a.addErrf(x.OpPos, diag.CatTypeMismatch, "right operand of %s must be Bool, got %s", x.Op, right)
+		}
+		return typeBool
+	case token.EQ, token.NEQ:
+		if !sameComparableType(left, right) {
+			a.addErrf(x.OpPos, diag.CatTypeMismatch, "equality operands must have the same scalar type, got %s and %s", left, right)
+		}
+		return typeBool
+	case token.LT, token.LTE, token.GT, token.GTE:
+		if comparableOrderType(left, right) {
+			return typeBool
+		}
+		a.addErrf(x.OpPos, diag.CatTypeMismatch, "comparison operands must both be Number, Time, or Duration, got %s and %s", left, right)
+		return typeBool
+	case token.PLUS, token.MINUS, token.ASTERISK, token.SLASH, token.PERCENT:
+		return a.arithmeticType(x.Op, x.OpPos, left, right)
+	default:
+		return typeUnknown
+	}
+}
+
+func (a *analyzer) arithmeticType(op token.Kind, pos token.Pos, left, right valueType) valueType {
+	if isNumberLike(left) && isNumberLike(right) {
+		return typeNumber
+	}
+	if left == typeTime && right == typeTime && op == token.MINUS {
+		return typeDuration
+	}
+	if left == typeTime && right == typeDuration && (op == token.PLUS || op == token.MINUS) {
+		return typeTime
+	}
+	if left == typeDuration && right == typeDuration {
+		switch op {
+		case token.PLUS, token.MINUS:
+			return typeDuration
+		case token.SLASH:
+			return typeNumber
+		}
+	}
+	if left == typeDuration && isNumberLike(right) {
+		switch op {
+		case token.ASTERISK, token.SLASH:
+			return typeDuration
+		}
+	}
+	if isNumberLike(left) && right == typeDuration && op == token.ASTERISK {
+		return typeDuration
+	}
+	if left == typeUnknown || right == typeUnknown {
+		return typeUnknown
+	}
+	a.addErrf(pos, diag.CatTypeMismatch, "unsupported arithmetic between %s and %s", left, right)
+	return typeUnknown
+}
+
+func (a *analyzer) requireAssignable(dst, src valueType, pos token.Pos, ctx string) {
+	if dst == typeUnknown || src == typeUnknown {
+		return
+	}
+	if dst == src {
+		return
+	}
+	if dst == typeNumber && src == typeSeries {
+		return
+	}
+	if !isBuiltinType(dst) || !isBuiltinType(src) {
+		return
+	}
+	a.addErrf(pos, diag.CatTypeMismatch, "%s expects %s, got %s", ctx, dst, src)
+}
+
+func isNumberLike(t valueType) bool {
+	return t == typeNumber || t == typeSeries
+}
+
+func sameComparableType(left, right valueType) bool {
+	if left == typeUnknown || right == typeUnknown {
+		return true
+	}
+	if isNumberLike(left) && isNumberLike(right) {
+		return true
+	}
+	return left == right && (left == typeString || left == typeBool || left == typeTime || left == typeDuration)
+}
+
+func comparableOrderType(left, right valueType) bool {
+	if left == typeUnknown || right == typeUnknown {
+		return true
+	}
+	if isNumberLike(left) && isNumberLike(right) {
+		return true
+	}
+	return left == right && (left == typeTime || left == typeDuration)
+}
+
+func isBuiltinType(t valueType) bool {
+	switch t {
+	case typeNumber, typeString, typeBool, typeTime, typeDuration, typeSeries, typeCandle, typeCandleSeries, typeTuple, typeTimeSeries:
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *analyzer) checkHistoryIndex(x ast.Expr) {
 	lit, ok := x.(*ast.NumberLit)
 	if !ok {
@@ -426,9 +719,112 @@ func (a *analyzer) staticValue(x ast.Expr) (registry.Value, bool) {
 	case *ast.Ident:
 		val, ok := a.constants[v.Name]
 		return val, ok
+	case *ast.MemberExpr:
+		if isIdent(v.Object, "time") {
+			switch v.Name {
+			case "MILLISECOND":
+				return registry.Duration{Milliseconds: 1}, true
+			case "SECOND":
+				return registry.Duration{Milliseconds: 1000}, true
+			case "MINUTE":
+				return registry.Duration{Milliseconds: 60 * 1000}, true
+			case "HOUR":
+				return registry.Duration{Milliseconds: 60 * 60 * 1000}, true
+			case "DAY":
+				return registry.Duration{Milliseconds: 24 * 60 * 60 * 1000}, true
+			case "WEEK":
+				return registry.Duration{Milliseconds: 7 * 24 * 60 * 60 * 1000}, true
+			}
+		}
+	case *ast.UnaryExpr:
+		val, ok := a.staticValue(v.Right)
+		if !ok {
+			return nil, false
+		}
+		switch v.Op {
+		case token.MINUS:
+			switch x := val.(type) {
+			case float64:
+				return -x, true
+			case registry.Duration:
+				return registry.Duration{Milliseconds: -x.Milliseconds}, true
+			}
+		}
+	case *ast.BinaryExpr:
+		left, ok := a.staticValue(v.Left)
+		if !ok {
+			return nil, false
+		}
+		right, ok := a.staticValue(v.Right)
+		if !ok {
+			return nil, false
+		}
+		return staticBinaryValue(v.Op, left, right)
+	case *ast.CallExpr:
+		spec, ok := a.helperSpec(v)
+		if !ok || spec.Eval == nil {
+			return nil, false
+		}
+		args := make([]registry.Value, 0, len(v.Args))
+		for _, arg := range v.Args {
+			if arg.Name != "" {
+				return nil, false
+			}
+			val, ok := a.staticValue(arg.Value)
+			if !ok {
+				return nil, false
+			}
+			args = append(args, val)
+		}
+		out, err := spec.Eval(args)
+		return out, err == nil
 	default:
 		return nil, false
 	}
+	return nil, false
+}
+
+func staticBinaryValue(op token.Kind, left, right registry.Value) (registry.Value, bool) {
+	if l, ok := left.(float64); ok {
+		if r, ok := right.(float64); ok {
+			switch op {
+			case token.PLUS:
+				return l + r, true
+			case token.MINUS:
+				return l - r, true
+			case token.ASTERISK:
+				return l * r, true
+			case token.SLASH:
+				return l / r, true
+			case token.PERCENT:
+				return math.Mod(l, r), true
+			}
+		}
+		if r, ok := right.(registry.Duration); ok && op == token.ASTERISK {
+			return registry.Duration{Milliseconds: int64(l * float64(r.Milliseconds))}, true
+		}
+	}
+	if l, ok := left.(registry.Duration); ok {
+		switch r := right.(type) {
+		case registry.Duration:
+			switch op {
+			case token.PLUS:
+				return registry.Duration{Milliseconds: l.Milliseconds + r.Milliseconds}, true
+			case token.MINUS:
+				return registry.Duration{Milliseconds: l.Milliseconds - r.Milliseconds}, true
+			case token.SLASH:
+				return float64(l.Milliseconds) / float64(r.Milliseconds), true
+			}
+		case float64:
+			switch op {
+			case token.ASTERISK:
+				return registry.Duration{Milliseconds: int64(float64(l.Milliseconds) * r)}, true
+			case token.SLASH:
+				return registry.Duration{Milliseconds: int64(float64(l.Milliseconds) / r)}, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func isStateMember(x ast.Expr) bool {

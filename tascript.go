@@ -43,6 +43,8 @@ type ScalarIndicator = registry.ScalarIndicator
 type ScalarIndicatorFactory = registry.ScalarIndicatorFactory
 type Value = registry.Value
 type Tuple = registry.Tuple
+type Time = registry.Time
+type Duration = registry.Duration
 
 type Sink interface {
 	Emit(Event) error

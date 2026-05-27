@@ -6,6 +6,7 @@ package eval
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/diag"
@@ -54,6 +55,10 @@ type numberSeries struct {
 	field  string
 }
 
+type timeSeries struct {
+	source *CandleSeries
+}
+
 func (s *numberSeries) valueAt(n int) (float64, bool) {
 	c, ok := s.source.candleAt(n)
 	if !ok {
@@ -91,6 +96,30 @@ func (s *numberSeries) History(n int) (float64, error) {
 	v, ok := s.valueAt(n)
 	if !ok {
 		return 0, fmt.Errorf("Series history[%d] is out of range", n)
+	}
+	return v, nil
+}
+
+func (s *timeSeries) valueAt(n int) (registry.Time, bool) {
+	c, ok := s.source.candleAt(n)
+	if !ok {
+		return registry.Time{}, false
+	}
+	return registry.Time{UnixMS: c.Ts}, true
+}
+
+func (s *timeSeries) Current() (registry.Time, error) {
+	v, ok := s.valueAt(0)
+	if !ok {
+		return registry.Time{}, fmt.Errorf("TimeSeries has no current value")
+	}
+	return v, nil
+}
+
+func (s *timeSeries) History(n int) (registry.Time, error) {
+	v, ok := s.valueAt(n)
+	if !ok {
+		return registry.Time{}, fmt.Errorf("TimeSeries history[%d] is out of range", n)
 	}
 	return v, nil
 }
@@ -199,7 +228,7 @@ func (e *Engine) Prepare() *diag.Diagnostic {
 	for _, d := range e.prog.Decls {
 		switch x := d.(type) {
 		case *ast.ConstDecl:
-			v, err := e.evalLiteral(x.Value)
+			v, err := e.evalExpr(x.Value)
 			if err != nil {
 				return err
 			}
@@ -469,9 +498,12 @@ func (e *Engine) evalUnary(x *ast.UnaryExpr) (Value, *diag.Diagnostic) {
 	}
 	switch x.Op {
 	case token.MINUS:
+		if d, ok := right.(registry.Duration); ok {
+			return registry.Duration{Milliseconds: -d.Milliseconds}, nil
+		}
 		n, ok := asNumber(right)
 		if !ok {
-			return nil, typeErr(x.OpPos, "unary '-' requires Number")
+			return nil, typeErr(x.OpPos, "unary '-' requires Number or Duration")
 		}
 		return -n, nil
 	case token.BANG:
@@ -509,6 +541,10 @@ func (e *Engine) evalBinary(x *ast.BinaryExpr) (Value, *diag.Diagnostic) {
 		return evalEquality(x.Op, x.OpPos, left, right)
 	case token.LT, token.LTE, token.GT, token.GTE:
 		return evalCompare(x.Op, x.OpPos, left, right)
+	}
+
+	if v, ok, err := evalTimeDurationBinary(x.Op, x.OpPos, left, right); ok || err != nil {
+		return v, err
 	}
 
 	l, ok := asNumber(left)
@@ -595,6 +631,9 @@ func (e *Engine) evalMember(x *ast.MemberExpr) (Value, *diag.Diagnostic) {
 		}
 		return val, nil
 	}
+	if isIdent(x.Object, "time") {
+		return timeConstant(x.Name, x.NamePos)
+	}
 
 	obj, err := e.evalExpr(x.Object)
 	if err != nil {
@@ -602,6 +641,12 @@ func (e *Engine) evalMember(x *ast.MemberExpr) (Value, *diag.Diagnostic) {
 	}
 	if c, ok := obj.(Candle); ok {
 		return candleMember(c, x.Name, x.NamePos)
+	}
+	if t, ok := obj.(registry.Time); ok {
+		return timeMember(t, x.Name, x.NamePos)
+	}
+	if d, ok := obj.(registry.Duration); ok {
+		return durationMember(d, x.Name, x.NamePos)
 	}
 	series, ok := obj.(*CandleSeries)
 	if !ok {
@@ -616,8 +661,12 @@ func (e *Engine) evalMember(x *ast.MemberExpr) (Value, *diag.Diagnostic) {
 	switch x.Name {
 	case "opens", "highs", "lows", "closes", "volumes", "hl2", "hlc3":
 		return &numberSeries{source: series, field: x.Name}, nil
+	case "timestamps":
+		return &timeSeries{source: series}, nil
 	case "open", "high", "low", "close", "volume":
 		return candleMember(series.current, x.Name, x.NamePos)
+	case "ts":
+		return registry.Time{UnixMS: series.current.Ts}, nil
 	default:
 		return nil, typeErr(x.NamePos, fmt.Sprintf("unknown CandleSeries member %q", x.Name))
 	}
@@ -650,6 +699,12 @@ func (e *Engine) evalIndex(x *ast.IndexExpr) (Value, *diag.Diagnostic) {
 			return nil, historyErr(x.LPos, seriesErr.Error())
 		}
 		return n, nil
+	case *timeSeries:
+		t, seriesErr := v.History(idx)
+		if seriesErr != nil {
+			return nil, historyErr(x.LPos, seriesErr.Error())
+		}
+		return t, nil
 	case *indicatorTuple:
 		n, tupleErr := v.element(idx)
 		if tupleErr != nil {
@@ -881,14 +936,60 @@ func asBool(v Value) (bool, bool) {
 	return b, ok
 }
 
-func evalEquality(op token.Kind, pos token.Pos, left, right Value) (Value, *diag.Diagnostic) {
+func evalTimeDurationBinary(op token.Kind, pos token.Pos, left, right Value) (Value, bool, *diag.Diagnostic) {
 	switch l := left.(type) {
+	case registry.Time:
+		switch r := right.(type) {
+		case registry.Time:
+			if op == token.MINUS {
+				return registry.Duration{Milliseconds: l.UnixMS - r.UnixMS}, true, nil
+			}
+		case registry.Duration:
+			switch op {
+			case token.PLUS:
+				return registry.Time{UnixMS: l.UnixMS + r.Milliseconds}, true, nil
+			case token.MINUS:
+				return registry.Time{UnixMS: l.UnixMS - r.Milliseconds}, true, nil
+			}
+		}
+		return nil, true, typeErr(pos, "unsupported Time arithmetic")
+	case registry.Duration:
+		switch r := right.(type) {
+		case registry.Duration:
+			switch op {
+			case token.PLUS:
+				return registry.Duration{Milliseconds: l.Milliseconds + r.Milliseconds}, true, nil
+			case token.MINUS:
+				return registry.Duration{Milliseconds: l.Milliseconds - r.Milliseconds}, true, nil
+			case token.SLASH:
+				return float64(l.Milliseconds) / float64(r.Milliseconds), true, nil
+			}
+		case float64:
+			switch op {
+			case token.ASTERISK:
+				return registry.Duration{Milliseconds: int64(float64(l.Milliseconds) * r)}, true, nil
+			case token.SLASH:
+				return registry.Duration{Milliseconds: int64(float64(l.Milliseconds) / r)}, true, nil
+			}
+		}
+		return nil, true, typeErr(pos, "unsupported Duration arithmetic")
 	case float64:
-		r, ok := right.(float64)
+		if r, ok := right.(registry.Duration); ok && op == token.ASTERISK {
+			return registry.Duration{Milliseconds: int64(l * float64(r.Milliseconds))}, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func evalEquality(op token.Kind, pos token.Pos, left, right Value) (Value, *diag.Diagnostic) {
+	if l, ok := asNumber(left); ok {
+		r, ok := asNumber(right)
 		if !ok {
 			return nil, typeErr(pos, "equality operands must have the same type")
 		}
 		return applyEquality(op, l == r), nil
+	}
+	switch l := left.(type) {
 	case string:
 		r, ok := right.(string)
 		if !ok {
@@ -901,12 +1002,38 @@ func evalEquality(op token.Kind, pos token.Pos, left, right Value) (Value, *diag
 			return nil, typeErr(pos, "equality operands must have the same type")
 		}
 		return applyEquality(op, l == r), nil
+	case registry.Time:
+		r, ok := right.(registry.Time)
+		if !ok {
+			return nil, typeErr(pos, "equality operands must have the same type")
+		}
+		return applyEquality(op, l.UnixMS == r.UnixMS), nil
+	case registry.Duration:
+		r, ok := right.(registry.Duration)
+		if !ok {
+			return nil, typeErr(pos, "equality operands must have the same type")
+		}
+		return applyEquality(op, l.Milliseconds == r.Milliseconds), nil
 	default:
 		return nil, typeErr(pos, "equality operands must be scalar values")
 	}
 }
 
 func evalCompare(op token.Kind, pos token.Pos, left, right Value) (Value, *diag.Diagnostic) {
+	switch l := left.(type) {
+	case registry.Time:
+		r, ok := right.(registry.Time)
+		if !ok {
+			return nil, typeErr(pos, "comparison operands must have the same type")
+		}
+		return compareInt64(op, l.UnixMS, r.UnixMS), nil
+	case registry.Duration:
+		r, ok := right.(registry.Duration)
+		if !ok {
+			return nil, typeErr(pos, "comparison operands must have the same type")
+		}
+		return compareInt64(op, l.Milliseconds, r.Milliseconds), nil
+	}
 	l, ok := asNumber(left)
 	if !ok {
 		return nil, typeErr(pos, "comparison operands must be Number")
@@ -926,6 +1053,21 @@ func evalCompare(op token.Kind, pos token.Pos, left, right Value) (Value, *diag.
 		return l >= r, nil
 	default:
 		return nil, typeErr(pos, fmt.Sprintf("unsupported comparison operator %s", op))
+	}
+}
+
+func compareInt64(op token.Kind, left, right int64) bool {
+	switch op {
+	case token.LT:
+		return left < right
+	case token.LTE:
+		return left <= right
+	case token.GT:
+		return left > right
+	case token.GTE:
+		return left >= right
+	default:
+		return false
 	}
 }
 
@@ -1024,8 +1166,75 @@ func candleMember(c Candle, name string, pos token.Pos) (Value, *diag.Diagnostic
 		return c.Close, nil
 	case "volume":
 		return c.Volume, nil
+	case "ts":
+		return registry.Time{UnixMS: c.Ts}, nil
 	default:
 		return nil, typeErr(pos, fmt.Sprintf("unknown Candle member %q", name))
+	}
+}
+
+func timeConstant(name string, pos token.Pos) (Value, *diag.Diagnostic) {
+	switch name {
+	case "MILLISECOND":
+		return registry.Duration{Milliseconds: 1}, nil
+	case "SECOND":
+		return registry.Duration{Milliseconds: 1000}, nil
+	case "MINUTE":
+		return registry.Duration{Milliseconds: 60 * 1000}, nil
+	case "HOUR":
+		return registry.Duration{Milliseconds: 60 * 60 * 1000}, nil
+	case "DAY":
+		return registry.Duration{Milliseconds: 24 * 60 * 60 * 1000}, nil
+	case "WEEK":
+		return registry.Duration{Milliseconds: 7 * 24 * 60 * 60 * 1000}, nil
+	default:
+		return nil, typeErr(pos, fmt.Sprintf("unknown time constant %q", name))
+	}
+}
+
+func timeMember(t registry.Time, name string, pos token.Pos) (Value, *diag.Diagnostic) {
+	utc := time.UnixMilli(t.UnixMS).UTC()
+	switch name {
+	case "unix_ms":
+		return float64(t.UnixMS), nil
+	case "year":
+		return float64(utc.Year()), nil
+	case "month":
+		return float64(utc.Month()), nil
+	case "day":
+		return float64(utc.Day()), nil
+	case "weekday":
+		return float64(utc.Weekday()), nil
+	case "hour":
+		return float64(utc.Hour()), nil
+	case "minute":
+		return float64(utc.Minute()), nil
+	case "second":
+		return float64(utc.Second()), nil
+	case "millisecond":
+		return float64(utc.Nanosecond() / int(time.Millisecond)), nil
+	default:
+		return nil, typeErr(pos, fmt.Sprintf("unknown Time member %q", name))
+	}
+}
+
+func durationMember(d registry.Duration, name string, pos token.Pos) (Value, *diag.Diagnostic) {
+	ms := float64(d.Milliseconds)
+	switch name {
+	case "unix_ms":
+		return ms, nil
+	case "seconds":
+		return ms / 1000, nil
+	case "minutes":
+		return ms / (60 * 1000), nil
+	case "hours":
+		return ms / (60 * 60 * 1000), nil
+	case "days":
+		return ms / (24 * 60 * 60 * 1000), nil
+	case "weeks":
+		return ms / (7 * 24 * 60 * 60 * 1000), nil
+	default:
+		return nil, typeErr(pos, fmt.Sprintf("unknown Duration member %q", name))
 	}
 }
 
@@ -1045,6 +1254,10 @@ func (e *Engine) scalarValue(v Value, pos token.Pos) (Value, *diag.Diagnostic) {
 			}
 		}
 		return x, nil
+	case registry.Time:
+		return x.UnixMS, nil
+	case registry.Duration:
+		return x.Milliseconds, nil
 	case *CandleSeries, Candle, *indicatorTuple, registry.Tuple:
 		return nil, typeErr(pos, "value is not serializable in emit payload")
 	default:

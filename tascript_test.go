@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/MoroZvlg/tascript"
 )
@@ -1094,6 +1095,148 @@ function Run() {
 	}
 }
 
+func TestTimeDuration_RuntimeSupport(t *testing.T) {
+	first := utcMS(2026, time.May, 26, 0, 0, 0, 0)
+	second := utcMS(2026, time.May, 27, 0, 0, 0, 0)
+
+	src := []byte(`COOLDOWN = 30 * time.MINUTE
+
+input btc: CandleSeries
+
+output alerts {
+  weekday: Number
+  elapsedMinutes: Number
+  cooldown: Duration
+  at: Time
+  shifted: Time
+  tsMS: Number
+  durationMS: Number
+}
+
+function Init() {}
+function Run() {
+  if (btc.timestamps[0].weekday == 3) {
+    emit(alerts,
+      weekday=btc.timestamps[0].weekday,
+      elapsedMinutes=(btc.timestamps[0] - btc[1].ts).minutes,
+      cooldown=COOLDOWN,
+      at=btc.timestamps[0],
+      shifted=btc.timestamps[0] - time.MINUTE,
+      tsMS=btc[0].ts.unix_ms,
+      durationMS=COOLDOWN.unix_ms)
+  }
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{Close: 10, Ts: first},
+				{Close: 11, Ts: second},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	if got := r.DrainEvents(); len(got) != 0 {
+		t.Fatalf("step 1 events = %#v, want none", got)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 {
+		t.Fatalf("events = %#v, want one", got)
+	}
+	want := map[string]any{
+		"weekday":        float64(3),
+		"elapsedMinutes": float64(1440),
+		"cooldown":       int64(30 * 60 * 1000),
+		"at":             second,
+		"shifted":        second - int64(60*1000),
+		"tsMS":           float64(second),
+		"durationMS":     float64(30 * 60 * 1000),
+	}
+	if !reflect.DeepEqual(got[0].Data, want) {
+		t.Fatalf("time data = %#v, want %#v", got[0].Data, want)
+	}
+}
+
+func TestStaticTypes_EmitPayloadAndOperators(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "emit field mismatch",
+			src: `output alerts {
+  price: Number
+}
+function Init() {}
+function Run() {
+  emit(alerts, price="expensive")
+}
+`,
+		},
+		{
+			name: "if condition mismatch",
+			src: `output alerts {}
+function Init() {}
+function Run() {
+  if (1) {
+    emit(alerts)
+  }
+}
+`,
+		},
+		{
+			name: "time arithmetic mismatch",
+			src: `input btc: CandleSeries
+output alerts {
+  bad: Time
+}
+function Init() {}
+function Run() {
+  emit(alerts, bad=btc.timestamps[0] + 1)
+}
+`,
+		},
+		{
+			name: "duration to time field",
+			src: `output alerts {
+  at: Time
+}
+function Init() {}
+function Run() {
+  emit(alerts, at=time.MINUTE)
+}
+`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, diags, err := tascript.Compile([]byte(tc.src))
+			if err == nil {
+				t.Fatalf("expected compile failure")
+			}
+			if !containsDiag(diags, wantDiag{Phase: "parse", Category: "TYPE_MISMATCH"}) {
+				t.Fatalf("diags = %#v, want TYPE_MISMATCH", diags)
+			}
+		})
+	}
+}
+
 // --- helpers ---
 
 var indicatorCalls int
@@ -1128,6 +1271,10 @@ type recordSink struct {
 func (s *recordSink) Emit(ev tascript.Event) error {
 	s.events = append(s.events, ev)
 	return nil
+}
+
+func utcMS(year int, month time.Month, day, hour, minute, second, millisecond int) int64 {
+	return time.Date(year, month, day, hour, minute, second, millisecond*int(time.Millisecond), time.UTC).UnixMilli()
 }
 
 func must(t *testing.T, err error) {

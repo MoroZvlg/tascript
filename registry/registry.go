@@ -12,6 +12,16 @@ type Value any
 
 type Tuple []Value
 
+// Time is a Unix timestamp in milliseconds.
+type Time struct {
+	UnixMS int64
+}
+
+// Duration is a signed duration in milliseconds.
+type Duration struct {
+	Milliseconds int64
+}
+
 type Series interface {
 	Current() (float64, error)
 	History(n int) (float64, error)
@@ -23,6 +33,7 @@ type Candle struct {
 	Low    float64
 	Close  float64
 	Volume float64
+	Ts     int64
 }
 
 type TypeSpec struct {
@@ -52,12 +63,13 @@ type ScalarIndicator interface {
 type ScalarIndicatorFactory func(args []Value) (ScalarIndicator, error)
 
 type HelperSpec struct {
-	Namespace string
-	Name      string
-	MinArgs   int
-	MaxArgs   int // -1 means variadic.
-	Eval      HelperFunc
-	Lookback  HelperLookbackFunc
+	Namespace  string
+	Name       string
+	MinArgs    int
+	MaxArgs    int // -1 means variadic.
+	Eval       HelperFunc
+	Lookback   HelperLookbackFunc
+	ReturnType string
 }
 
 type IndicatorSpec struct {
@@ -68,6 +80,7 @@ type IndicatorSpec struct {
 	Scalar      bool
 	Build       IndicatorFactory
 	BuildScalar ScalarIndicatorFactory
+	ReturnType  string
 	BuildInfo   any
 }
 
@@ -95,37 +108,41 @@ func Default() *Registry {
 	must(r.RegisterType(TypeSpec{Name: "Number", Value: true, Field: true}))
 	must(r.RegisterType(TypeSpec{Name: "String", Value: true, Field: true}))
 	must(r.RegisterType(TypeSpec{Name: "Bool", Value: true, Field: true}))
+	must(r.RegisterType(TypeSpec{Name: "Time", Value: true, Field: true}))
+	must(r.RegisterType(TypeSpec{Name: "Duration", Value: true, Field: true}))
 	must(r.RegisterType(TypeSpec{Name: "Series", Input: true}))
 	must(r.RegisterType(TypeSpec{Name: "CandleSeries", Input: true}))
 	must(r.RegisterType(TypeSpec{Name: "Candle"}))
-	must(r.RegisterIndicator(IndicatorSpec{Name: "ema", Receiver: []string{"CandleSeries", "Series"}, MinArgs: 1, MaxArgs: 1, Scalar: true, Build: newEMA, BuildScalar: newScalarEMA}))
-	must(r.RegisterIndicator(IndicatorSpec{Name: "bb", Receiver: []string{"CandleSeries"}, MinArgs: 2, MaxArgs: 2, Build: newBB}))
+	must(r.RegisterIndicator(IndicatorSpec{Name: "ema", Receiver: []string{"CandleSeries", "Series"}, MinArgs: 1, MaxArgs: 1, Scalar: true, Build: newEMA, BuildScalar: newScalarEMA, ReturnType: "Series"}))
+	must(r.RegisterIndicator(IndicatorSpec{Name: "bb", Receiver: []string{"CandleSeries"}, MinArgs: 2, MaxArgs: 2, Build: newBB, ReturnType: "Tuple"}))
 	must(r.RegisterHelper(HelperSpec{
-		Namespace: "math",
-		Name:      "max",
-		MinArgs:   1,
-		MaxArgs:   -1,
-		Eval:      max,
+		Namespace:  "math",
+		Name:       "max",
+		MinArgs:    1,
+		MaxArgs:    -1,
+		Eval:       max,
+		ReturnType: "Number",
 	}))
 	must(r.RegisterHelper(HelperSpec{
-		Namespace: "math",
-		Name:      "min",
-		MinArgs:   1,
-		MaxArgs:   -1,
-		Eval:      min,
+		Namespace:  "math",
+		Name:       "min",
+		MinArgs:    1,
+		MaxArgs:    -1,
+		Eval:       min,
+		ReturnType: "Number",
 	}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "abs", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.abs", math.Abs)}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "sqrt", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.sqrt", math.Sqrt)}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "floor", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.floor", math.Floor)}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "ceil", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.ceil", math.Ceil)}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "round", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.round", math.Round)}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "pow", MinArgs: 2, MaxArgs: 2, Eval: pow}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "crossover", MinArgs: 2, MaxArgs: 2, Eval: crossover, Lookback: fixedLookback(1)}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "crossunder", MinArgs: 2, MaxArgs: 2, Eval: crossunder, Lookback: fixedLookback(1)}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "rising", MinArgs: 2, MaxArgs: 2, Eval: rising, Lookback: periodLookback}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "falling", MinArgs: 2, MaxArgs: 2, Eval: falling, Lookback: periodLookback}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "highest", MinArgs: 2, MaxArgs: 2, Eval: highest, Lookback: periodLookback}))
-	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "lowest", MinArgs: 2, MaxArgs: 2, Eval: lowest, Lookback: periodLookback}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "abs", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.abs", math.Abs), ReturnType: "Number"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "sqrt", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.sqrt", math.Sqrt), ReturnType: "Number"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "floor", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.floor", math.Floor), ReturnType: "Number"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "ceil", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.ceil", math.Ceil), ReturnType: "Number"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "round", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.round", math.Round), ReturnType: "Number"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "pow", MinArgs: 2, MaxArgs: 2, Eval: pow, ReturnType: "Number"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "crossover", MinArgs: 2, MaxArgs: 2, Eval: crossover, Lookback: fixedLookback(1), ReturnType: "Bool"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "crossunder", MinArgs: 2, MaxArgs: 2, Eval: crossunder, Lookback: fixedLookback(1), ReturnType: "Bool"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "rising", MinArgs: 2, MaxArgs: 2, Eval: rising, Lookback: periodLookback, ReturnType: "Bool"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "falling", MinArgs: 2, MaxArgs: 2, Eval: falling, Lookback: periodLookback, ReturnType: "Bool"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "highest", MinArgs: 2, MaxArgs: 2, Eval: highest, Lookback: periodLookback, ReturnType: "Number"}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "lowest", MinArgs: 2, MaxArgs: 2, Eval: lowest, Lookback: periodLookback, ReturnType: "Number"}))
 	return r
 }
 

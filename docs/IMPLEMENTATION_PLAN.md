@@ -43,7 +43,7 @@ source -> lexer -> parser -> static analyser -> evaluator/runtime plan
   semantic questions.
 - **Static analyser** validates declarations and names, required `Init`/`Run`,
   `emit(...)` targets and payloads, type rules, registry lookups, history
-  bounds, warmup call-site discovery, and resource limits.
+  bounds, and resource limits.
 - **Evaluator/runtime** executes a checked program. It should not rediscover
   static facts that the analyser already proved.
 
@@ -127,6 +127,9 @@ needed by the implemented slices. Custom registries can add:
   numeric `Series`.
 - scalar indicators on numeric `Series` receivers, e.g.
   `btc.closes.ema(3)`.
+- strict static type checks for implemented scalar, series, tuple, time, and
+  duration expressions in `emit(...)`, `if`, and operators.
+- `Time` / `Duration` values from candle timestamps and `time.*` constants.
 
 Indicator instances are built per `(receiver, indicator name, normalised args)`
 and memoized across all matching call sites. Within a tick, repeated reads of
@@ -435,9 +438,9 @@ designed for the second indicator to slot in without changes.
 - EMA can be registered by a talive adapter package or the host project. The
   standalone core includes a small default EMA so the first-indicator path is
   usable without private-project wiring.
-- **Warmup phase:** the analyser enumerates every indicator call site, runtime
-  computes `max(WarmUpPeriod)`, requests that many historical candles from
-  the `DataSource`, feeds them through, then begins live `Run()`.
+- Warmup/prefeed is caller-side. tascript advances indicators over whatever
+  candles the caller feeds; the host decides when emitted events should be
+  treated as live.
 - Indicator-output `Series` go through the history wrapper from slice 4
   for `[n]` support.
 - Memoisation by `(receiver, indicator_class, normalised_args)` (§5.1).
@@ -558,6 +561,7 @@ function Run() {
 - Duration arithmetic per §3.5.
 - The `time` namespace identifier and its constants (`time.MILLISECOND`
   through `time.WEEK`).
+- Static output payload checks for `Time` and `Duration` fields.
 
 **Project's integration test:** the §8.3 BB-breakout-with-cooldown and
 §8.4 weekday-filter examples.
@@ -566,12 +570,12 @@ function Run() {
 
 ### Slice 10 — Diagnostics polish + resource limits
 
-**Goal:** production-quality error output and enforced caps.
+**Goal:** stable line/column diagnostics and enforced caps.
 
 **Adds:**
 
-- Rust/Elm-style error rendering: file path, line, column, source line
-  with caret highlight (§6.2).
+- Core diagnostics carry file path, line, column, category, phase, and message.
+  Rich snippets/carets are left to UI tooling.
 - Configurable §7 resource limits enforced for source size, identifier length,
   string literal length, runtime string values, emit kwarg count, expression
   depth, diagnostic count, and history indexes.

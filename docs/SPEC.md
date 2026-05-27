@@ -263,7 +263,7 @@ The minimal type set is:
 | `Null`         | A single bottom value `null`. Reserved for future static-nullable-analysis work — minimise direct use. Reading an unassigned `state.*` field or an out-of-range history is **not** null, it is a runtime error. |
 | `Series`       | An ordered stream of `Number` values supporting the history operator `s[n]`. Sources: indicator outputs, plural properties of `CandleSeries` (`.closes`, `.opens`, …), names bound to such expressions. Not user-constructable. |
 | `Candle`       | A single candlestick at one moment in time. Singular property access: `.open`, `.high`, `.low`, `.close`, `.volume`, `.ts`. Each yields a `Number` (or, for `.ts`, a timestamp). |
-| `CandleSeries` | A stream of candles. Plural property access yields a `Series` of numbers: `.opens`, `.highs`, `.lows`, `.closes`, `.volumes`, `.timestamps`, plus the derived `.hl2` (`(high+low)/2`) and `.hlc3` (`(high+low+close)/3`). Indexable with `[n]` to read the *n*-th-ago candle (yielding a `Candle`). `cs[1].close` is equivalent to `cs.closes[1]`. Not user-constructable — `CandleSeries` values are injected by the runtime, one per declared input. |
+| `CandleSeries` | A stream of candles. Plural numeric property access yields a `Series` of numbers: `.opens`, `.highs`, `.lows`, `.closes`, `.volumes`, plus the derived `.hl2` (`(high+low)/2`) and `.hlc3` (`(high+low+close)/3`). `.timestamps` yields a time series indexable with `[n]`. `CandleSeries` itself is indexable with `[n]` to read the *n*-th-ago candle (yielding a `Candle`). `cs[1].close` is equivalent to `cs.closes[1]`. Not user-constructable — `CandleSeries` values are injected by the runtime, one per declared input. |
 | `Tuple`        | Ordered, fixed-arity collection produced by multi-output stdlib calls (e.g. `MACD`, `BB`, `DMI`). Indexed with `t[i]` where `i` is an integer literal or expression. Out-of-range = runtime error. No tuple literal syntax — tuples only come from function returns. Elements of an indicator tuple are themselves `Series`. |
 | `Time`         | A point in time. Sources: `Candle.ts`, `CandleSeries.timestamps[n]`. All component methods are in UTC for v1 (no time-zone support). See § 3.5. |
 | `Duration`     | A length of time. Produced by `Time - Time`, by multiplying a `Number` by a `time.*` Duration constant (`5 * time.MINUTE`), or by `Duration` arithmetic. See § 3.5. |
@@ -558,23 +558,17 @@ branch on the current cadence mode. Programs are written to be correct under
 whichever cadence the operator configures — typically by reading candle
 timestamps and using `state.*` to debounce when needed.
 
-### Warmup is invisible to the DSL
+### Warmup is caller-side
 
-Indicator warmup is **not** a language concern. It is handled entirely by the
-runtime before a program goes live:
+Indicator warmup and historical prefeed are **not** language concerns. The
+caller decides whether to feed historical candles before treating emitted
+events as live signals. tascript only guarantees deterministic per-candle
+execution over the candles it receives.
 
-1. On program load, the runtime parses the program and discovers every
-   indicator reference (regardless of branch reachability — a static AST scan).
-2. The runtime instantiates every indicator and computes the maximum
-   `WarmUpPeriod()` across them.
-3. The runtime requests that many historical candles from the data source and
-   feeds them through every indicator until each reports `IsWarmedUp()`.
-4. **Only then** is the user's `Run()` invoked for the first time, against a
-   live candle, with every indicator already producing reliable output.
-
-Programs therefore never need to check `idle` / `warmed_up` flags — those
-concepts do not exist in the DSL. Every read of an indicator inside `Run()`
-returns a meaningful value.
+Programs therefore do not contain `idle` / `warmed_up` flags. If the caller
+has not supplied enough prior candles for a history read, tascript reports
+`HISTORY_OUT_OF_RANGE`; if the caller prefeeds enough history, normal live
+execution will not observe that error.
 
 ### 4.2 History buffer sizing
 
@@ -622,14 +616,11 @@ practice TA programs always know their periods at edit time; if a real
 program ever needs dynamic lookback, an escape hatch will be added without
 breaking compatibility.
 
-#### Free interaction with warmup
+#### Interaction with caller-side warmup
 
-The runtime's warmup phase (§ 4.1) feeds historical candles through every
-indicator before the first `Run()` invocation. Those warmup candles also
-populate the per-series ring buffers. By the time `Run()` first executes,
-every buffer is already filled to its static bound; users never observe
-`HISTORY_OUT_OF_RANGE` errors during normal operation. The historical fetch
-the runtime requests is therefore:
+The caller can prefeed historical candles through the same runner API before
+using emitted events as live signals. Those candles populate indicator and
+series history. The amount of history a caller should provide is therefore:
 
 ```
 max( max(indicator.WarmUpPeriod),
@@ -910,16 +901,8 @@ Every error a tascript program can produce belongs to one of two phases:
 
 - **Phase** — `parse` or `runtime`.
 - **Category code** — stable, machine-readable identifier (see § 6.4).
-- **Source location** — file path, line, column.
-- **Source snippet with caret** — at minimum line+column, ideally rendered
-  in the Rust/Elm style:
-  ```
-  error[STATE_UNSET]: 'state.cooldwon' has never been assigned
-    --> alerts/rsi.tas:14:5
-     |
-  14 |   if (state.cooldwon == 0) {
-     |       ^^^^^^^^^^^^^^^
-  ```
+- **Source location** — file path, line, column. Rich source snippets are a
+  UI concern and are not required from the core library.
 - **Human-readable message** — describes what's wrong; may include a hint
   ("did you mean `state.cooldown`?").
 
