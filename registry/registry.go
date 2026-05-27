@@ -10,6 +10,19 @@ import (
 
 type Value any
 
+type Series interface {
+	Current() (float64, error)
+	History(n int) (float64, error)
+}
+
+type Candle struct {
+	Open   float64
+	High   float64
+	Low    float64
+	Close  float64
+	Volume float64
+}
+
 type TypeSpec struct {
 	Name  string
 	Input bool
@@ -19,12 +32,24 @@ type TypeSpec struct {
 
 type HelperFunc func(args []Value) (Value, error)
 
+// HelperLookbackFunc returns the maximum historical index a helper needs for
+// one call. Static analysis calls it with literal/constant argument values;
+// non-static arguments are passed as nil.
+type HelperLookbackFunc func(args []Value) (int, error)
+
+type Indicator interface {
+	NextCandle(Candle) (Value, error)
+}
+
+type IndicatorFactory func(args []Value) (Indicator, error)
+
 type HelperSpec struct {
 	Namespace string
 	Name      string
 	MinArgs   int
 	MaxArgs   int // -1 means variadic.
 	Eval      HelperFunc
+	Lookback  HelperLookbackFunc
 }
 
 type IndicatorSpec struct {
@@ -33,6 +58,7 @@ type IndicatorSpec struct {
 	MinArgs   int
 	MaxArgs   int
 	Scalar    bool
+	Build     IndicatorFactory
 	BuildInfo any
 }
 
@@ -63,6 +89,7 @@ func Default() *Registry {
 	must(r.RegisterType(TypeSpec{Name: "Series", Input: true}))
 	must(r.RegisterType(TypeSpec{Name: "CandleSeries", Input: true}))
 	must(r.RegisterType(TypeSpec{Name: "Candle"}))
+	must(r.RegisterIndicator(IndicatorSpec{Name: "ema", Receiver: []string{"CandleSeries"}, MinArgs: 1, MaxArgs: 1, Scalar: true, Build: newEMA}))
 	must(r.RegisterHelper(HelperSpec{
 		Namespace: "math",
 		Name:      "max",
@@ -77,6 +104,18 @@ func Default() *Registry {
 		MaxArgs:   -1,
 		Eval:      min,
 	}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "abs", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.abs", math.Abs)}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "sqrt", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.sqrt", math.Sqrt)}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "floor", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.floor", math.Floor)}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "ceil", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.ceil", math.Ceil)}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "round", MinArgs: 1, MaxArgs: 1, Eval: unaryMath("math.round", math.Round)}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "math", Name: "pow", MinArgs: 2, MaxArgs: 2, Eval: pow}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "crossover", MinArgs: 2, MaxArgs: 2, Eval: crossover, Lookback: fixedLookback(1)}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "crossunder", MinArgs: 2, MaxArgs: 2, Eval: crossunder, Lookback: fixedLookback(1)}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "rising", MinArgs: 2, MaxArgs: 2, Eval: rising, Lookback: periodLookback}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "falling", MinArgs: 2, MaxArgs: 2, Eval: falling, Lookback: periodLookback}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "highest", MinArgs: 2, MaxArgs: 2, Eval: highest, Lookback: periodLookback}))
+	must(r.RegisterHelper(HelperSpec{Namespace: "ta", Name: "lowest", MinArgs: 2, MaxArgs: 2, Eval: lowest, Lookback: periodLookback}))
 	return r
 }
 
@@ -205,9 +244,233 @@ func min(args []Value) (Value, error) {
 }
 
 func number(name string, v Value) (float64, error) {
-	n, ok := v.(float64)
-	if !ok {
+	switch x := v.(type) {
+	case float64:
+		return x, nil
+	case Series:
+		n, err := x.Current()
+		if err != nil {
+			return 0, err
+		}
+		return n, nil
+	default:
 		return 0, fmt.Errorf("%s arguments must be Number", name)
 	}
-	return n, nil
+}
+
+func unaryMath(name string, fn func(float64) float64) HelperFunc {
+	return func(args []Value) (Value, error) {
+		if err := ValidateArgCount(name, 1, 1, len(args)); err != nil {
+			return nil, err
+		}
+		n, err := number(name, args[0])
+		if err != nil {
+			return nil, err
+		}
+		return fn(n), nil
+	}
+}
+
+func pow(args []Value) (Value, error) {
+	if err := ValidateArgCount("math.pow", 2, 2, len(args)); err != nil {
+		return nil, err
+	}
+	x, err := number("math.pow", args[0])
+	if err != nil {
+		return nil, err
+	}
+	y, err := number("math.pow", args[1])
+	if err != nil {
+		return nil, err
+	}
+	return math.Pow(x, y), nil
+}
+
+func crossover(args []Value) (Value, error) {
+	if err := ValidateArgCount("ta.crossover", 2, 2, len(args)); err != nil {
+		return nil, err
+	}
+	a0, a1, err := currPrev("ta.crossover", args[0])
+	if err != nil {
+		return nil, err
+	}
+	b0, b1, err := currPrev("ta.crossover", args[1])
+	if err != nil {
+		return nil, err
+	}
+	return a0 > b0 && a1 <= b1, nil
+}
+
+func crossunder(args []Value) (Value, error) {
+	if err := ValidateArgCount("ta.crossunder", 2, 2, len(args)); err != nil {
+		return nil, err
+	}
+	a0, a1, err := currPrev("ta.crossunder", args[0])
+	if err != nil {
+		return nil, err
+	}
+	b0, b1, err := currPrev("ta.crossunder", args[1])
+	if err != nil {
+		return nil, err
+	}
+	return a0 < b0 && a1 >= b1, nil
+}
+
+func rising(args []Value) (Value, error) {
+	series, n, err := seriesAndLookback("ta.rising", args)
+	if err != nil {
+		return nil, err
+	}
+	prev, err := series.History(n)
+	if err != nil {
+		return nil, err
+	}
+	curr, err := series.Current()
+	if err != nil {
+		return nil, err
+	}
+	return curr > prev, nil
+}
+
+func falling(args []Value) (Value, error) {
+	series, n, err := seriesAndLookback("ta.falling", args)
+	if err != nil {
+		return nil, err
+	}
+	prev, err := series.History(n)
+	if err != nil {
+		return nil, err
+	}
+	curr, err := series.Current()
+	if err != nil {
+		return nil, err
+	}
+	return curr < prev, nil
+}
+
+func highest(args []Value) (Value, error) {
+	series, n, err := seriesAndLookback("ta.highest", args)
+	if err != nil {
+		return nil, err
+	}
+	hi, err := series.Current()
+	if err != nil {
+		return nil, err
+	}
+	for i := 1; i < n; i++ {
+		v, err := series.History(i)
+		if err != nil {
+			return nil, err
+		}
+		hi = math.Max(hi, v)
+	}
+	return hi, nil
+}
+
+func lowest(args []Value) (Value, error) {
+	series, n, err := seriesAndLookback("ta.lowest", args)
+	if err != nil {
+		return nil, err
+	}
+	lo, err := series.Current()
+	if err != nil {
+		return nil, err
+	}
+	for i := 1; i < n; i++ {
+		v, err := series.History(i)
+		if err != nil {
+			return nil, err
+		}
+		lo = math.Min(lo, v)
+	}
+	return lo, nil
+}
+
+func currPrev(name string, v Value) (float64, float64, error) {
+	switch x := v.(type) {
+	case float64:
+		return x, x, nil
+	case Series:
+		curr, err := x.Current()
+		if err != nil {
+			return 0, 0, err
+		}
+		prev, err := x.History(1)
+		if err != nil {
+			return 0, 0, err
+		}
+		return curr, prev, nil
+	default:
+		return 0, 0, fmt.Errorf("%s arguments must be Number or Series", name)
+	}
+}
+
+func seriesAndLookback(name string, args []Value) (Series, int, error) {
+	if err := ValidateArgCount(name, 2, 2, len(args)); err != nil {
+		return nil, 0, err
+	}
+	series, ok := args[0].(Series)
+	if !ok {
+		return nil, 0, fmt.Errorf("%s first argument must be Series", name)
+	}
+	lookback, err := positiveInteger(name, args[1])
+	if err != nil {
+		return nil, 0, err
+	}
+	return series, lookback, nil
+}
+
+func positiveInteger(name string, v Value) (int, error) {
+	n, err := number(name, v)
+	if err != nil {
+		return 0, err
+	}
+	if n < 1 || n != math.Trunc(n) {
+		return 0, fmt.Errorf("%s lookback must be a positive integer", name)
+	}
+	return int(n), nil
+}
+
+func fixedLookback(n int) HelperLookbackFunc {
+	return func(args []Value) (int, error) {
+		return n, nil
+	}
+}
+
+func periodLookback(args []Value) (int, error) {
+	if len(args) < 2 || args[1] == nil {
+		return 0, fmt.Errorf("TA helper lookback must be a positive integer literal or constant")
+	}
+	n, err := positiveInteger("TA helper", args[1])
+	if err != nil {
+		return 0, err
+	}
+	return n - 1, nil
+}
+
+type emaIndicator struct {
+	alpha float64
+	value float64
+	ready bool
+}
+
+func newEMA(args []Value) (Indicator, error) {
+	if err := ValidateArgCount("ema", 1, 1, len(args)); err != nil {
+		return nil, err
+	}
+	period, err := positiveInteger("ema", args[0])
+	if err != nil {
+		return nil, err
+	}
+	return &emaIndicator{alpha: 2 / float64(period+1)}, nil
+}
+
+func (i *emaIndicator) NextCandle(c Candle) (Value, error) {
+	if !i.ready {
+		i.value = c.Close
+		i.ready = true
+		return i.value, nil
+	}
+	i.value = c.Close*i.alpha + i.value*(1-i.alpha)
+	return i.value, nil
 }

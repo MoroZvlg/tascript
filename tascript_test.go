@@ -90,7 +90,9 @@ function Run() {
 		t.Errorf("Inputs() = %v, want %v", got, want)
 	}
 
-	r, err := tascript.Launch(prog, tascript.Wiring{})
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		InputPorts: map[string]struct{}{"btc": {}},
+	})
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}
@@ -464,6 +466,258 @@ function Run() {
 	}
 }
 
+func TestSlice4_HistoryIndexing(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output ticks {
+  curr: Number
+  prev: Number
+  prev_close: Number
+}
+
+function Init() {
+  state.seen = 0
+}
+function Run() {
+  if (state.seen > 0) {
+    emit(ticks, curr=btc.closes[0], prev=btc.closes[1], prev_close=btc[1].close)
+  }
+  state.seen = state.seen + 1
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{Close: 100},
+				{Close: 115},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	if got := r.DrainEvents(); len(got) != 0 {
+		t.Fatalf("step 1 events = %#v, want none", got)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 {
+		t.Fatalf("step 2 events = %#v, want one event", got)
+	}
+	if got[0].Data["curr"] != float64(115) ||
+		got[0].Data["prev"] != float64(100) ||
+		got[0].Data["prev_close"] != float64(100) {
+		t.Fatalf("step 2 data = %#v", got[0].Data)
+	}
+}
+
+func TestSlice4_Negative_HistoryOutOfRange(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output ticks {
+  prev: Number
+}
+
+function Init() {}
+function Run() {
+  emit(ticks, prev=btc.closes[1])
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{{Close: 100}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	err = r.Step()
+	if err == nil {
+		t.Fatalf("expected history runtime error")
+	}
+	d, ok := err.(tascript.Diagnostic)
+	if !ok || d.Category != "HISTORY_OUT_OF_RANGE" {
+		t.Fatalf("step error = %#v, want HISTORY_OUT_OF_RANGE diagnostic", err)
+	}
+}
+
+func TestSlice4_Negative_DynamicHistoryIndex(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output ticks {
+  prev: Number
+}
+
+function Init() {
+  state.idx = 1
+}
+function Run() {
+  emit(ticks, prev=btc.closes[state.idx])
+}
+`)
+	_, diags, err := tascript.Compile(src)
+	if err == nil {
+		t.Fatalf("expected compile error")
+	}
+	if !containsDiag(diags, wantDiag{Phase: "parse", Category: "TOP_LEVEL_FORM"}) {
+		t.Fatalf("expected TOP_LEVEL_FORM for dynamic history index, got %#v", diags)
+	}
+}
+
+func TestSlice4_Negative_HelperHistoryLimit(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output alerts {
+  high: Number
+}
+
+function Init() {}
+function Run() {
+  emit(alerts, high=ta.highest(btc.closes, 6002))
+}
+`)
+	_, diags, err := tascript.Compile(src)
+	if err == nil {
+		t.Fatalf("expected compile failure")
+	}
+	if !containsDiag(diags, wantDiag{Phase: "parse", Category: "HISTORY_LIMIT"}) {
+		t.Fatalf("expected HISTORY_LIMIT for helper lookback, got %#v", diags)
+	}
+}
+
+func TestDefaultHelpers_TAUsesSeriesHistory(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output alerts {
+  price: Number
+  high: Number
+}
+
+function Init() {
+  state.seen = 0
+}
+function Run() {
+  if (state.seen > 0 && ta.crossover(btc.closes, 110)) {
+    emit(alerts, price=btc.closes, high=ta.highest(btc.closes, 2))
+  }
+  state.seen = state.seen + 1
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{Close: 100},
+				{Close: 115},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	if got := r.DrainEvents(); len(got) != 0 {
+		t.Fatalf("step 1 events = %#v, want none", got)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 {
+		t.Fatalf("step 2 events = %#v, want one event", got)
+	}
+	if got[0].Data["price"] != float64(115) || got[0].Data["high"] != float64(115) {
+		t.Fatalf("step 2 data = %#v", got[0].Data)
+	}
+}
+
+func TestLaunch_InputNotWired(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output alerts {}
+
+function Init() {}
+function Run() {
+  emit(alerts)
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	_, err = tascript.Launch(prog, tascript.Wiring{})
+	d, ok := err.(tascript.Diagnostic)
+	if !ok || string(d.Category) != "INPUT_NOT_WIRED" || string(d.Phase) != "launch" {
+		t.Fatalf("launch error = %#v, want INPUT_NOT_WIRED diagnostic", err)
+	}
+}
+
+func TestLaunch_OutputSinkWiring(t *testing.T) {
+	src := []byte(`output alerts {
+  message: String
+}
+
+function Init() {}
+function Run() {
+  emit(alerts, message="hi")
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	_, err = tascript.Launch(prog, tascript.Wiring{StrictOutputWiring: true})
+	d, ok := err.(tascript.Diagnostic)
+	if !ok || string(d.Category) != "OUTPUT_NOT_WIRED" || string(d.Phase) != "launch" {
+		t.Fatalf("launch error = %#v, want OUTPUT_NOT_WIRED diagnostic", err)
+	}
+
+	sink := &recordSink{}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		StrictOutputWiring: true,
+		Sinks:              map[string]tascript.Sink{"alerts": sink},
+	})
+	if err != nil {
+		t.Fatalf("launch with sink: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step: %v", err)
+	}
+	if len(sink.events) != 1 || sink.events[0].Data["message"] != "hi" {
+		t.Fatalf("sink events = %#v", sink.events)
+	}
+}
+
 func TestConfig_CustomTypesAndHelpers(t *testing.T) {
 	reg := tascript.NewRegistry()
 	must(t, reg.RegisterType(tascript.TypeSpec{Name: "Number", Value: true, Field: true}))
@@ -509,7 +763,120 @@ function Run() {
 	}
 }
 
+func TestConfig_CustomIndicator(t *testing.T) {
+	cfg := tascript.DefaultConfig()
+	must(t, cfg.Registry.RegisterIndicator(tascript.IndicatorSpec{
+		Name:    "offsetClose",
+		MinArgs: 1,
+		MaxArgs: 1,
+		Build: func(args []tascript.Value) (tascript.Indicator, error) {
+			return &offsetCloseIndicator{offset: args[0].(float64)}, nil
+		},
+	}))
+
+	src := []byte(`input btc: CandleSeries
+
+output alerts {
+  first: Number
+  second: Number
+}
+
+function Init() {}
+function Run() {
+  emit(alerts, first=btc.offsetClose(5), second=btc.offsetClose(5))
+}
+`)
+	prog, diags, err := tascript.CompileWithConfig(src, cfg)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	indicatorCalls = 0
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{{Close: 100}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 || got[0].Data["first"] != float64(105) || got[0].Data["second"] != float64(105) {
+		t.Fatalf("events = %#v, want offset close values", got)
+	}
+	if indicatorCalls != 1 {
+		t.Fatalf("indicator calls = %d, want one memoized call per tick", indicatorCalls)
+	}
+}
+
+func TestDefaultIndicator_EMAHistory(t *testing.T) {
+	src := []byte(`input btc: CandleSeries
+
+output alerts {
+  curr: Number
+  prev: Number
+}
+
+function Init() {
+  state.seen = 0
+}
+function Run() {
+  if (state.seen > 0) {
+    emit(alerts, curr=btc.ema(3), prev=btc.ema(3)[1])
+  }
+  state.seen = state.seen + 1
+}
+`)
+	prog, diags, err := tascript.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v (diags=%#v)", err, diags)
+	}
+	r, err := tascript.Launch(prog, tascript.Wiring{
+		DataSources: map[string]tascript.DataSource{
+			"btc": &sliceSource{candles: []tascript.Candle{
+				{Close: 10},
+				{Close: 14},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := r.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	if err := r.Step(); err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	got := r.DrainEvents()
+	if len(got) != 1 {
+		t.Fatalf("events = %#v, want one", got)
+	}
+	if got[0].Data["curr"] != float64(12) || got[0].Data["prev"] != float64(10) {
+		t.Fatalf("EMA data = %#v, want curr=12 prev=10", got[0].Data)
+	}
+}
+
 // --- helpers ---
+
+var indicatorCalls int
+
+type offsetCloseIndicator struct {
+	offset float64
+}
+
+func (i *offsetCloseIndicator) NextCandle(c tascript.Candle) (tascript.Value, error) {
+	indicatorCalls++
+	return c.Close + i.offset, nil
+}
 
 type sliceSource struct {
 	candles []tascript.Candle
@@ -523,6 +890,15 @@ func (s *sliceSource) NextCandle() (tascript.Candle, error) {
 	c := s.candles[s.cursor]
 	s.cursor++
 	return c, nil
+}
+
+type recordSink struct {
+	events []tascript.Event
+}
+
+func (s *recordSink) Emit(ev tascript.Event) error {
+	s.events = append(s.events, ev)
+	return nil
 }
 
 func must(t *testing.T, err error) {

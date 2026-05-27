@@ -1,9 +1,9 @@
 # tascript — Implementation Plan
 
-> Status: **draft v2 — vertical slicing**. Each slice ships a runnable
-> tascript with a strict subset of the spec. The downstream consumer
-> (private project repo) integrates after every slice, exercises the new
-> capability end-to-end, and feeds friction back into the design.
+> Status: **working plan — standalone configurable core**. Each slice ships a
+> runnable tascript with a strict subset of the spec. Downstream projects
+> integrate by configuring the public Go API, not by changing parser or
+> evaluator internals.
 
 ## Why slices, not phases
 
@@ -76,7 +76,7 @@ against:
 | Extension point | First slice | What it lets you add |
 |-----------------|-------------|----------------------|
 | `DataSource`     | 1 | A source of candles to wire into a declared `input` port |
-| `Sink`           | 0 | A destination for emitted events |
+| `Sink`           | 0 | A destination for emitted events, optional beside the in-memory event buffer |
 | Indicator registry | 5 | Custom indicators callable as `<series>.<name>(...)` in DSL |
 | Helper registry   | 7 | Custom `ns.fn(...)` helpers under existing or new namespaces |
 | Resource policies | 10 | Override default limits per deployment |
@@ -100,9 +100,19 @@ reg.RegisterHelper(tascript.HelperSpec{
     MaxArgs:   1,
     Eval:      func(args []tascript.Value) (tascript.Value, error) { ... },
 })
+reg.RegisterIndicator(tascript.IndicatorSpec{
+    Name:    "myIndicator",
+    MinArgs: 1,
+    MaxArgs: 1,
+    Build:   func(args []tascript.Value) (tascript.Indicator, error) { ... },
+})
 
 prog, diags, err := tascript.CompileWithConfig(src, tascript.Config{
     Registry: reg,
+    ResourceLimits: tascript.ResourceLimits{
+        MaxHistoryIndex: 5000,
+        MaxDiagnostics:  100,
+    },
 })
 ```
 
@@ -111,11 +121,22 @@ needed by the implemented slices. Custom registries can add:
 
 - input/value/field type names accepted by declarations;
 - helper functions under custom namespaces;
-- indicator metadata, with execution wired in when the indicator slice lands;
-- later, resource policies and host-specific limits.
+- stateful method-style indicators such as `btc.myIndicator(14)`;
+- resource policies and host-specific limits.
+
+Indicator instances are built per `(receiver, indicator name, normalised args)`
+and memoized across all matching call sites. Within a tick, repeated reads of
+the same configured indicator return the same value; on the next tick the
+instance receives the next candle.
 
 The parser remains registry-agnostic. Registry lookups happen in the static
 analyser and evaluator, so custom names do not require grammar changes.
+
+Launch-time wiring is also host-configurable. `DataSources` wire declared
+inputs, `InputPorts` can explicitly mark custom/placeholder inputs as prepared,
+and `Sinks` can deliver outputs to host-owned destinations. `DrainEvents()`
+remains the built-in collection path for tests and simple embedding; hosts that
+need strict output wiring can set `StrictOutputWiring`.
 
 ---
 
@@ -362,8 +383,9 @@ module).
   sizes a ring buffer accordingly (§4.2).
 - `HISTORY_OUT_OF_RANGE` runtime error.
 - `HISTORY_LIMIT` parse error at the 5000-bar cap (§7).
-- The wrapper package: takes any per-tick value source, exposes
-  `current()` and `history(n)`.
+- The history wrapper abstraction: takes any per-tick value source, exposes
+  `current()` and `history(n)`. It currently lives inside the standalone core;
+  if non-tascript users need it, split it out as `tascript-history`.
 
 **Project's integration test:**
 
@@ -393,7 +415,7 @@ designed for the second indicator to slot in without changes.
 **Adds:**
 
 - Method-style indicator calls on `CandleSeries`: `btc.ema(50)`.
-- Indicator registry public API in the `stdlib` package:
+- Indicator registry public API:
   ```go
   type IndicatorSpec struct {
       Name       string
@@ -402,11 +424,13 @@ designed for the second indicator to slot in without changes.
       IsScalar   bool                   // true means callable on Series too
       Build      func(args) talive.Indicator
   }
-  stdlib.RegisterIndicator(spec IndicatorSpec) error
+  reg.RegisterIndicator(spec IndicatorSpec) error
   ```
 - The registry is open: the private project can `RegisterIndicator(...)`
   its own indicators against tascript at launch.
-- Wires EMA from talive as the first registered indicator.
+- EMA can be registered by a talive adapter package or the host project. The
+  standalone core includes a small default EMA so the first-indicator path is
+  usable without private-project wiring.
 - **Warmup phase:** the analyser enumerates every indicator call site, runtime
   computes `max(WarmUpPeriod)`, requests that many historical candles from
   the `DataSource`, feeds them through, then begins live `Run()`.
@@ -481,7 +505,7 @@ function Run() {
       Lookback  func(args) map[seriesArg]int   // per-Series-arg lookback
       Eval      func(args) Value
   }
-  stdlib.RegisterHelper(spec HelperSpec) error
+  reg.RegisterHelper(spec HelperSpec) error
   ```
 - The `ta` namespace identifier becomes reserved.
 - Project can register its own helpers under custom namespaces (subject to
@@ -498,8 +522,10 @@ function Run() {
 - Multiple `input <name>: <Type>` declarations.
 - `PORT_DUPLICATE` parse error for any repeated top-level name (inputs,
   outputs, constants, functions share one namespace — §3.3).
-- Wiring: `Launch` accepts a map `port_name → DataSource`. Missing wirings
-  produce `INPUT_NOT_WIRED` at launch; unwired outputs produce
+- Wiring: `Launch` accepts `port_name → DataSource` for inputs and
+  `port_name → Sink` for outputs. Missing input wiring produces
+  `INPUT_NOT_WIRED` at launch. Output sinks are optional while using
+  `DrainEvents()`, but `StrictOutputWiring` makes missing sinks produce
   `OUTPUT_NOT_WIRED`.
 - The synchronizer that decides when `Run()` fires under multiple feeds
   lives **in the private project**, not in tascript. tascript exposes a

@@ -3,6 +3,7 @@ package analysis
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/diag"
@@ -10,20 +11,36 @@ import (
 	"github.com/MoroZvlg/tascript/token"
 )
 
+type Options struct {
+	MaxHistoryIndex int
+	MaxDiagnostics  int
+}
+
 // Analyze validates a parsed program against the currently implemented
 // language slice. Diagnostics still use PhaseParse because they are surfaced
 // to users before launch/runtime, but this package is deliberately separate
 // from syntax parsing.
-func Analyze(prog *ast.Program, reg *registry.Registry) []diag.Diagnostic {
-	a := &analyzer{outputs: map[string]*ast.OutputDecl{}, registry: reg.Clone()}
+func Analyze(prog *ast.Program, reg *registry.Registry, opts Options) []diag.Diagnostic {
+	a := &analyzer{
+		outputs:         map[string]*ast.OutputDecl{},
+		inputs:          map[string]*ast.InputDecl{},
+		constants:       map[string]registry.Value{},
+		registry:        reg.Clone(),
+		maxHistoryIndex: opts.MaxHistoryIndex,
+		maxDiagnostics:  opts.MaxDiagnostics,
+	}
 	a.analyze(prog)
 	return a.diags
 }
 
 type analyzer struct {
-	diags    []diag.Diagnostic
-	outputs  map[string]*ast.OutputDecl
-	registry *registry.Registry
+	diags           []diag.Diagnostic
+	outputs         map[string]*ast.OutputDecl
+	inputs          map[string]*ast.InputDecl
+	constants       map[string]registry.Value
+	registry        *registry.Registry
+	maxHistoryIndex int
+	maxDiagnostics  int
 }
 
 // reservedKwargs are emit() keyword names the runtime injects itself; user
@@ -35,6 +52,7 @@ var reservedKwargs = map[string]struct{}{
 
 func (a *analyzer) analyze(prog *ast.Program) {
 	a.collectOutputs(prog)
+	a.collectInputs(prog)
 	a.checkRequiredFns(prog)
 	a.checkTopNames(prog)
 	a.checkTopDecls(prog)
@@ -45,6 +63,14 @@ func (a *analyzer) collectOutputs(prog *ast.Program) {
 	for _, d := range prog.Decls {
 		if o, ok := d.(*ast.OutputDecl); ok {
 			a.outputs[o.Name] = o
+		}
+	}
+}
+
+func (a *analyzer) collectInputs(prog *ast.Program) {
+	for _, d := range prog.Decls {
+		if in, ok := d.(*ast.InputDecl); ok {
+			a.inputs[in.Name] = in
 		}
 	}
 }
@@ -90,9 +116,11 @@ func (a *analyzer) checkTopDecls(prog *ast.Program) {
 	for _, d := range prog.Decls {
 		switch x := d.(type) {
 		case *ast.ConstDecl:
-			switch x.Value.(type) {
-			case *ast.NumberLit, *ast.StringLit:
-				// Slice 0 accepts only Number/String literal constants.
+			switch v := x.Value.(type) {
+			case *ast.NumberLit:
+				a.constants[x.Name] = v.Val
+			case *ast.StringLit:
+				a.constants[x.Name] = v.Val
 			default:
 				a.addErrf(x.Value.Pos(), diag.CatTopLevelForm,
 					"top-level constants must be Number or String literal values in this slice")
@@ -253,28 +281,107 @@ func (a *analyzer) checkExprImplemented(x ast.Expr) {
 		a.checkExprImplemented(v.Object)
 	case *ast.CallExpr:
 		spec, ok := a.helperSpec(v)
+		if ok {
+			if err := registry.ValidateArgCount(spec.Namespace+"."+spec.Name, spec.MinArgs, spec.MaxArgs, len(v.Args)); err != nil {
+				a.addErrf(v.LPos, diag.CatTypeMismatch, "%s", err)
+			}
+			for _, arg := range v.Args {
+				if arg.Name != "" {
+					a.addErrf(arg.NamePos, diag.CatTypeMismatch,
+						"%s.%s does not accept keyword arguments", spec.Namespace, spec.Name)
+					continue
+				}
+				a.checkExprImplemented(arg.Value)
+			}
+			a.checkHelperLookback(v, spec)
+			return
+		}
+		ind, ok := a.indicatorSpec(v)
 		if !ok {
 			a.addErrf(x.Pos(), diag.CatNotImplemented,
 				"expression %T is not implemented in this slice", x)
 			return
 		}
-		if err := registry.ValidateArgCount(spec.Namespace+"."+spec.Name, spec.MinArgs, spec.MaxArgs, len(v.Args)); err != nil {
+		if err := registry.ValidateArgCount(ind.Name, ind.MinArgs, ind.MaxArgs, len(v.Args)); err != nil {
 			a.addErrf(v.LPos, diag.CatTypeMismatch, "%s", err)
 		}
 		for _, arg := range v.Args {
 			if arg.Name != "" {
 				a.addErrf(arg.NamePos, diag.CatTypeMismatch,
-					"%s.%s does not accept keyword arguments", spec.Namespace, spec.Name)
+					"%s does not accept keyword arguments in this slice", ind.Name)
 				continue
+			}
+			if _, ok := a.staticValue(arg.Value); !ok {
+				a.addErrf(arg.Value.Pos(), diag.CatTopLevelForm,
+					"indicator %s arguments must be literal values or top-level constants", ind.Name)
 			}
 			a.checkExprImplemented(arg.Value)
 		}
 	case *ast.IndexExpr:
-		a.addErrf(x.Pos(), diag.CatNotImplemented,
-			"expression %T is not implemented in this slice", x)
+		a.checkExprImplemented(v.Object)
+		a.checkHistoryIndex(v.Index)
 	default:
 		a.addErrf(x.Pos(), diag.CatNotImplemented,
 			"expression %T is not implemented in this slice", x)
+	}
+}
+
+func (a *analyzer) checkHistoryIndex(x ast.Expr) {
+	lit, ok := x.(*ast.NumberLit)
+	if !ok {
+		a.addErrf(x.Pos(), diag.CatTopLevelForm,
+			"history index must be a non-negative integer literal")
+		return
+	}
+	if lit.Val < 0 || lit.Val != math.Trunc(lit.Val) {
+		a.addErrf(x.Pos(), diag.CatTopLevelForm,
+			"history index must be a non-negative integer literal")
+		return
+	}
+	if a.maxHistoryIndex > 0 && lit.Val > float64(a.maxHistoryIndex) {
+		a.addErrf(x.Pos(), diag.CatHistoryLimit,
+			"history index %.0f exceeds the %d-bar limit", lit.Val, a.maxHistoryIndex)
+	}
+}
+
+func (a *analyzer) checkHelperLookback(x *ast.CallExpr, spec registry.HelperSpec) {
+	if spec.Lookback == nil {
+		return
+	}
+	args := make([]registry.Value, 0, len(x.Args))
+	for _, arg := range x.Args {
+		v, ok := a.staticValue(arg.Value)
+		if !ok {
+			args = append(args, nil)
+			continue
+		}
+		args = append(args, v)
+	}
+	lookback, err := spec.Lookback(args)
+	if err != nil {
+		a.addErrf(x.LPos, diag.CatTypeMismatch, "%s.%s: %s", spec.Namespace, spec.Name, err)
+		return
+	}
+	if a.maxHistoryIndex > 0 && lookback > a.maxHistoryIndex {
+		a.addErrf(x.LPos, diag.CatHistoryLimit,
+			"%s.%s requires history index %d, exceeding the %d-bar limit",
+			spec.Namespace, spec.Name, lookback, a.maxHistoryIndex)
+	}
+}
+
+func (a *analyzer) staticValue(x ast.Expr) (registry.Value, bool) {
+	switch v := x.(type) {
+	case *ast.NumberLit:
+		return v.Val, true
+	case *ast.StringLit:
+		return v.Val, true
+	case *ast.BoolLit:
+		return v.Val, true
+	case *ast.Ident:
+		val, ok := a.constants[v.Name]
+		return val, ok
+	default:
+		return nil, false
 	}
 }
 
@@ -295,12 +402,39 @@ func (a *analyzer) helperSpec(x *ast.CallExpr) (registry.HelperSpec, bool) {
 	return a.registry.Helper(ns.Name, m.Name)
 }
 
+func (a *analyzer) indicatorSpec(x *ast.CallExpr) (registry.IndicatorSpec, bool) {
+	m, ok := x.Callee.(*ast.MemberExpr)
+	if !ok {
+		return registry.IndicatorSpec{}, false
+	}
+	spec, ok := a.registry.Indicator(m.Name)
+	if !ok {
+		return registry.IndicatorSpec{}, false
+	}
+	root, ok := m.Object.(*ast.Ident)
+	if !ok {
+		return registry.IndicatorSpec{}, false
+	}
+	in, ok := a.inputs[root.Name]
+	if !ok {
+		return registry.IndicatorSpec{}, false
+	}
+	if in.Type != "CandleSeries" {
+		a.addErrf(m.NamePos, diag.CatTypeMismatch,
+			"indicator %s requires CandleSeries receiver", spec.Name)
+	}
+	return spec, true
+}
+
 func isIdent(x ast.Expr, name string) bool {
 	id, ok := x.(*ast.Ident)
 	return ok && id.Name == name
 }
 
 func (a *analyzer) addErrf(pos token.Pos, cat diag.Category, format string, args ...any) {
+	if a.maxDiagnostics > 0 && len(a.diags) >= a.maxDiagnostics {
+		return
+	}
 	a.diags = append(a.diags, diag.Diagnostic{
 		Phase: diag.PhaseParse, Category: cat, Pos: pos, Msg: fmt.Sprintf(format, args...),
 	})

@@ -36,14 +36,33 @@ type TypeSpec = registry.TypeSpec
 type HelperSpec = registry.HelperSpec
 type IndicatorSpec = registry.IndicatorSpec
 type HelperFunc = registry.HelperFunc
+type HelperLookbackFunc = registry.HelperLookbackFunc
+type Indicator = registry.Indicator
+type IndicatorFactory = registry.IndicatorFactory
 type Value = registry.Value
 
+type Sink interface {
+	Emit(Event) error
+}
+
 type Config struct {
-	Registry *registry.Registry
+	Registry       *registry.Registry
+	ResourceLimits ResourceLimits
+}
+
+type ResourceLimits struct {
+	MaxHistoryIndex int
+	MaxDiagnostics  int
 }
 
 func DefaultConfig() Config {
-	return Config{Registry: registry.Default()}
+	return Config{
+		Registry: registry.Default(),
+		ResourceLimits: ResourceLimits{
+			MaxHistoryIndex: 5000,
+			MaxDiagnostics:  100,
+		},
+	}
 }
 
 func NewRegistry() *registry.Registry {
@@ -90,12 +109,20 @@ func (p *Program) Outputs() []string {
 // Wiring is the host-side configuration passed to [Launch].
 type Wiring struct {
 	// InputPorts is the optional set of input port names the host has
-	// prepared. It is retained for slice-0 callers; DataSources carries real
-	// candle feeds.
+	// prepared. DataSources carries real candle feeds; InputPorts is useful
+	// for custom input types and placeholder ports that the program does not
+	// read as CandleSeries values yet.
 	InputPorts map[string]struct{}
 
 	// DataSources maps declared input port names to candle sources.
 	DataSources map[string]DataSource
+
+	// Sinks maps declared output port names to host destinations. When nil,
+	// outputs are collected only in the runner's in-memory event buffer.
+	Sinks map[string]Sink
+
+	// StrictOutputWiring requires every declared output to have a sink.
+	StrictOutputWiring bool
 }
 
 // Compile lexes, parses, and validates source. It returns the compiled
@@ -115,7 +142,8 @@ func CompileWithConfig(src []byte, cfg Config) (*Program, []Diagnostic, error) {
 }
 
 func CompileFileWithConfig(src []byte, file string, cfg Config) (*Program, []Diagnostic, error) {
-	reg := normalizeConfig(cfg).Registry.Clone()
+	cfg = normalizeConfig(cfg)
+	reg := cfg.Registry.Clone()
 	lx := lexer.New(src, file)
 	toks := lx.Tokenize()
 	var diags []Diagnostic
@@ -131,7 +159,10 @@ func CompileFileWithConfig(src []byte, file string, cfg Config) (*Program, []Dia
 	ps := parser.New(toks)
 	prog := ps.Parse()
 	diags = append(diags, ps.Diagnostics()...)
-	diags = append(diags, analysis.Analyze(prog, reg)...)
+	diags = append(diags, analysis.Analyze(prog, reg, analysis.Options{
+		MaxHistoryIndex: cfg.ResourceLimits.MaxHistoryIndex,
+		MaxDiagnostics:  cfg.ResourceLimits.MaxDiagnostics,
+	})...)
 
 	if len(diags) > 0 {
 		return nil, diags, errors.New("tascript: compilation failed")
@@ -140,8 +171,15 @@ func CompileFileWithConfig(src []byte, file string, cfg Config) (*Program, []Dia
 }
 
 func normalizeConfig(cfg Config) Config {
+	def := DefaultConfig()
 	if cfg.Registry == nil {
-		cfg.Registry = registry.Default()
+		cfg.Registry = def.Registry
+	}
+	if cfg.ResourceLimits.MaxHistoryIndex == 0 {
+		cfg.ResourceLimits.MaxHistoryIndex = def.ResourceLimits.MaxHistoryIndex
+	}
+	if cfg.ResourceLimits.MaxDiagnostics == 0 {
+		cfg.ResourceLimits.MaxDiagnostics = def.ResourceLimits.MaxDiagnostics
 	}
 	return cfg
 }
@@ -157,11 +195,72 @@ func Launch(p *Program, w Wiring) (*Runner, error) {
 	if p == nil {
 		return nil, errors.New("tascript.Launch: nil program")
 	}
-	r := &Runner{prog: p, eng: eval.New(p.ast, w.DataSources, p.registry)}
+	if d := validateWiring(p, w); d != nil {
+		return nil, *d
+	}
+	r := &Runner{prog: p, eng: eval.New(p.ast, w.DataSources, adaptSinks(w.Sinks), p.registry)}
 	if d := r.eng.Prepare(); d != nil {
 		return nil, *d
 	}
 	return r, nil
+}
+
+type sinkAdapter struct {
+	sink Sink
+}
+
+func (s sinkAdapter) Emit(ev eval.Event) error {
+	return s.sink.Emit(convertEvent(ev))
+}
+
+func adaptSinks(sinks map[string]Sink) map[string]eval.Sink {
+	if len(sinks) == 0 {
+		return nil
+	}
+	out := make(map[string]eval.Sink, len(sinks))
+	for name, sink := range sinks {
+		if sink != nil {
+			out[name] = sinkAdapter{sink: sink}
+		}
+	}
+	return out
+}
+
+func validateWiring(p *Program, w Wiring) *Diagnostic {
+	for _, d := range p.ast.Decls {
+		in, ok := d.(*ast.InputDecl)
+		if !ok {
+			continue
+		}
+		if w.DataSources[in.Name] != nil {
+			continue
+		}
+		if _, ok := w.InputPorts[in.Name]; ok {
+			continue
+		}
+		return &Diagnostic{
+			Phase: diag.PhaseLaunch, Category: diag.CatInputNotWired,
+			Pos: in.NamePos, Msg: "input " + in.Name + " is not wired",
+		}
+	}
+
+	if w.Sinks == nil && !w.StrictOutputWiring {
+		return nil
+	}
+	for _, d := range p.ast.Decls {
+		out, ok := d.(*ast.OutputDecl)
+		if !ok {
+			continue
+		}
+		if w.Sinks[out.Name] != nil {
+			continue
+		}
+		return &Diagnostic{
+			Phase: diag.PhaseLaunch, Category: diag.CatOutputNotWired,
+			Pos: out.NamePos, Msg: "output " + out.Name + " is not wired",
+		}
+	}
+	return nil
 }
 
 // Init executes the program's Init() function.
@@ -186,13 +285,17 @@ func (r *Runner) DrainEvents() []Event {
 	raw := r.eng.DrainEvents()
 	out := make([]Event, len(raw))
 	for i, ev := range raw {
-		data := make(map[string]any, len(ev.Data))
-		for k, v := range ev.Data {
-			data[k] = v
-		}
-		out[i] = Event{Output: ev.Output, Value: ev.Value, Data: data}
+		out[i] = convertEvent(ev)
 	}
 	return out
+}
+
+func convertEvent(ev eval.Event) Event {
+	data := make(map[string]any, len(ev.Data))
+	for k, v := range ev.Data {
+		data[k] = v
+	}
+	return Event{Output: ev.Output, Value: ev.Value, Data: data}
 }
 
 // Pos re-export so callers can introspect Diagnostic.Pos without importing token.
