@@ -213,18 +213,18 @@ func (re *PrefixExpr) String() string {
 
 func (re *PrefixExpr) expressionNode() {}
 
-type CallExpr struct { // TODO: rename - MemberAccessExpr
+type MemberAccessExpr struct {
 	Token  token.Token
 	Object Expression
 	Method Expression
 }
 
-func (ce *CallExpr) String() string {
+func (ma *MemberAccessExpr) String() string {
 	var out bytes.Buffer
-	out.WriteString(ce.Object.String())
-	out.WriteString(ce.Token.Literal)
-	out.WriteString(ce.Method.String())
+	out.WriteString(ma.Object.String())
+	out.WriteString(ma.Token.Literal)
+	out.WriteString(ma.Method.String())
 	return out.String()
 }
 
-func (ce *CallExpr) expressionNode() {}
+func (ma *MemberAccessExpr) expressionNode() {}

@@ -178,7 +178,7 @@ func (p *Parser) parseGroupExpr() ast.Expression {
 }
 
 func (p *Parser) praseCallExpr(left ast.Expression) ast.Expression {
-	expr := ast.CallExpr{Token: p.currentToken, Object: left}
+	expr := ast.MemberAccessExpr{Token: p.currentToken, Object: left}
 
 	if !p.peekTokenIs(token.IDENT) { // TODO: add diagnostic and handle sepratly
 		return nil

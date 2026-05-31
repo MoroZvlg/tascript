@@ -1,7 +1,6 @@
 package lexer_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/MoroZvlg/tascript/lexer"
@@ -23,7 +22,7 @@ func allTokens(t *testing.T, l *lexer.Lexer) []token.Token {
 
 func TestLexer_NextToken(t *testing.T) {
 	src := `// some script
-const CONST_F = 2.0
+const CONST_F = 2.0 // some comment
 const CONST_I = 1
 // more comments
 //
@@ -39,11 +38,13 @@ function Init() {
 `
 
 	expected := []token.Token{
+		{Pos: token.Pos{Line: 1, Col: 15}, Type: token.NEWLINE, Literal: ""},
+
 		{Pos: token.Pos{Line: 2, Col: 1}, Type: token.CONST, Literal: "const"},
 		{Pos: token.Pos{Line: 2, Col: 7}, Type: token.IDENT, Literal: "CONST_F"},
 		{Pos: token.Pos{Line: 2, Col: 15}, Type: token.ASSIGN, Literal: "="},
 		{Pos: token.Pos{Line: 2, Col: 17}, Type: token.FLOAT, Literal: "2.0"},
-		{Pos: token.Pos{Line: 2, Col: 20}, Type: token.NEWLINE, Literal: ""},
+		{Pos: token.Pos{Line: 2, Col: 36}, Type: token.NEWLINE, Literal: ""},
 
 		{Pos: token.Pos{Line: 3, Col: 1}, Type: token.CONST, Literal: "const"},
 		{Pos: token.Pos{Line: 3, Col: 7}, Type: token.IDENT, Literal: "CONST_I"},
@@ -114,10 +115,47 @@ function Init() {
 }
 
 func TestLexer_Simple(t *testing.T) {
-	src := `const foo = 5`
-	l := lexer.New(src)
-	for _, tok := range allTokens(t, l) {
-		fmt.Println(tok)
+	tests := []struct {
+		name           string
+		input          string
+		expectedTokens []token.TokenType
+	}{
+		{"ends on peek token call",
+			"const foo =",
+			[]token.TokenType{token.CONST, token.IDENT, token.ASSIGN, token.EOF},
+		},
+		{"float parsing, multiple dots",
+			"1.2.3.4.5",
+			[]token.TokenType{token.FLOAT, token.DOT, token.FLOAT, token.DOT, token.INTEGER, token.EOF},
+		},
+		{"comment line",
+			"123 // comment\n foo ",
+			[]token.TokenType{token.INTEGER, token.NEWLINE, token.IDENT, token.EOF},
+		},
+		{"empty lines",
+			"123 \n\n\n foo ",
+			[]token.TokenType{token.INTEGER, token.NEWLINE, token.IDENT, token.EOF},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			tokens := allTokens(t, l)
+			if len(tokens) != len(tt.expectedTokens) {
+				for _, tok := range tokens {
+					t.Logf("%s", tok.String())
+				}
+				t.Fatalf("expected %d tokens, got %d", len(tt.expectedTokens), len(tokens))
+			}
+
+			for i, expectedTok := range tt.expectedTokens {
+				gotTok := tokens[i]
+				if gotTok.Type != expectedTok {
+					t.Errorf("expected token %s, got %s", expectedTok, gotTok.Type)
+				}
+			}
+		})
 	}
 }
 

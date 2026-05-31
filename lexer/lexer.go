@@ -42,7 +42,7 @@ func (l *Lexer) advance() {
 }
 
 func (l *Lexer) peek() byte {
-	if l.eof() { // TODO: use peekEof
+	if l.peekEof() {
 		return 0
 	}
 	return l.src[l.peekCursor]
@@ -51,17 +51,40 @@ func (l *Lexer) peek() byte {
 func (l *Lexer) NextToken() token.Token {
 	var t token.Token
 
-	l.skipBlanks()
+	for {
+		if l.eof() {
+			break
+		}
 
-	if l.eof() {
-		return token.Token{Pos: l.pos(), Type: token.EOF, Literal: ""}
+		if l.isCommentStart() {
+			l.skipCommentLine()
+		}
+
+		if l.currChar != ' ' && l.currChar != '\t' && l.currChar != '\r' {
+			break
+		}
+
+		l.advance()
 	}
 
 	if l.currChar == '\n' {
 		pos := l.pos()
-		l.skipBlanks()
-		l.advance()
+		for { // skip all further newlines and comments
+			l.advance()
+
+			if l.isCommentStart() {
+				l.skipCommentLine()
+			}
+
+			if l.eof() || l.currChar != '\n' {
+				break
+			}
+		}
 		return token.Token{Pos: pos, Type: token.NEWLINE, Literal: ""}
+	}
+
+	if l.eof() {
+		return token.Token{Pos: l.pos(), Type: token.EOF, Literal: ""}
 	}
 
 	if isLetter(l.currChar) {
@@ -77,15 +100,18 @@ func (l *Lexer) NextToken() token.Token {
 	if isDigit(l.currChar) {
 		pos := l.pos()
 		startIdx := l.currCursor
-		isFloat := false
-		for isDigit(l.currChar) || l.currChar == '.' { // TODO: may consume 0.1.3 - it's incorrect value. ensure `.` consumed only once
+		dotFound := false
+		for isDigit(l.currChar) || l.currChar == '.' {
 			if l.currChar == '.' {
-				isFloat = true
+				if dotFound {
+					break
+				}
+				dotFound = true
 			}
 			l.advance()
 		}
 		tok := token.Token{Pos: pos, Literal: l.src[startIdx:l.currCursor]}
-		if isFloat {
+		if dotFound {
 			tok.Type = token.FLOAT
 		} else {
 			tok.Type = token.INTEGER
@@ -185,28 +211,6 @@ func (l *Lexer) NextToken() token.Token {
 	return t
 }
 
-func (l *Lexer) skipBlanks() {
-	for {
-		if l.currChar == ' ' || l.currChar == '\t' || l.currChar == '\r' {
-			l.advance()
-			continue
-		}
-
-		// skip empty lines (\n after \n)
-		if l.currChar == '\n' && l.currCursor-1 >= 0 && l.src[l.currCursor-1] == '\n' {
-			l.advance()
-			continue
-		}
-
-		if l.isCommentStart() {
-			l.skipCommentLine()
-			continue
-		}
-
-		break
-	}
-}
-
 func (l *Lexer) readString() (string, bool) {
 	startIdx := l.peekCursor // skip " char
 	for {
@@ -226,15 +230,10 @@ func (l *Lexer) isCommentStart() bool {
 
 func (l *Lexer) skipCommentLine() {
 	for {
+		if l.eof() || l.currChar == '\n' {
+			break
+		}
 		l.advance()
-		if l.currChar == '\n' { // TODO: skipping NEWLINE token because of it??
-			l.advance()
-			break
-		}
-
-		if l.currChar == 0 { // TODO: l.eof() instead?
-			break
-		}
 	}
 }
 
