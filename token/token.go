@@ -9,9 +9,10 @@ const (
 	EOF     TokenType = "EOF"
 	NEWLINE TokenType = "NEWLINE"
 
-	IDENT  TokenType = "IDENTIFIER"
-	NUMBER TokenType = "NUMBER"
-	STRING TokenType = "STRING"
+	IDENT   TokenType = "IDENTIFIER"
+	INTEGER TokenType = "INTEGER"
+	FLOAT   TokenType = "FLOAT"
+	STRING  TokenType = "STRING"
 
 	ASSIGN   TokenType = "="
 	EQ       TokenType = "=="
@@ -66,7 +67,7 @@ type Token struct {
 }
 
 func (t *Token) String() string {
-	return fmt.Sprintf("[%s] -> %s\n", t.Type, t.Literal)
+	return fmt.Sprintf("[%s] -> %s", t.Type, t.Literal)
 }
 
 var keywordsMap = map[string]TokenType{

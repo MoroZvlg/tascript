@@ -1,6 +1,7 @@
 package lexer_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/MoroZvlg/tascript/lexer"
@@ -41,13 +42,13 @@ function Init() {
 		{Pos: token.Pos{Line: 2, Col: 1}, Type: token.CONST, Literal: "const"},
 		{Pos: token.Pos{Line: 2, Col: 7}, Type: token.IDENT, Literal: "CONST_F"},
 		{Pos: token.Pos{Line: 2, Col: 15}, Type: token.ASSIGN, Literal: "="},
-		{Pos: token.Pos{Line: 2, Col: 17}, Type: token.NUMBER, Literal: "2.0"},
+		{Pos: token.Pos{Line: 2, Col: 17}, Type: token.FLOAT, Literal: "2.0"},
 		{Pos: token.Pos{Line: 2, Col: 20}, Type: token.NEWLINE, Literal: ""},
 
 		{Pos: token.Pos{Line: 3, Col: 1}, Type: token.CONST, Literal: "const"},
 		{Pos: token.Pos{Line: 3, Col: 7}, Type: token.IDENT, Literal: "CONST_I"},
 		{Pos: token.Pos{Line: 3, Col: 15}, Type: token.ASSIGN, Literal: "="},
-		{Pos: token.Pos{Line: 3, Col: 17}, Type: token.NUMBER, Literal: "1"},
+		{Pos: token.Pos{Line: 3, Col: 17}, Type: token.INTEGER, Literal: "1"},
 		{Pos: token.Pos{Line: 3, Col: 18}, Type: token.NEWLINE, Literal: ""},
 
 		{Pos: token.Pos{Line: 7, Col: 1}, Type: token.INPUT, Literal: "input"},
@@ -86,7 +87,7 @@ function Init() {
 		{Pos: token.Pos{Line: 13, Col: 1}, Type: token.RBRACE, Literal: "}"},
 		{Pos: token.Pos{Line: 13, Col: 2}, Type: token.NEWLINE, Literal: ""},
 
-		{Pos: token.Pos{Line: 14, Col: 1}, Type: token.EOF, Literal: ""},
+		{Pos: token.Pos{Line: 15, Col: 1}, Type: token.EOF, Literal: ""},
 	}
 
 	l := lexer.New(src)
@@ -109,6 +110,14 @@ function Init() {
 		if tok.Pos.Line != expectTok.Pos.Line || tok.Pos.Col != expectTok.Pos.Col {
 			t.Errorf("expected token position '%s', got '%s'", expectTok.Pos.String(), tok.Pos.String())
 		}
+	}
+}
+
+func TestLexer_Simple(t *testing.T) {
+	src := `const foo = 5`
+	l := lexer.New(src)
+	for _, tok := range allTokens(t, l) {
+		fmt.Println(tok)
 	}
 }
 

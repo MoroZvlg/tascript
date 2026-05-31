@@ -27,11 +27,6 @@ func New(input string) *Lexer {
 }
 
 func (l *Lexer) advance() {
-	if l.eof() {
-		l.currCursor++
-		l.currChar = 0
-		return
-	}
 	if l.currChar == '\n' {
 		l.line++
 		l.col = 0
@@ -39,6 +34,10 @@ func (l *Lexer) advance() {
 	l.col++
 	l.currCursor++
 	l.peekCursor++
+	if l.eof() {
+		l.currChar = 0
+		return
+	}
 	l.currChar = l.src[l.currCursor]
 }
 
@@ -78,10 +77,20 @@ func (l *Lexer) NextToken() token.Token {
 	if isDigit(l.currChar) {
 		pos := l.pos()
 		startIdx := l.currCursor
+		isFloat := false
 		for isDigit(l.currChar) || l.currChar == '.' {
+			if l.currChar == '.' {
+				isFloat = true
+			}
 			l.advance()
 		}
-		return token.Token{Pos: pos, Type: token.NUMBER, Literal: l.src[startIdx:l.currCursor]}
+		tok := token.Token{Pos: pos, Literal: l.src[startIdx:l.currCursor]}
+		if isFloat {
+			tok.Type = token.FLOAT
+		} else {
+			tok.Type = token.INTEGER
+		}
+		return tok
 	}
 
 	switch l.currChar {
@@ -236,7 +245,7 @@ func (l *Lexer) pos() token.Pos {
 	}
 }
 
-func (l *Lexer) eof() bool { return l.peekCursor >= len(l.src) }
+func (l *Lexer) eof() bool { return l.currCursor >= len(l.src) }
 
 func isLetter(ch byte) bool {
 	return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || (ch == '_')
