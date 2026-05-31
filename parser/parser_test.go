@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/MoroZvlg/tascript/diag"
@@ -160,6 +161,60 @@ func TestParser_ParseConstErrors(t *testing.T) {
 				}
 			},
 		},
+		{
+			"prefix expr error",
+			"const foo = -^#",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.ILLEGAL),
+				}
+			},
+		},
+		{
+			"member access call. no ident",
+			"const foo = math.^3",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.INTEGER),
+				}
+			},
+		},
+		{
+			"integer literal overflow",
+			"const foo = ^" + strings.Repeat("9", 100),
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					parseFailedErr(ps[0], token.INTEGER),
+				}
+			},
+		},
+		{
+			"float literal overflow",
+			"const foo = ^" + strings.Repeat("9", 400) + ".0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					parseFailedErr(ps[0], token.FLOAT),
+				}
+			},
+		},
+		{
+			"empty group expression",
+			"const foo = (^)",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.RPAREN),
+				}
+			},
+		},
+		{
+			"group expression. missing RPAREN",
+			"const foo = (3 + 1 ^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RPAREN, token.EOF),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -190,7 +245,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 }
 
 func TestParser_ParseConstRecovery(t *testing.T) {
-	src := `const = bar\n const foo = baz`
+	src := "const = bar\n const foo = baz"
 	l := lexer.New(src)
 	p := parser.New(l)
 	prog := p.Parse()
@@ -200,15 +255,21 @@ func TestParser_ParseConstRecovery(t *testing.T) {
 		for i, d := range got {
 			t.Logf("got[%d] %+v", i, d)
 		}
-		t.Errorf("expected 1 error, got %d", len(got))
-	}
-	if len(prog.Consts) != 1 {
-		t.Errorf("expecter 1 constant parsed after recovery, got %d", len(prog.Consts))
+		t.Fatalf("expected 1 error, got %d", len(got))
 	}
 
 	if prog.Valid {
 		t.Errorf("expected prog be invalid, got true")
 	}
+
+	if len(prog.Consts) != 1 {
+		t.Fatalf("expected 1 constant parsed after recovery, got %d", len(prog.Consts))
+	}
+
+	if !prog.Consts[0].IsValid() {
+		t.Errorf("expected 1 valid const declaration, got invalid")
+	}
+
 }
 
 func unexpectedErr(pos token.Pos, expected, got token.TokenType) *diag.UnexpectedToken {
@@ -217,6 +278,10 @@ func unexpectedErr(pos token.Pos, expected, got token.TokenType) *diag.Unexpecte
 
 func exprExpectedErr(pos token.Pos, got token.TokenType) *diag.ExpressionExpected {
 	return &diag.ExpressionExpected{Phase: diag.PhaseParse, Pos: pos, Got: got}
+}
+
+func parseFailedErr(pos token.Pos, target token.TokenType) *diag.ParseFailed {
+	return &diag.ParseFailed{Phase: diag.PhaseParse, Pos: pos, Target: target}
 }
 
 func extractErrorsPos(input string) (string, []token.Pos) {

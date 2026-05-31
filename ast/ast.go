@@ -84,6 +84,10 @@ type ConstDecl struct {
 	Value      Expression
 }
 
+func (cd *ConstDecl) IsValid() bool {
+	return cd.Identifier != nil && cd.Value != nil
+}
+
 func (cd *ConstDecl) String() string {
 	var out bytes.Buffer
 	out.WriteString("const ")

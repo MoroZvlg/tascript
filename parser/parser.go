@@ -67,14 +67,14 @@ func (p *Parser) Diagnostics() []diag.Diagnostic {
 func (p *Parser) Parse() *ast.Program {
 	prog := &ast.Program{Valid: true}
 	for p.currentToken.Type != token.EOF {
-		if p.currentToken.Type == token.NEWLINE { // TODO: skip all new lines and not one. Check after skip line we are not on EOF
+		if p.currentToken.Type == token.NEWLINE {
 			p.nextToken()
 		}
 
 		switch p.currentToken.Type {
 		case token.CONST:
 			decl := p.parseConstDecl()
-			if decl != nil { // TODO: check !p.errorMode to skip broken decl? or it's ok to leave them?
+			if decl != nil && !p.errorMode {
 				prog.Consts = append(prog.Consts, decl)
 			}
 			if p.errorMode {
@@ -150,7 +150,11 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 		Token: p.currentToken,
 	}
 	p.nextToken()
-	expr.Right = p.parseExpression(PrefixPrec) // TODO: add error if Right is nil
+	exprStartToken := p.currentToken
+	expr.Right = p.parseExpression(PrefixPrec)
+	if expr.Right == nil {
+		p.addExpressionExpected(exprStartToken)
+	}
 	return expr
 }
 
@@ -168,22 +172,30 @@ func (p *Parser) parseInfixExpr(left ast.Expression) ast.Expression {
 
 func (p *Parser) parseGroupExpr() ast.Expression {
 	p.nextToken() // skip `(`
+	startExprToken := p.currentToken
 	expr := p.parseExpression(LowestPrec)
-	if expr == nil || !p.peekTokenIs(token.RPAREN) {
+	if expr == nil {
+		p.addExpressionExpected(startExprToken)
 		return nil
-	} // TODO: add diagnostic and handle sepratly
+	}
+
 	p.nextToken() // skip `)`
+	if !p.currTokenIs(token.RPAREN) {
+		p.addUnexpectedToken(p.currentToken, token.RPAREN)
+		return nil
+	}
 
 	return expr
 }
 
 func (p *Parser) praseCallExpr(left ast.Expression) ast.Expression {
 	expr := ast.MemberAccessExpr{Token: p.currentToken, Object: left}
+	p.nextToken()
 
-	if !p.peekTokenIs(token.IDENT) { // TODO: add diagnostic and handle sepratly
+	if !p.currTokenIs(token.IDENT) {
+		p.addUnexpectedToken(p.currentToken, token.IDENT)
 		return nil
 	}
-	p.nextToken()
 	expr.Method = p.parseIdentExpr()
 	return &expr
 }
@@ -194,7 +206,8 @@ func (p *Parser) parseIdentExpr() ast.Expression {
 
 func (p *Parser) parseIntegerExpr() ast.Expression {
 	val, err := strconv.Atoi(p.currentToken.Literal)
-	if err != nil { // TODO: add diagnostic
+	if err != nil {
+		p.addParseFailed(p.currentToken.Pos, p.currentToken.Type, err)
 		return nil
 	}
 	return &ast.IntegerExpr{Token: p.currentToken, Value: val}
@@ -203,7 +216,8 @@ func (p *Parser) parseIntegerExpr() ast.Expression {
 func (p *Parser) parseFloatExpr() ast.Expression {
 	val, err := strconv.ParseFloat(p.currentToken.Literal, 64)
 	if err != nil {
-		return nil // TODO: add diagnostic
+		p.addParseFailed(p.currentToken.Pos, p.currentToken.Type, err)
+		return nil
 	}
 	return &ast.FloatExpr{Token: p.currentToken, Value: val}
 }
@@ -213,10 +227,7 @@ func (p *Parser) parseStringExpr() ast.Expression {
 }
 
 func (p *Parser) parseBoolean() ast.Expression {
-	val, err := strconv.ParseBool(p.currentToken.Literal)
-	if err != nil {
-		return nil
-	}
+	val, _ := strconv.ParseBool(p.currentToken.Literal)
 	return &ast.BooleanExpr{Token: p.currentToken, Value: val}
 }
 
@@ -224,14 +235,14 @@ func (p *Parser) parseBoolean() ast.Expression {
 
 func (p *Parser) syncToNewLine() {
 	for {
-		if p.currTokenIs(token.NEWLINE) {
+		if p.peekTokenIs(token.NEWLINE) {
 			p.nextToken()
 			break
 		}
 		if p.peekTokenIs(token.EOF) {
 			break
 		}
-		p.nextToken() // TODO: remove. nextToken will be called in Parse
+		p.nextToken()
 	}
 }
 
@@ -263,6 +274,16 @@ func (p *Parser) addNotImplemented(pos token.Pos, subject string) {
 		Phase:   diag.PhaseParse,
 		Pos:     pos,
 		Subject: subject,
+	})
+}
+
+func (p *Parser) addParseFailed(pos token.Pos, target token.TokenType, _ error) {
+	p.errorMode = true
+
+	p.errors = append(p.errors, &diag.ParseFailed{
+		Phase:  diag.PhaseParse,
+		Pos:    pos,
+		Target: target,
 	})
 }
 

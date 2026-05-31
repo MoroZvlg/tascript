@@ -48,3 +48,13 @@ type ExpressionExpected struct {
 func (ee ExpressionExpected) Error() string {
 	return fmt.Sprintf("%s [EXPRESSION_EXPECTED] %s: expected expression got %s", ee.Phase, ee.Pos.String(), ee.Got)
 }
+
+type ParseFailed struct {
+	Phase  Phase
+	Pos    token.Pos
+	Target token.TokenType
+}
+
+func (pf ParseFailed) Error() string {
+	return fmt.Sprintf("%s [PARSE_FAILED] %s: failed to parse %s", pf.Phase, pf.Pos.String(), pf.Target)
+}
