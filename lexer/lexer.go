@@ -42,7 +42,7 @@ func (l *Lexer) advance() {
 }
 
 func (l *Lexer) peek() byte {
-	if l.eof() {
+	if l.eof() { // TODO: use peekEof
 		return 0
 	}
 	return l.src[l.peekCursor]
@@ -78,7 +78,7 @@ func (l *Lexer) NextToken() token.Token {
 		pos := l.pos()
 		startIdx := l.currCursor
 		isFloat := false
-		for isDigit(l.currChar) || l.currChar == '.' {
+		for isDigit(l.currChar) || l.currChar == '.' { // TODO: may consume 0.1.3 - it's incorrect value. ensure `.` consumed only once
 			if l.currChar == '.' {
 				isFloat = true
 			}
@@ -227,12 +227,12 @@ func (l *Lexer) isCommentStart() bool {
 func (l *Lexer) skipCommentLine() {
 	for {
 		l.advance()
-		if l.currChar == '\n' {
+		if l.currChar == '\n' { // TODO: skipping NEWLINE token because of it??
 			l.advance()
 			break
 		}
 
-		if l.currChar == 0 {
+		if l.currChar == 0 { // TODO: l.eof() instead?
 			break
 		}
 	}
@@ -246,6 +246,8 @@ func (l *Lexer) pos() token.Pos {
 }
 
 func (l *Lexer) eof() bool { return l.currCursor >= len(l.src) }
+
+func (l *Lexer) peekEof() bool { return l.peekCursor >= len(l.src) }
 
 func isLetter(ch byte) bool {
 	return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || (ch == '_')

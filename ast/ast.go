@@ -213,7 +213,7 @@ func (re *PrefixExpr) String() string {
 
 func (re *PrefixExpr) expressionNode() {}
 
-type CallExpr struct {
+type CallExpr struct { // TODO: rename - MemberAccessExpr
 	Token  token.Token
 	Object Expression
 	Method Expression

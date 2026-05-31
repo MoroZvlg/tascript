@@ -67,14 +67,14 @@ func (p *Parser) Diagnostics() []diag.Diagnostic {
 func (p *Parser) Parse() *ast.Program {
 	prog := &ast.Program{Valid: true}
 	for p.currentToken.Type != token.EOF {
-		if p.currentToken.Type == token.NEWLINE {
+		if p.currentToken.Type == token.NEWLINE { // TODO: skip all new lines and not one. Check after skip line we are not on EOF
 			p.nextToken()
 		}
 
 		switch p.currentToken.Type {
 		case token.CONST:
 			decl := p.parseConstDecl()
-			if decl != nil {
+			if decl != nil { // TODO: check !p.errorMode to skip broken decl? or it's ok to leave them?
 				prog.Consts = append(prog.Consts, decl)
 			}
 			if p.errorMode {
@@ -150,7 +150,7 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 		Token: p.currentToken,
 	}
 	p.nextToken()
-	expr.Right = p.parseExpression(PrefixPrec)
+	expr.Right = p.parseExpression(PrefixPrec) // TODO: add error if Right is nil
 	return expr
 }
 
@@ -171,7 +171,7 @@ func (p *Parser) parseGroupExpr() ast.Expression {
 	expr := p.parseExpression(LowestPrec)
 	if expr == nil || !p.peekTokenIs(token.RPAREN) {
 		return nil
-	}
+	} // TODO: add diagnostic and handle sepratly
 	p.nextToken() // skip `)`
 
 	return expr
@@ -180,7 +180,7 @@ func (p *Parser) parseGroupExpr() ast.Expression {
 func (p *Parser) praseCallExpr(left ast.Expression) ast.Expression {
 	expr := ast.CallExpr{Token: p.currentToken, Object: left}
 
-	if !p.peekTokenIs(token.IDENT) {
+	if !p.peekTokenIs(token.IDENT) { // TODO: add diagnostic and handle sepratly
 		return nil
 	}
 	p.nextToken()
@@ -194,7 +194,7 @@ func (p *Parser) parseIdentExpr() ast.Expression {
 
 func (p *Parser) parseIntegerExpr() ast.Expression {
 	val, err := strconv.Atoi(p.currentToken.Literal)
-	if err != nil {
+	if err != nil { // TODO: add diagnostic
 		return nil
 	}
 	return &ast.IntegerExpr{Token: p.currentToken, Value: val}
@@ -203,7 +203,7 @@ func (p *Parser) parseIntegerExpr() ast.Expression {
 func (p *Parser) parseFloatExpr() ast.Expression {
 	val, err := strconv.ParseFloat(p.currentToken.Literal, 64)
 	if err != nil {
-		return nil
+		return nil // TODO: add diagnostic
 	}
 	return &ast.FloatExpr{Token: p.currentToken, Value: val}
 }
@@ -231,7 +231,7 @@ func (p *Parser) syncToNewLine() {
 		if p.peekTokenIs(token.EOF) {
 			break
 		}
-		p.nextToken()
+		p.nextToken() // TODO: remove. nextToken will be called in Parse
 	}
 }
 
