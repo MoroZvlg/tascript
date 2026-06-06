@@ -27,6 +27,7 @@ func TestParser_ParseConstSimple(t *testing.T) {
 		{"const foo = (5.3 + 3) * 2", "const foo = ((5.3 + 3) * 2)"},
 		{"const foo = true == 5 > 2", "const foo = (true == (5 > 2))"},
 		{"const foo = module.math.PI", "const foo = module.math.PI"},
+		{"\nconst foo = 5\n", "const foo = 5"},
 	}
 
 	for _, tt := range tests {
@@ -38,8 +39,7 @@ func TestParser_ParseConstSimple(t *testing.T) {
 				for _, d := range p.Diagnostics() {
 					t.Log(d)
 				}
-				t.Errorf("expected 0 errors, got %d\n", len(p.Diagnostics()))
-				return
+				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
 			}
 
 			if tt.output != prog.Consts[0].String() {
@@ -115,6 +115,16 @@ func TestParser_ParseConstErrors(t *testing.T) {
 			},
 		},
 		{
+			"missing `=` and bad expression",
+			"const foo ^3 + ^#",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.ASSIGN, token.INTEGER),
+					exprExpectedErr(ps[1], token.ILLEGAL),
+				}
+			},
+		},
+		{
 			"missing all",
 			"const ^",
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -123,7 +133,6 @@ func TestParser_ParseConstErrors(t *testing.T) {
 				}
 			},
 		},
-		// errors in expression parsing
 		{
 			"[Infix] missing RHS",
 			"const foo = 3 + ^",
@@ -215,6 +224,15 @@ func TestParser_ParseConstErrors(t *testing.T) {
 				}
 			},
 		},
+		{
+			"trailing token after expression",
+			"const foo = a ^b",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.NEWLINE, token.IDENT),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -245,7 +263,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 }
 
 func TestParser_ParseConstRecovery(t *testing.T) {
-	src := "const = bar\n const foo = baz"
+	src := "const = bar\n const foo = baz\nconst math = pi"
 	l := lexer.New(src)
 	p := parser.New(l)
 	prog := p.Parse()
@@ -262,14 +280,9 @@ func TestParser_ParseConstRecovery(t *testing.T) {
 		t.Errorf("expected prog be invalid, got true")
 	}
 
-	if len(prog.Consts) != 1 {
-		t.Fatalf("expected 1 constant parsed after recovery, got %d", len(prog.Consts))
+	if len(prog.Consts) != 2 {
+		t.Fatalf("expected 2 constant parsed after recovery, got %d", len(prog.Consts))
 	}
-
-	if !prog.Consts[0].IsValid() {
-		t.Errorf("expected 1 valid const declaration, got invalid")
-	}
-
 }
 
 func unexpectedErr(pos token.Pos, expected, got token.TokenType) *diag.UnexpectedToken {
@@ -288,7 +301,7 @@ func extractErrorsPos(input string) (string, []token.Pos) {
 	var out []byte
 	var pos []token.Pos
 	line, col := 1, 1
-	for i := 0; i < len(input); i++ {
+	for i := range len(input) {
 		switch char := input[i]; char {
 		case '\n':
 			line++
@@ -302,4 +315,43 @@ func extractErrorsPos(input string) (string, []token.Pos) {
 		}
 	}
 	return string(out), pos
+}
+
+// Program-level recovery: a junk top-level token must not drop the following good const
+func TestParser_ErrorModeLeak(t *testing.T) {
+	t.Run("junk before good const is recovered", func(t *testing.T) {
+		src := "@\nconst foo = 5"
+		l := lexer.New(src)
+		p := parser.New(l)
+		prog := p.Parse()
+
+		if prog.Valid {
+			t.Errorf("expected prog invalid (junk `@` present), got valid")
+		}
+		if len(prog.Consts) != 1 {
+			t.Fatalf("expected 1 const recovered after junk, got %d", len(prog.Consts))
+		}
+		if prog.Consts[0].Identifier.String() != "foo" {
+			t.Errorf("expected recovered const to be valid")
+		}
+		if got := prog.Consts[0].String(); got != "const foo = 5" {
+			t.Errorf("expected recovered const %q, got %q", "const foo = 5", got)
+		}
+	})
+
+	t.Run("erroring program reports invalid", func(t *testing.T) {
+		// No CONST branch runs, but there is an error -> Valid must be false.
+		for _, src := range []string{"5", "@"} {
+			l := lexer.New(src)
+			p := parser.New(l)
+			prog := p.Parse()
+
+			if len(p.Diagnostics()) == 0 {
+				t.Errorf("%q: expected at least one diagnostic, got none", src)
+			}
+			if prog.Valid {
+				t.Errorf("%q: expected prog invalid (has errors), got valid", src)
+			}
+		}
+	})
 }

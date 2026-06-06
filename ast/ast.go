@@ -84,16 +84,20 @@ type ConstDecl struct {
 	Value      Expression
 }
 
-func (cd *ConstDecl) IsValid() bool {
-	return cd.Identifier != nil && cd.Value != nil
-}
-
 func (cd *ConstDecl) String() string {
 	var out bytes.Buffer
 	out.WriteString("const ")
-	out.WriteString(cd.Identifier.String())
+	if cd.Identifier == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(cd.Identifier.String())
+	}
 	out.WriteString(" = ")
-	out.WriteString(cd.Value.String())
+	if cd.Value != nil {
+		out.WriteString(cd.Value.String())
+	} else {
+		out.WriteString("<missing expression>")
+	}
 	return out.String()
 }
 
@@ -128,6 +132,16 @@ func (fd *FunctionDecl) String() string {
 }
 
 func (fd *FunctionDecl) declarationNode() {}
+
+type BadExpr struct {
+	Token token.Token
+}
+
+func (be *BadExpr) String() string {
+	return "<error>"
+}
+
+func (be *BadExpr) expressionNode() {}
 
 type IdentExpr struct {
 	Token token.Token
@@ -208,14 +222,14 @@ type PrefixExpr struct {
 	Right Expression
 }
 
-func (re *PrefixExpr) String() string {
+func (pe *PrefixExpr) String() string {
 	var out bytes.Buffer
-	out.WriteString(re.Token.Literal)
-	out.WriteString(re.Right.String())
+	out.WriteString(pe.Token.Literal)
+	out.WriteString(pe.Right.String())
 	return out.String()
 }
 
-func (re *PrefixExpr) expressionNode() {}
+func (pe *PrefixExpr) expressionNode() {}
 
 type MemberAccessExpr struct {
 	Token  token.Token
@@ -232,3 +246,8 @@ func (ma *MemberAccessExpr) String() string {
 }
 
 func (ma *MemberAccessExpr) expressionNode() {}
+
+func IsBadExpr(expression Expression) bool {
+	_, ok := expression.(*BadExpr)
+	return ok
+}

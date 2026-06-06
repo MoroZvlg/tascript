@@ -18,7 +18,6 @@ type Parser struct {
 	l            *lexer.Lexer
 	currentToken token.Token
 	peekToken    token.Token
-	errorMode    bool
 	errors       []diag.Diagnostic
 
 	prefixFns map[token.TokenType]func() ast.Expression
@@ -55,7 +54,7 @@ func New(l *lexer.Lexer) *Parser {
 		token.GTEQ:     p.parseInfixExpr,
 		token.AND:      p.parseInfixExpr,
 		token.OR:       p.parseInfixExpr,
-		token.DOT:      p.praseCallExpr,
+		token.DOT:      p.parseCallExpr,
 	}
 	return p
 }
@@ -66,21 +65,18 @@ func (p *Parser) Diagnostics() []diag.Diagnostic {
 
 func (p *Parser) Parse() *ast.Program {
 	prog := &ast.Program{Valid: true}
-	for p.currentToken.Type != token.EOF {
+	for !p.currTokenIs(token.EOF) {
 		if p.currentToken.Type == token.NEWLINE {
 			p.nextToken()
+			continue
 		}
 
+		errsBefore := len(p.errors)
 		switch p.currentToken.Type {
 		case token.CONST:
 			decl := p.parseConstDecl()
-			if decl != nil && !p.errorMode {
+			if len(p.errors) == errsBefore {
 				prog.Consts = append(prog.Consts, decl)
-			}
-			if p.errorMode {
-				prog.Valid = false
-				p.syncToNewLine()
-				p.errorMode = false
 			}
 		case token.INPUT:
 			p.addNotImplemented(p.currentToken.Pos, "inputDecl")
@@ -90,6 +86,14 @@ func (p *Parser) Parse() *ast.Program {
 			p.addNotImplemented(p.currentToken.Pos, "functionDecl")
 		default:
 			p.addNotImplemented(p.currentToken.Pos, "unknownDecl. Add normal error!")
+		}
+		if len(p.errors) == errsBefore &&
+			!p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) {
+			p.addUnexpectedToken(p.peekToken, token.NEWLINE)
+		}
+		if len(p.errors) > errsBefore {
+			prog.Valid = false
+			p.syncToNewLine()
 		}
 		p.nextToken()
 	}
@@ -108,30 +112,27 @@ func (p *Parser) parseConstDecl() *ast.ConstDecl {
 		p.addUnexpectedToken(p.currentToken, token.IDENT)
 	}
 
-	assignPresent := true
 	if p.currTokenIs(token.ASSIGN) {
 		p.nextToken()
 	} else {
+		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
 		if decl.Identifier != nil {
-			// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
 			p.addUnexpectedToken(p.currentToken, token.ASSIGN)
 		}
-		assignPresent = false
+		// assign already missing. If we can't parse, exit without second error
+		if _, canParse := p.prefixFns[p.currentToken.Type]; !canParse {
+			return decl
+		}
 	}
-
-	exprStartToken := p.currentToken
-	errorsBeforeExpr := len(p.errors)
 	decl.Value = p.parseExpression(LowestPrec)
-	if decl.Value == nil && assignPresent && len(p.errors) == errorsBeforeExpr {
-		p.addExpressionExpected(exprStartToken)
-	}
 	return decl
 }
 
 func (p *Parser) parseExpression(prec precedence) ast.Expression {
 	prefFn, ok := p.prefixFns[p.currentToken.Type]
 	if !ok {
-		return nil
+		p.addExpressionExpected(p.currentToken)
+		return &ast.BadExpr{Token: p.currentToken}
 	}
 	leftExpr := prefFn()
 	for !p.peekTokenIs(token.NEWLINE) && prec < p.peekPrecedence() {
@@ -149,52 +150,54 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 	expr := &ast.PrefixExpr{
 		Token: p.currentToken,
 	}
-	p.nextToken()
-	exprStartToken := p.currentToken
-	expr.Right = p.parseExpression(PrefixPrec)
-	if expr.Right == nil {
-		p.addExpressionExpected(exprStartToken)
+	if isClosingDelim(p.peekToken.Type) || p.peekTokenIs(token.EOF) {
+		p.addExpressionExpected(p.peekToken)
+		expr.Right = &ast.BadExpr{Token: p.peekToken}
+		return expr
 	}
+	p.nextToken()
+	expr.Right = p.parseExpression(PrefixPrec)
 	return expr
 }
 
 func (p *Parser) parseInfixExpr(left ast.Expression) ast.Expression {
+	// left may be a BadExpr (e.g. overflow); carry it as-is, its error is already reported.
 	expr := ast.InfixExpr{Token: p.currentToken, Left: left}
 	prec := p.currentPrecedence()
-	p.nextToken()
-	exprStartToken := p.currentToken
-	expr.Right = p.parseExpression(prec)
-	if expr.Right == nil {
-		p.addExpressionExpected(exprStartToken)
+	if isClosingDelim(p.peekToken.Type) || p.peekTokenIs(token.EOF) {
+		expr.Right = &ast.BadExpr{Token: p.currentToken}
+		p.addExpressionExpected(p.peekToken)
+		return &expr
 	}
+	p.nextToken()
+	// a bad RHS already reports itself inside parseExpression, no extra error here.
+	expr.Right = p.parseExpression(prec)
 	return &expr
 }
 
 func (p *Parser) parseGroupExpr() ast.Expression {
 	p.nextToken() // skip `(`
-	startExprToken := p.currentToken
 	expr := p.parseExpression(LowestPrec)
-	if expr == nil {
-		p.addExpressionExpected(startExprToken)
-		return nil
+	if ast.IsBadExpr(expr) { // already reported by the inner expression
+		return expr
 	}
 
-	p.nextToken() // skip `)`
-	if !p.currTokenIs(token.RPAREN) {
-		p.addUnexpectedToken(p.currentToken, token.RPAREN)
-		return nil
+	if p.peekTokenIs(token.RPAREN) {
+		p.nextToken() // skip `)`
+	} else {
+		p.addUnexpectedToken(p.peekToken, token.RPAREN)
+		return &ast.BadExpr{Token: p.currentToken}
 	}
 
 	return expr
 }
 
-func (p *Parser) praseCallExpr(left ast.Expression) ast.Expression {
+func (p *Parser) parseCallExpr(left ast.Expression) ast.Expression {
 	expr := ast.MemberAccessExpr{Token: p.currentToken, Object: left}
-	p.nextToken()
-
+	p.nextToken() // advance past `.` onto the member name
 	if !p.currTokenIs(token.IDENT) {
 		p.addUnexpectedToken(p.currentToken, token.IDENT)
-		return nil
+		return &ast.BadExpr{Token: p.currentToken}
 	}
 	expr.Method = p.parseIdentExpr()
 	return &expr
@@ -208,7 +211,7 @@ func (p *Parser) parseIntegerExpr() ast.Expression {
 	val, err := strconv.Atoi(p.currentToken.Literal)
 	if err != nil {
 		p.addParseFailed(p.currentToken.Pos, p.currentToken.Type, err)
-		return nil
+		return &ast.BadExpr{Token: p.currentToken}
 	}
 	return &ast.IntegerExpr{Token: p.currentToken, Value: val}
 }
@@ -217,7 +220,7 @@ func (p *Parser) parseFloatExpr() ast.Expression {
 	val, err := strconv.ParseFloat(p.currentToken.Literal, 64)
 	if err != nil {
 		p.addParseFailed(p.currentToken.Pos, p.currentToken.Type, err)
-		return nil
+		return &ast.BadExpr{Token: p.currentToken}
 	}
 	return &ast.FloatExpr{Token: p.currentToken, Value: val}
 }
@@ -235,11 +238,11 @@ func (p *Parser) parseBoolean() ast.Expression {
 
 func (p *Parser) syncToNewLine() {
 	for {
-		if p.peekTokenIs(token.NEWLINE) {
-			p.nextToken()
+		if p.currTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) {
 			break
 		}
-		if p.peekTokenIs(token.EOF) {
+		if p.peekTokenIs(token.NEWLINE) {
+			p.nextToken()
 			break
 		}
 		p.nextToken()
@@ -247,8 +250,6 @@ func (p *Parser) syncToNewLine() {
 }
 
 func (p *Parser) addExpressionExpected(tok token.Token) {
-	p.errorMode = true
-
 	p.errors = append(p.errors, &diag.ExpressionExpected{
 		Phase: diag.PhaseParse,
 		Pos:   tok.Pos,
@@ -257,8 +258,6 @@ func (p *Parser) addExpressionExpected(tok token.Token) {
 }
 
 func (p *Parser) addUnexpectedToken(tok token.Token, expected token.TokenType) {
-	p.errorMode = true
-
 	p.errors = append(p.errors, &diag.UnexpectedToken{
 		Phase:    diag.PhaseParse,
 		Pos:      tok.Pos,
@@ -268,8 +267,6 @@ func (p *Parser) addUnexpectedToken(tok token.Token, expected token.TokenType) {
 }
 
 func (p *Parser) addNotImplemented(pos token.Pos, subject string) {
-	p.errorMode = true
-
 	p.errors = append(p.errors, diag.NotImplemented{
 		Phase:   diag.PhaseParse,
 		Pos:     pos,
@@ -278,8 +275,6 @@ func (p *Parser) addNotImplemented(pos token.Pos, subject string) {
 }
 
 func (p *Parser) addParseFailed(pos token.Pos, target token.TokenType, _ error) {
-	p.errorMode = true
-
 	p.errors = append(p.errors, &diag.ParseFailed{
 		Phase:  diag.PhaseParse,
 		Pos:    pos,
@@ -314,4 +309,11 @@ func (p *Parser) currentPrecedence() precedence {
 		return 0
 	}
 	return prec
+}
+
+func isClosingDelim(t token.TokenType) bool {
+	return t == token.RPAREN || // )
+		t == token.RBRACKET || // ]
+		t == token.RBRACE || // }
+		t == token.COMMA // ,
 }
