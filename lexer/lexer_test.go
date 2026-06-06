@@ -32,7 +32,10 @@ output alert: String
 
 function Init() {
 	let out = "foo"
-	emit(alert, out)
+	emit(
+		alert, 
+		out,
+	)
 }
 
 `
@@ -79,16 +82,17 @@ function Init() {
 
 		{Pos: token.Pos{Line: 12, Col: 2}, Type: token.EMIT, Literal: "emit"},
 		{Pos: token.Pos{Line: 12, Col: 6}, Type: token.LPAREN, Literal: "("},
-		{Pos: token.Pos{Line: 12, Col: 7}, Type: token.IDENT, Literal: "alert"},
-		{Pos: token.Pos{Line: 12, Col: 12}, Type: token.COMMA, Literal: ","},
-		{Pos: token.Pos{Line: 12, Col: 14}, Type: token.IDENT, Literal: "out"},
-		{Pos: token.Pos{Line: 12, Col: 17}, Type: token.RPAREN, Literal: ")"},
-		{Pos: token.Pos{Line: 12, Col: 18}, Type: token.NEWLINE, Literal: ""},
+		{Pos: token.Pos{Line: 13, Col: 3}, Type: token.IDENT, Literal: "alert"},
+		{Pos: token.Pos{Line: 13, Col: 8}, Type: token.COMMA, Literal: ","},
+		{Pos: token.Pos{Line: 14, Col: 3}, Type: token.IDENT, Literal: "out"},
+		{Pos: token.Pos{Line: 14, Col: 6}, Type: token.COMMA, Literal: ","},
+		{Pos: token.Pos{Line: 15, Col: 2}, Type: token.RPAREN, Literal: ")"},
+		{Pos: token.Pos{Line: 15, Col: 3}, Type: token.NEWLINE, Literal: ""},
 
-		{Pos: token.Pos{Line: 13, Col: 1}, Type: token.RBRACE, Literal: "}"},
-		{Pos: token.Pos{Line: 13, Col: 2}, Type: token.NEWLINE, Literal: ""},
+		{Pos: token.Pos{Line: 16, Col: 1}, Type: token.RBRACE, Literal: "}"},
+		{Pos: token.Pos{Line: 16, Col: 2}, Type: token.NEWLINE, Literal: ""},
 
-		{Pos: token.Pos{Line: 15, Col: 1}, Type: token.EOF, Literal: ""},
+		{Pos: token.Pos{Line: 18, Col: 1}, Type: token.EOF, Literal: ""},
 	}
 
 	l := lexer.New(src)
@@ -134,6 +138,20 @@ func TestLexer_Simple(t *testing.T) {
 		},
 		{"empty lines",
 			"123 \n\n\n foo ",
+			[]token.TokenType{token.INTEGER, token.NEWLINE, token.IDENT, token.EOF},
+		},
+		{"newline suppressed inside brackets",
+			"(1 +\n2)",
+			[]token.TokenType{token.LPAREN, token.INTEGER, token.PLUS, token.INTEGER, token.RPAREN, token.EOF},
+		},
+		// Tripwire: a stray closer must not underflow depth and swallow newlines
+		// (don't switch bracketDepth back to an unsigned type).
+		{"stray closer keeps newline significant",
+			")\nconst a = 1",
+			[]token.TokenType{token.RPAREN, token.NEWLINE, token.CONST, token.IDENT, token.ASSIGN, token.INTEGER, token.EOF},
+		},
+		{"whitespace-only blank line collapses",
+			"123 \n  \n foo",
 			[]token.TokenType{token.INTEGER, token.NEWLINE, token.IDENT, token.EOF},
 		},
 	}

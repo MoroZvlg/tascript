@@ -5,22 +5,24 @@ import (
 )
 
 type Lexer struct {
-	src        string
-	col        int
-	line       int
-	currCursor int
-	peekCursor int
-	currChar   byte
+	src          string
+	col          int
+	line         int
+	currCursor   int
+	peekCursor   int
+	currChar     byte
+	bracketDepth int
 }
 
 func New(input string) *Lexer {
 	l := &Lexer{
-		src:        input,
-		col:        0,
-		line:       1,
-		currCursor: -1,
-		peekCursor: 0,
-		currChar:   0,
+		src:          input,
+		col:          0,
+		line:         1,
+		currCursor:   -1,
+		peekCursor:   0,
+		currChar:     0,
+		bracketDepth: 0,
 	}
 	l.advance()
 	return l
@@ -60,6 +62,11 @@ func (l *Lexer) NextToken() token.Token {
 			l.skipCommentLine()
 		}
 
+		if l.currChar == '\n' && l.bracketDepth > 0 {
+			l.advance()
+			continue
+		}
+
 		if l.currChar != ' ' && l.currChar != '\t' && l.currChar != '\r' {
 			break
 		}
@@ -69,11 +76,15 @@ func (l *Lexer) NextToken() token.Token {
 
 	if l.currChar == '\n' {
 		pos := l.pos()
-		for { // skip all further newlines and comments
+		for { // collapse consecutive newlines, including blank lines with whitespace
 			l.advance()
 
 			if l.isCommentStart() {
 				l.skipCommentLine()
+			}
+
+			if l.currChar == ' ' || l.currChar == '\t' || l.currChar == '\r' {
+				continue
 			}
 
 			if l.eof() || l.currChar != '\n' {
@@ -177,16 +188,24 @@ func (l *Lexer) NextToken() token.Token {
 			t = token.Token{Pos: pos, Type: token.ILLEGAL, Literal: string(l.currChar)}
 		}
 	case '(':
+		l.bracketDepth++
 		t = token.Token{Pos: l.pos(), Type: token.LPAREN, Literal: "("}
 	case ')':
+		if l.bracketDepth > 0 {
+			l.bracketDepth--
+		}
 		t = token.Token{Pos: l.pos(), Type: token.RPAREN, Literal: ")"}
 	case '{':
 		t = token.Token{Pos: l.pos(), Type: token.LBRACE, Literal: "{"}
 	case '}':
 		t = token.Token{Pos: l.pos(), Type: token.RBRACE, Literal: "}"}
 	case '[':
+		l.bracketDepth++
 		t = token.Token{Pos: l.pos(), Type: token.LBRACKET, Literal: "["}
 	case ']':
+		if l.bracketDepth > 0 {
+			l.bracketDepth--
+		}
 		t = token.Token{Pos: l.pos(), Type: token.RBRACKET, Literal: "]"}
 	case ',':
 		t = token.Token{Pos: l.pos(), Type: token.COMMA, Literal: ","}
