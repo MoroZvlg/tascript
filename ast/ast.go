@@ -35,22 +35,36 @@ type Declaration interface {
 	declarationNode()
 }
 
+type TypeDecl interface {
+	Node
+	typeDeclNode()
+}
+
 // InputDecl
 // - input btc: CandleSeries
 // - input btc: { field: Type, ...}
 type InputDecl struct {
 	Token      token.Token
-	Identifier IdentExpr
-	Type       IdentExpr
+	Identifier *IdentExpr
+	Type       TypeDecl
 }
 
 func (id *InputDecl) String() string {
 	var out bytes.Buffer
 	out.WriteString(id.Token.Literal)
 	out.WriteString(" ")
-	out.WriteString(id.Identifier.String())
+	if id.Identifier == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(id.Identifier.String())
+	}
 	out.WriteString(": ")
-	out.WriteString(id.Type.String())
+
+	if id.Type == nil {
+		out.WriteString("<missing type>")
+	} else {
+		out.WriteString(id.Type.String())
+	}
 	return out.String()
 }
 
@@ -93,10 +107,10 @@ func (cd *ConstDecl) String() string {
 		out.WriteString(cd.Identifier.String())
 	}
 	out.WriteString(" = ")
-	if cd.Value != nil {
-		out.WriteString(cd.Value.String())
-	} else {
+	if cd.Value == nil {
 		out.WriteString("<missing expression>")
+	} else {
+		out.WriteString(cd.Value.String())
 	}
 	return out.String()
 }
@@ -152,6 +166,8 @@ func (ie *IdentExpr) String() string {
 }
 
 func (ie *IdentExpr) expressionNode() {}
+
+func (ie *IdentExpr) typeDeclNode() {}
 
 type IntegerExpr struct {
 	Token token.Token
@@ -246,6 +262,40 @@ func (ma *MemberAccessExpr) String() string {
 }
 
 func (ma *MemberAccessExpr) expressionNode() {}
+
+type TypeExpr struct {
+	Token  token.Token
+	Fields []*FieldExpr
+}
+
+func (te *TypeExpr) String() string {
+	var out bytes.Buffer
+	out.WriteString("{")
+	for i, field := range te.Fields {
+		out.WriteString(field.String())
+		if i < len(te.Fields)-1 {
+			out.WriteString(", ")
+		}
+	}
+	out.WriteString("}")
+	return out.String()
+}
+
+func (te *TypeExpr) typeDeclNode() {}
+
+type FieldExpr struct {
+	Token token.Token
+	Name  *IdentExpr
+	Type  *IdentExpr // TypeDecl to allow nested types. Don't want to support it right now
+}
+
+func (fe *FieldExpr) String() string {
+	var out bytes.Buffer
+	out.WriteString(fe.Name.String())
+	out.WriteString(": ")
+	out.WriteString(fe.Type.String())
+	return out.String()
+}
 
 func IsBadExpr(expression Expression) bool {
 	_, ok := expression.(*BadExpr)

@@ -285,8 +285,197 @@ func TestParser_ParseConstRecovery(t *testing.T) {
 	}
 }
 
+func TestParser_ParseInputSimple(t *testing.T) {
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{"input btc: CandleSeries", "input btc: CandleSeries"},
+		{"input btc: String", "input btc: String"},
+		{"input btc: {foo: Integer}", "input btc: {foo: Integer}"},
+		{"input btc: {foo: Integer, bar: Float}", "input btc: {foo: Integer, bar: Float}"},
+		{"\ninput btc: String\n", "input btc: String"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.Parse()
+			if len(p.Diagnostics()) > 0 {
+				for _, d := range p.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
+			}
+
+			if tt.output != prog.Inputs[0].String() {
+				t.Errorf("expected %s, got %s", tt.output, prog.Inputs[0].String())
+			}
+
+			if !prog.Valid {
+				t.Errorf("expected prog be valid, got false")
+			}
+		})
+	}
+}
+
+func TestParser_Input(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"correct input with type",
+			"input btc: CandleSeries",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"correct input with custom type",
+			"input btc: {foo: Integer}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"correct expr as type",
+			"input btc: ^(1 + 3)",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					expectedTypeOrCustomType(ps[0]),
+				}
+			},
+		},
+		{
+			"empty custom type",
+			"input btc: ^{}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					emptyCustomType(ps[0]),
+				}
+			},
+		},
+		{
+			"missing colon",
+			"input btc: {btc ^btc}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.COLON, token.IDENT),
+				}
+			},
+		},
+		{
+			"missing ident",
+			"input btc: {^:btc}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.COLON),
+				}
+			},
+		},
+		{
+			"missing type",
+			"input btc: {btc:^}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.RBRACE),
+				}
+			},
+		},
+		{
+			"missing right brace",
+			"input btc: {btc: btc^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RBRACE, token.EOF),
+				}
+			},
+		},
+		{
+			// TODO: arguable error type... looks like missing `{` but parser see Ident and think it's a builtin Type usage
+			// making logic more complicated looks like overengineering
+			"missing left brace",
+			"input btc: btc^: btc}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.NEWLINE, token.COLON),
+				}
+			},
+		},
+		{
+			"missing type declaration",
+			"input btc: ^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					expectedTypeOrCustomType(ps[0]),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input, pos := extractErrorsPos(tt.input)
+			expected := tt.buildDiags(pos)
+			l := lexer.New(input)
+			p := parser.New(l)
+			prog := p.Parse()
+
+			got := p.Diagnostics()
+			if len(got) != len(expected) {
+				for i, d := range got {
+					t.Logf("got[%d] %+v", i, d)
+				}
+				t.Fatalf("diag count: got %d, want %d", len(got), len(expected))
+			}
+
+			if diffs := cmp.Diff(expected, got); diffs != "" && len(expected) > 0 {
+				t.Errorf("diagnostics mismatch (-want +got):\n%s", diffs)
+			}
+
+			if len(expected) > 0 && prog.Valid {
+				t.Errorf("expected prog be invalid, got true")
+			}
+		})
+	}
+}
+
+func TestParser_ParseInputRecovery(t *testing.T) {
+	src := "input btc: {}\n input eth: String\ninput sol: {value: Integer}"
+	l := lexer.New(src)
+	p := parser.New(l)
+	prog := p.Parse()
+
+	got := p.Diagnostics()
+	if len(got) != 1 {
+		for i, d := range got {
+			t.Logf("got[%d] %+v", i, d)
+		}
+		t.Fatalf("expected 1 error, got %d", len(got))
+	}
+
+	if prog.Valid {
+		t.Errorf("expected prog be invalid, got true")
+	}
+
+	if len(prog.Inputs) != 2 {
+		t.Fatalf("expected 2 inputs parsed after recovery, got %d", len(prog.Consts))
+	}
+}
+
 func unexpectedErr(pos token.Pos, expected, got token.TokenType) *diag.UnexpectedToken {
 	return &diag.UnexpectedToken{Phase: diag.PhaseParse, Pos: pos, Expected: expected, Got: got}
+}
+
+func expectedTypeOrCustomType(pos token.Pos) *diag.TypeOrCustomTypeExpected {
+	return &diag.TypeOrCustomTypeExpected{Phase: diag.PhaseParse, Pos: pos}
+}
+
+func emptyCustomType(pos token.Pos) *diag.EmptyCustomType {
+	return &diag.EmptyCustomType{Phase: diag.PhaseParse, Pos: pos}
 }
 
 func exprExpectedErr(pos token.Pos, got token.TokenType) *diag.ExpressionExpected {

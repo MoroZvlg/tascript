@@ -79,7 +79,10 @@ func (p *Parser) Parse() *ast.Program {
 				prog.Consts = append(prog.Consts, decl)
 			}
 		case token.INPUT:
-			p.addNotImplemented(p.currentToken.Pos, "inputDecl")
+			decl := p.parseInputDecl()
+			if len(p.errors) == errsBefore {
+				prog.Inputs = append(prog.Inputs, decl)
+			}
 		case token.OUTPUT:
 			p.addNotImplemented(p.currentToken.Pos, "outputDecl")
 		case token.FUNCTION:
@@ -98,6 +101,42 @@ func (p *Parser) Parse() *ast.Program {
 		p.nextToken()
 	}
 	return prog
+}
+
+func (p *Parser) parseInputDecl() *ast.InputDecl {
+	decl := &ast.InputDecl{Token: p.currentToken}
+
+	p.nextToken()
+
+	if p.currTokenIs(token.IDENT) {
+		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
+		p.nextToken()
+	} else {
+		p.addUnexpectedToken(p.currentToken, token.IDENT)
+	}
+
+	if p.currTokenIs(token.COLON) {
+		p.nextToken()
+	} else {
+		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
+		if decl.Identifier != nil {
+			p.addUnexpectedToken(p.currentToken, token.COLON)
+		}
+		return decl
+	}
+
+	switch p.currentToken.Type {
+	case token.IDENT:
+		decl.Type = &ast.IdentExpr{Token: p.currentToken}
+	case token.LBRACE:
+		decl.Type = p.parseCustomTypeDecl()
+	default:
+		p.errors = append(p.errors, &diag.TypeOrCustomTypeExpected{
+			Phase: diag.PhaseParse,
+			Pos:   p.currentToken.Pos,
+		})
+	}
+	return decl
 }
 
 func (p *Parser) parseConstDecl() *ast.ConstDecl {
@@ -125,6 +164,64 @@ func (p *Parser) parseConstDecl() *ast.ConstDecl {
 		}
 	}
 	decl.Value = p.parseExpression(LowestPrec)
+	return decl
+}
+
+func (p *Parser) parseCustomTypeDecl() *ast.TypeExpr {
+	decl := &ast.TypeExpr{
+		Token:  p.currentToken,
+		Fields: make([]*ast.FieldExpr, 0),
+	}
+
+	if p.peekTokenIs(token.RBRACE) {
+		p.nextToken()
+		p.errors = append(p.errors, &diag.EmptyCustomType{
+			Phase: diag.PhaseParse,
+			Pos:   decl.Token.Pos,
+		})
+		return decl
+	}
+
+	for {
+		if !p.peekTokenIs(token.IDENT) {
+			p.addUnexpectedToken(p.peekToken, token.IDENT)
+			break
+		}
+		p.nextToken()
+		field := &ast.FieldExpr{
+			Token: p.currentToken,
+			Name:  &ast.IdentExpr{Token: p.currentToken},
+		}
+
+		if !p.peekTokenIs(token.COLON) {
+			p.addUnexpectedToken(p.peekToken, token.COLON)
+			break
+		}
+		p.nextToken()
+
+		if !p.peekTokenIs(token.IDENT) {
+			p.addUnexpectedToken(p.peekToken, token.IDENT)
+			break
+		}
+		p.nextToken()
+		field.Type = &ast.IdentExpr{Token: p.currentToken}
+
+		decl.Fields = append(decl.Fields, field)
+
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken()
+			continue
+		}
+
+		if p.peekTokenIs(token.RBRACE) {
+			p.nextToken()
+			break
+		}
+
+		p.addUnexpectedToken(p.peekToken, token.RBRACE)
+		break
+	}
+
 	return decl
 }
 

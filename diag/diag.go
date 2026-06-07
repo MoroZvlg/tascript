@@ -58,3 +58,21 @@ type ParseFailed struct {
 func (pf ParseFailed) Error() string {
 	return fmt.Sprintf("%s [PARSE_FAILED] %s: failed to parse %s", pf.Phase, pf.Pos.String(), pf.Target)
 }
+
+type TypeOrCustomTypeExpected struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (te TypeOrCustomTypeExpected) Error() string {
+	return fmt.Sprintf("%s [TYPE_OR_CUSTOM_TYPE_EXPECTED] %s: type or custom type expected", te.Phase, te.Pos.String())
+}
+
+type EmptyCustomType struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (et EmptyCustomType) Error() string {
+	return fmt.Sprintf("%s [EMPTY_CUSTOM_TYPE] %s: custom type should contain at least 1 field", et.Phase, et.Pos.String())
+}
