@@ -9,6 +9,7 @@ import (
 	"github.com/MoroZvlg/tascript/parser"
 	"github.com/MoroZvlg/tascript/token"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestParser_ParseConstSimple(t *testing.T) {
@@ -237,27 +238,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			input, pos := extractErrorsPos(tt.input)
-			expected := tt.buildDiags(pos)
-			l := lexer.New(input)
-			p := parser.New(l)
-			prog := p.Parse()
-
-			got := p.Diagnostics()
-			if len(got) != len(expected) {
-				for i, d := range got {
-					t.Logf("got[%d] %+v", i, d)
-				}
-				t.Fatalf("diag count: got %d, want %d", len(got), len(expected))
-			}
-
-			if diffs := cmp.Diff(expected, got); diffs != "" {
-				t.Errorf("diagnostics mismatch (-want +got):\n%s", diffs)
-			}
-
-			if prog.Valid {
-				t.Errorf("expected prog be invalid, got true")
-			}
+			runDiagCases(t, tt.input, tt.buildDiags)
 		})
 	}
 }
@@ -295,6 +276,8 @@ func TestParser_ParseInputSimple(t *testing.T) {
 		{"input btc: {foo: Integer}", "input btc: {foo: Integer}"},
 		{"input btc: {foo: Integer, bar: Float}", "input btc: {foo: Integer, bar: Float}"},
 		{"\ninput btc: String\n", "input btc: String"},
+		// newlines inside {} are whitespace, not separators: multi-line parses like one line
+		{"input btc: {\n foo: Integer,\n bar: Float\n}", "input btc: {foo: Integer, bar: Float}"},
 	}
 
 	for _, tt := range tests {
@@ -414,31 +397,41 @@ func TestParser_Input(t *testing.T) {
 				}
 			},
 		},
+		{
+			// a trailing comma reopens the field loop, which then demands another field
+			"trailing comma in custom type",
+			"input btc: {foo: Integer,^}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.RBRACE),
+				}
+			},
+		},
+		{
+			// keywords are not IDENT, so they can't be used as field names
+			"keyword as field name",
+			"input btc: {^const: Integer}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.CONST),
+				}
+			},
+		},
+		{
+			// a newline does not separate fields; without a comma the next field is unexpected
+			"missing comma between fields",
+			"input btc: {foo: Integer ^bar: Float}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RBRACE, token.IDENT),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			input, pos := extractErrorsPos(tt.input)
-			expected := tt.buildDiags(pos)
-			l := lexer.New(input)
-			p := parser.New(l)
-			prog := p.Parse()
-
-			got := p.Diagnostics()
-			if len(got) != len(expected) {
-				for i, d := range got {
-					t.Logf("got[%d] %+v", i, d)
-				}
-				t.Fatalf("diag count: got %d, want %d", len(got), len(expected))
-			}
-
-			if diffs := cmp.Diff(expected, got); diffs != "" && len(expected) > 0 {
-				t.Errorf("diagnostics mismatch (-want +got):\n%s", diffs)
-			}
-
-			if len(expected) > 0 && prog.Valid {
-				t.Errorf("expected prog be invalid, got true")
-			}
+			runDiagCases(t, tt.input, tt.buildDiags)
 		})
 	}
 }
@@ -504,6 +497,35 @@ func extractErrorsPos(input string) (string, []token.Pos) {
 		}
 	}
 	return string(out), pos
+}
+
+// runDiagCases parses input (with ^ markers stripped to positions), then asserts the parser's
+// diagnostics match what buildDiags(positions) returns. When any diagnostic is expected, the
+// program must also be marked invalid. Empty vs nil diagnostic slices compare equal.
+func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []diag.Diagnostic) {
+	t.Helper()
+	src, pos := extractErrorsPos(input)
+	expected := buildDiags(pos)
+
+	l := lexer.New(src)
+	p := parser.New(l)
+	prog := p.Parse()
+
+	got := p.Diagnostics()
+	if len(got) != len(expected) {
+		for i, d := range got {
+			t.Logf("got[%d] %+v", i, d)
+		}
+		t.Fatalf("diag count: got %d, want %d", len(got), len(expected))
+	}
+
+	if diff := cmp.Diff(expected, got, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("diagnostics mismatch (-want +got):\n%s", diff)
+	}
+
+	if len(expected) > 0 && prog.Valid {
+		t.Errorf("expected prog be invalid, got true")
+	}
 }
 
 // Program-level recovery: a junk top-level token must not drop the following good const

@@ -131,10 +131,7 @@ func (p *Parser) parseInputDecl() *ast.InputDecl {
 	case token.LBRACE:
 		decl.Type = p.parseCustomTypeDecl()
 	default:
-		p.errors = append(p.errors, &diag.TypeOrCustomTypeExpected{
-			Phase: diag.PhaseParse,
-			Pos:   p.currentToken.Pos,
-		})
+		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
 	}
 	return decl
 }
@@ -172,17 +169,17 @@ func (p *Parser) parseCustomTypeDecl() *ast.TypeExpr {
 		Token:  p.currentToken,
 		Fields: make([]*ast.FieldExpr, 0),
 	}
+	p.skipPeekNewLines()
 
 	if p.peekTokenIs(token.RBRACE) {
 		p.nextToken()
-		p.errors = append(p.errors, &diag.EmptyCustomType{
-			Phase: diag.PhaseParse,
-			Pos:   decl.Token.Pos,
-		})
+		p.addEmptyCustomType(decl.Token.Pos)
 		return decl
 	}
 
 	for {
+		p.skipPeekNewLines()
+
 		if !p.peekTokenIs(token.IDENT) {
 			p.addUnexpectedToken(p.peekToken, token.IDENT)
 			break
@@ -212,6 +209,8 @@ func (p *Parser) parseCustomTypeDecl() *ast.TypeExpr {
 			p.nextToken()
 			continue
 		}
+
+		p.skipPeekNewLines()
 
 		if p.peekTokenIs(token.RBRACE) {
 			p.nextToken()
@@ -346,6 +345,12 @@ func (p *Parser) syncToNewLine() {
 	}
 }
 
+func (p *Parser) skipPeekNewLines() {
+	for p.peekTokenIs(token.NEWLINE) {
+		p.nextToken()
+	}
+}
+
 func (p *Parser) addExpressionExpected(tok token.Token) {
 	p.errors = append(p.errors, &diag.ExpressionExpected{
 		Phase: diag.PhaseParse,
@@ -376,6 +381,20 @@ func (p *Parser) addParseFailed(pos token.Pos, target token.TokenType, _ error) 
 		Phase:  diag.PhaseParse,
 		Pos:    pos,
 		Target: target,
+	})
+}
+
+func (p *Parser) addTypeOrCustomTypeExpected(pos token.Pos) {
+	p.errors = append(p.errors, &diag.TypeOrCustomTypeExpected{
+		Phase: diag.PhaseParse,
+		Pos:   pos,
+	})
+}
+
+func (p *Parser) addEmptyCustomType(pos token.Pos) {
+	p.errors = append(p.errors, &diag.EmptyCustomType{
+		Phase: diag.PhaseParse,
+		Pos:   pos,
 	})
 }
 
