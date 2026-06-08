@@ -84,7 +84,10 @@ func (p *Parser) Parse() *ast.Program {
 				prog.Inputs = append(prog.Inputs, decl)
 			}
 		case token.OUTPUT:
-			p.addNotImplemented(p.currentToken.Pos, "outputDecl")
+			decl := p.parseOutputDecl()
+			if len(p.errors) == errsBefore {
+				prog.Outputs = append(prog.Outputs, decl)
+			}
 		case token.FUNCTION:
 			p.addNotImplemented(p.currentToken.Pos, "functionDecl")
 		default:
@@ -105,6 +108,39 @@ func (p *Parser) Parse() *ast.Program {
 
 func (p *Parser) parseInputDecl() *ast.InputDecl {
 	decl := &ast.InputDecl{Token: p.currentToken}
+
+	p.nextToken()
+
+	if p.currTokenIs(token.IDENT) {
+		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
+		p.nextToken()
+	} else {
+		p.addUnexpectedToken(p.currentToken, token.IDENT)
+	}
+
+	if p.currTokenIs(token.COLON) {
+		p.nextToken()
+	} else {
+		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
+		if decl.Identifier != nil {
+			p.addUnexpectedToken(p.currentToken, token.COLON)
+		}
+		return decl
+	}
+
+	switch p.currentToken.Type {
+	case token.IDENT:
+		decl.Type = &ast.IdentExpr{Token: p.currentToken}
+	case token.LBRACE:
+		decl.Type = p.parseCustomTypeDecl()
+	default:
+		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
+	}
+	return decl
+}
+
+func (p *Parser) parseOutputDecl() *ast.OutputDecl {
+	decl := &ast.OutputDecl{Token: p.currentToken}
 
 	p.nextToken()
 

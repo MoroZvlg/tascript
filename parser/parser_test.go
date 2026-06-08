@@ -459,6 +459,199 @@ func TestParser_ParseInputRecovery(t *testing.T) {
 	}
 }
 
+func TestParser_ParseOutputSimple(t *testing.T) {
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{"output alert: String", "output alert: String"},
+		{"output alert: Signal", "output alert: Signal"},
+		{"output alert: {foo: Integer}", "output alert: {foo: Integer}"},
+		{"output alert: {foo: Integer, bar: Float}", "output alert: {foo: Integer, bar: Float}"},
+		{"\noutput alert: String\n", "output alert: String"},
+		// newlines inside {} are whitespace, not separators: multi-line parses like one line
+		{"output alert: {\n foo: Integer,\n bar: Float\n}", "output alert: {foo: Integer, bar: Float}"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			prog := p.Parse()
+			if len(p.Diagnostics()) > 0 {
+				for _, d := range p.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
+			}
+
+			if tt.output != prog.Outputs[0].String() {
+				t.Errorf("expected %s, got %s", tt.output, prog.Outputs[0].String())
+			}
+
+			if !prog.Valid {
+				t.Errorf("expected prog be valid, got false")
+			}
+		})
+	}
+}
+
+func TestParser_Output(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"correct output with type",
+			"output alert: String",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"correct output with custom type",
+			"output alert: {foo: Integer}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"correct expr as type",
+			"output alert: ^(1 + 3)",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					expectedTypeOrCustomType(ps[0]),
+				}
+			},
+		},
+		{
+			"empty custom type",
+			"output alert: ^{}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					emptyCustomType(ps[0]),
+				}
+			},
+		},
+		{
+			"missing colon",
+			"output alert: {alert ^alert}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.COLON, token.IDENT),
+				}
+			},
+		},
+		{
+			"missing ident",
+			"output alert: {^:alert}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.COLON),
+				}
+			},
+		},
+		{
+			"missing type",
+			"output alert: {alert:^}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.RBRACE),
+				}
+			},
+		},
+		{
+			"missing right brace",
+			"output alert: {alert: alert^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RBRACE, token.EOF),
+				}
+			},
+		},
+		{
+			// TODO: arguable error type... looks like missing `{` but parser see Ident and think it's a builtin Type usage
+			// making logic more complicated looks like overengineering
+			"missing left brace",
+			"output alert: alert^: alert}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.NEWLINE, token.COLON),
+				}
+			},
+		},
+		{
+			"missing type declaration",
+			"output alert: ^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					expectedTypeOrCustomType(ps[0]),
+				}
+			},
+		},
+		{
+			// a trailing comma reopens the field loop, which then demands another field
+			"trailing comma in custom type",
+			"output alert: {foo: Integer,^}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.RBRACE),
+				}
+			},
+		},
+		{
+			// keywords are not IDENT, so they can't be used as field names
+			"keyword as field name",
+			"output alert: {^const: Integer}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.CONST),
+				}
+			},
+		},
+		{
+			// a newline does not separate fields; without a comma the next field is unexpected
+			"missing comma between fields",
+			"output alert: {foo: Integer ^bar: Float}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RBRACE, token.IDENT),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input, tt.buildDiags)
+		})
+	}
+}
+
+func TestParser_ParseOutputRecovery(t *testing.T) {
+	src := "output a: {}\n output b: String\noutput c: {value: Integer}"
+	l := lexer.New(src)
+	p := parser.New(l)
+	prog := p.Parse()
+
+	got := p.Diagnostics()
+	if len(got) != 1 {
+		for i, d := range got {
+			t.Logf("got[%d] %+v", i, d)
+		}
+		t.Fatalf("expected 1 error, got %d", len(got))
+	}
+
+	if prog.Valid {
+		t.Errorf("expected prog be invalid, got true")
+	}
+
+	if len(prog.Outputs) != 2 {
+		t.Fatalf("expected 2 outputs parsed after recovery, got %d", len(prog.Outputs))
+	}
+}
+
 func unexpectedErr(pos token.Pos, expected, got token.TokenType) *diag.UnexpectedToken {
 	return &diag.UnexpectedToken{Phase: diag.PhaseParse, Pos: pos, Expected: expected, Got: got}
 }

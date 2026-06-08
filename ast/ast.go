@@ -75,17 +75,26 @@ func (id *InputDecl) declarationNode() {}
 // - output alert: { field: Type }
 type OutputDecl struct {
 	Token      token.Token
-	Identifier IdentExpr
-	Type       IdentExpr
+	Identifier *IdentExpr
+	Type       TypeDecl
 }
 
 func (od *OutputDecl) String() string {
 	var out bytes.Buffer
 	out.WriteString(od.Token.Literal)
 	out.WriteString(" ")
-	out.WriteString(od.Identifier.String())
+	if od.Identifier == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(od.Identifier.String())
+	}
 	out.WriteString(": ")
-	out.WriteString(od.Type.String())
+
+	if od.Type == nil {
+		out.WriteString("<missing type>")
+	} else {
+		out.WriteString(od.Type.String())
+	}
 	return out.String()
 }
 
