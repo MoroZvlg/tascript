@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -652,6 +653,431 @@ func TestParser_ParseOutputRecovery(t *testing.T) {
 	}
 }
 
+func TestParser_ParseFunc(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"missing ident",
+			"function ^() {^}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.LPAREN),
+					emptyFuncErr(ps[1]),
+				}
+			},
+		},
+		{
+			"missing (",
+			"function Init^) {}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.LPAREN, token.RPAREN),
+				}
+			},
+		},
+		{
+			"missing )",
+			"function Init(^{}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RPAREN, token.LBRACE),
+				}
+			},
+		},
+		{
+			"missing ()",
+			"function Init^{}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.LPAREN, token.LBRACE),
+				}
+			},
+		},
+		{
+			"missing iden and (",
+			"function ^){^}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.RPAREN),
+					emptyFuncErr(ps[1]),
+				}
+			},
+		},
+		{
+			"just keyword",
+			"function^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.EOF),
+				}
+			},
+		},
+		{
+			"with trailing tokens",
+			"function Init() {}^3",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.NEWLINE, token.INTEGER),
+				}
+			},
+		},
+		{
+			"missing {",
+			"function Init() ^}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.LBRACE, token.RBRACE),
+				}
+			},
+		},
+		{
+			"trailing token after function end",
+			"function Run() {let a = 3}^3",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.NEWLINE, token.INTEGER),
+				}
+			},
+		},
+		{
+			"empty Init(allowed)",
+			"function Init() {}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"unclosed body reports missing }",
+			"function Run() {let a = 3^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RBRACE, token.EOF),
+				}
+			},
+		},
+		{
+			// unclosed empty body: missing } wins, not the empty-body error
+			"unclosed empty Init reports missing }",
+			"function Init() {^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RBRACE, token.EOF),
+				}
+			},
+		},
+		{
+			"empty Run",
+			"function Run() {^}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					emptyFuncErr(ps[0]),
+				}
+			},
+		},
+		{
+			"forbidden func name",
+			"function ^MyFunction() ^{}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					forbiddenFuncErr(ps[0]),
+				}
+			},
+		},
+		{
+			"correct Run",
+			"function Run() {let a = 3}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input, tt.buildDiags)
+		})
+	}
+}
+
+func TestParser_ParseFuncBlockSimple(t *testing.T) {
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{"let foo = 5", "let foo = 5"},
+		{"foo.bar()", "foo.bar()"},
+		{"foo.bar(2)", "foo.bar(2)"},
+		{"foo.bar((2+5))", "foo.bar((2 + 5))"},
+		{"foo.bar(key=value)", "foo.bar(key = value)"},
+		{"foo.bar(2, key=value)", "foo.bar(2, key = value)"},
+		{"foo.bar((2+5), key=value)", "foo.bar((2 + 5), key = value)"},
+		{"foo.bar((2+5), key=(3+5))", "foo.bar((2 + 5), key = (3 + 5))"},
+		{"foo.bar(\n(2+5), \nkey=(3+5)\n)", "foo.bar((2 + 5), key = (3 + 5))"},
+		{"emit(foo)", "emit(foo)"},
+		{`emit(foo, "bar")`, `emit(foo, "bar")`},
+		{"emit(foo, bar=value)", "emit(foo, bar = value)"},
+		{"emit(\nfoo, \nbar=value\n)", "emit(foo, bar = value)"},
+		{"if (a) {\nlet b = 3\n}", "if (a) {\nlet b = 3\n}"},
+		{"if (a) {\nlet b = 3\nlet c = 4\n}", "if (a) {\nlet b = 3\nlet c = 4\n}"},
+		{"if (a > b) {\nlet c = 3\n}", "if ((a > b)) {\nlet c = 3\n}"},
+		{"if (a) {\nlet b = 3\n} else {\nlet c = 4\n}", "if (a) {\nlet b = 3\n} else {\nlet c = 4\n}"},
+		{"if (a) {\nlet b = 3\n} else if (c) {\nlet d = 4\n}", "if (a) {\nlet b = 3\n} else if (c) {\nlet d = 4\n}"},
+		{"if (a) {\nif (b) {\nlet c = 3\n}\n}", "if (a) {\nif (b) {\nlet c = 3\n}\n}"},
+		// newlines are suppressed inside (), so a multi-line condition parses fine
+		{"if (a &&\nb) {\nlet c = 3\n}", "if ((a && b)) {\nlet c = 3\n}"},
+		// bare assignment (reassignment of an existing binding, no `let`)
+		{"x = 5", "x = 5"},
+		{"uptrend = a > b", "uptrend = (a > b)"},
+		// member-target assignment
+		{"state.cooldown = 0", "state.cooldown = 0"},
+		{"state.cooldown = math.max(0, state.cooldown - 1)", "state.cooldown = math.max(0, (state.cooldown - 1))"},
+		// empty else block still renders (gated on the else token, not the slice)
+		{"if (a) {} else {}", "if (a) {} else {}"},
+		// index (history) access
+		{"foo[1]", "foo[1]"},
+		{"foo[i + 1]", "foo[(i + 1)]"},
+		{"close[1] > close[2]", "(close[1] > close[2])"},
+		{"foo.bar[1]", "foo.bar[1]"},
+		{"foo[0].bar", "foo[0].bar"},
+		{"foo[bar[0]]", "foo[bar[0]]"},
+		{"foo[0][1]", "foo[0][1]"},
+		{"sma(candles, 14)[0]", "sma(candles, 14)[0]"},
+		{"foo()[0].bar", "foo()[0].bar"},
+		{`state["my key"]`, `state["my key"]`},
+		{"foo[\ni + 1\n]", "foo[(i + 1)]"},
+		{"foo[1] * 2", "(foo[1] * 2)"},
+		{"-close[1]", "-close[1]"},
+		// index target assignment (assignability is the analyzer's call)
+		{"foo[0] = 5", "foo[0] = 5"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			input := fmt.Sprintf("function Run() {\n %s \n}", tt.input)
+			l := lexer.New(input)
+			p := parser.New(l)
+			prog := p.Parse()
+			if len(p.Diagnostics()) > 0 {
+				for _, d := range p.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
+			}
+
+			if tt.output != prog.RunFn.Body.Stmts[0].String() {
+				t.Errorf("expected %s, got %s", tt.output, prog.RunFn.Body.Stmts[0].String())
+			}
+
+			if !prog.Valid {
+				t.Errorf("expected prog be valid, got false")
+			}
+		})
+	}
+}
+
+func TestParser_ParseFuncBody(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"call expr",
+			"let foo = math.pow(2)",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"missing ident",
+			"let ^= 3",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.ASSIGN),
+				}
+			},
+		},
+		{
+			"missing expression",
+			"let foo =^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.NEWLINE),
+				}
+			},
+		},
+		{
+			"member method missing",
+			"foo.^(2)\n2",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.LPAREN),
+				}
+			},
+		},
+		{
+			"member ) in call expr",
+			"foo.bar(2 ^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					// NOTE: error on next line after input
+					unexpectedErr(token.Pos{Line: 3, Col: 1}, token.RPAREN, token.RBRACE),
+				}
+			},
+		},
+		{
+			"missing new line between statements",
+			"foo.bar ^foo.bar",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.NEWLINE, token.IDENT),
+				}
+			},
+		},
+		{
+			"if missing (",
+			"if ^a) {}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.LPAREN, token.IDENT),
+				}
+			},
+		},
+		{
+			"if missing )",
+			"if (a ^{}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RPAREN, token.LBRACE),
+				}
+			},
+		},
+		{
+			"if missing {",
+			"if (a) ^x",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.LBRACE, token.IDENT),
+				}
+			},
+		},
+		{
+			"if empty condition",
+			"if (^) {}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.RPAREN),
+				}
+			},
+		},
+		{
+			"else without block",
+			"if (a) {} else ^x",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.LBRACE, token.IDENT),
+				}
+			},
+		},
+		{
+			"bad statement inside if body recovers",
+			"if (a) {\nlet ^= 3\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.ASSIGN),
+				}
+			},
+		},
+		{
+			// keep-partial: a broken condition must NOT hide the body error
+			"if bad condition and bad body in one pass",
+			"if (^) {\nlet ^= 3\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.RPAREN),
+					unexpectedErr(ps[1], token.IDENT, token.ASSIGN),
+				}
+			},
+		},
+		{
+			"assignment missing rhs",
+			"x =^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.NEWLINE),
+				}
+			},
+		},
+		{
+			"index empty subscript",
+			"foo[^]",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.RBRACKET),
+				}
+			},
+		},
+		{
+			// newlines are suppressed inside [], so the missing ] is reported on the next line
+			"index missing ]",
+			"foo[1 ^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(token.Pos{Line: 3, Col: 1}, token.RBRACKET, token.RBRACE),
+				}
+			},
+		},
+		{
+			"index bad subscript",
+			"foo[^#]",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.ILLEGAL),
+				}
+			},
+		},
+		{
+			"index trailing infix",
+			"foo[1 + ^]",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.RBRACKET),
+				}
+			},
+		},
+		{
+			"index comma expression",
+			"foo[1^, 2]",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.RBRACKET, token.COMMA),
+				}
+			},
+		},
+		{
+			// two broken statements in the same block both report
+			"two bad statements in one block",
+			"let ^= 3\nlet ^= 4",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.ASSIGN),
+					unexpectedErr(ps[1], token.IDENT, token.ASSIGN),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := fmt.Sprintf("function Run() {\n%s\n}", tt.input)
+			runDiagCases(t, input, tt.buildDiags)
+		})
+	}
+}
+
 func unexpectedErr(pos token.Pos, expected, got token.TokenType) *diag.UnexpectedToken {
 	return &diag.UnexpectedToken{Phase: diag.PhaseParse, Pos: pos, Expected: expected, Got: got}
 }
@@ -670,6 +1096,14 @@ func exprExpectedErr(pos token.Pos, got token.TokenType) *diag.ExpressionExpecte
 
 func parseFailedErr(pos token.Pos, target token.TokenType) *diag.ParseFailed {
 	return &diag.ParseFailed{Phase: diag.PhaseParse, Pos: pos, Target: target}
+}
+
+func emptyFuncErr(pos token.Pos) *diag.EmptyFunctionBody {
+	return &diag.EmptyFunctionBody{Phase: diag.PhaseParse, Pos: pos}
+}
+
+func forbiddenFuncErr(pos token.Pos) *diag.ForbiddenFunc {
+	return &diag.ForbiddenFunc{Phase: diag.PhaseParse, Pos: pos}
 }
 
 func extractErrorsPos(input string) (string, []token.Pos) {

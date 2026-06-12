@@ -76,3 +76,30 @@ type EmptyCustomType struct {
 func (et EmptyCustomType) Error() string {
 	return fmt.Sprintf("%s [EMPTY_CUSTOM_TYPE] %s: custom type should contain at least 1 field", et.Phase, et.Pos.String())
 }
+
+type ForbiddenFunc struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (ff ForbiddenFunc) Error() string {
+	return fmt.Sprintf("%s [FORBIDDEN_FUNCTION] %s: only Init and Run functions are allowed", ff.Phase, ff.Pos.String())
+}
+
+type EmptyFunctionBody struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (ef EmptyFunctionBody) Error() string {
+	return fmt.Sprintf("%s [EMPTY_FUNCTION] %s: Run function is empty", ef.Phase, ef.Pos.String())
+}
+
+type ArgsOrder struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (ao ArgsOrder) Error() string {
+	return fmt.Sprintf("%s [ARGS_ORDER] %s: args after kwargs not allowed", ao.Phase, ao.Pos.String())
+}

@@ -130,16 +130,20 @@ func (cd *ConstDecl) declarationNode() {}
 // - function Init() {}
 type FunctionDecl struct {
 	Token      token.Token
-	Identifier IdentExpr
+	Identifier *IdentExpr
 	// we don't have params for now
 	//Parameters []*Identifier
-	Body []Statement
+	Body *BlockStmt
 }
 
 func (fd *FunctionDecl) String() string {
 	var out bytes.Buffer
 	out.WriteString("function ")
-	out.WriteString(fd.Identifier.String())
+	if fd.Identifier == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(fd.Identifier.String())
+	}
 	out.WriteString("(")
 	//for i, param := range fd.Parameters {
 	//	out.WriteString(param.String())
@@ -148,8 +152,8 @@ func (fd *FunctionDecl) String() string {
 	//	}
 	//}
 	out.WriteString(") ")
-	for _, stmt := range fd.Body {
-		out.WriteString(stmt.String())
+	if fd.Body != nil {
+		out.WriteString(fd.Body.String())
 	}
 	return out.String()
 }
@@ -272,6 +276,72 @@ func (ma *MemberAccessExpr) String() string {
 
 func (ma *MemberAccessExpr) expressionNode() {}
 
+type IndexExpr struct {
+	Token token.Token
+	Left  Expression
+	Index Expression
+}
+
+func (ie *IndexExpr) String() string {
+	var out bytes.Buffer
+	out.WriteString(ie.Left.String())
+	out.WriteString("[")
+	out.WriteString(ie.Index.String())
+	out.WriteString("]")
+	return out.String()
+}
+
+func (ie *IndexExpr) expressionNode() {}
+
+type CallExpr struct {
+	Token  token.Token
+	Callee Expression
+	Args   []Expression
+	Kwargs []*KwargsExpr
+}
+
+func (ce *CallExpr) String() string {
+	var out bytes.Buffer
+	out.WriteString(ce.Callee.String())
+	out.WriteString("(")
+	for i, arg := range ce.Args {
+		out.WriteString(arg.String())
+		if i < len(ce.Args)-1 || len(ce.Kwargs) > 0 {
+			out.WriteString(", ")
+		}
+	}
+	for i, kwarg := range ce.Kwargs {
+		out.WriteString(kwarg.String())
+		if i < len(ce.Kwargs)-1 {
+			out.WriteString(", ")
+		}
+	}
+	out.WriteString(")")
+	return out.String()
+}
+
+func (ce *CallExpr) expressionNode() {}
+
+type KwargsExpr struct {
+	Token token.Token
+	Key   *IdentExpr
+	Value Expression
+}
+
+func (ke *KwargsExpr) String() string {
+	var out bytes.Buffer
+	out.WriteString(ke.Key.String())
+	out.WriteString(" = ")
+	if ke.Value == nil {
+		out.WriteString("<missing expression>")
+	} else {
+		out.WriteString(ke.Value.String())
+	}
+	return out.String()
+}
+
+func (ke *KwargsExpr) expressionNode() {}
+
 type TypeExpr struct {
 	Token  token.Token
 	Fields []*FieldExpr
@@ -305,6 +375,138 @@ func (fe *FieldExpr) String() string {
 	out.WriteString(fe.Type.String())
 	return out.String()
 }
+
+type LetStmt struct {
+	Token token.Token
+	Name  *IdentExpr
+	Value Expression
+}
+
+func (ls *LetStmt) String() string {
+	var out bytes.Buffer
+	out.WriteString("let ")
+	if ls.Name == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(ls.Name.String())
+	}
+	out.WriteString(" = ")
+	if ls.Value == nil {
+		out.WriteString("<missing expression>")
+	} else {
+		out.WriteString(ls.Value.String())
+	}
+	return out.String()
+}
+
+func (ls *LetStmt) statementNode() {}
+
+type AssignStmt struct {
+	Token  token.Token // the `=`
+	Target Expression
+	Value  Expression
+}
+
+func (as *AssignStmt) String() string {
+	var out bytes.Buffer
+	if as.Target == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(as.Target.String())
+	}
+	out.WriteString(" = ")
+	if as.Value == nil {
+		out.WriteString("<missing expression>")
+	} else {
+		out.WriteString(as.Value.String())
+	}
+	return out.String()
+}
+
+func (as *AssignStmt) statementNode() {}
+
+// BadStmt is a placeholder kept in the tree when a statement is too broken to
+// form a meaningful partial node. It preserves the source span so later passes
+// (tooling, analyzer) keep working over recovered code. See [IsBadExpr] for the
+// expression-level analogue.
+type BadStmt struct {
+	From token.Pos
+	To   token.Pos
+}
+
+func (bs *BadStmt) String() string { return "<bad statement>" }
+
+func (bs *BadStmt) statementNode() {}
+
+type ExprStmt struct {
+	Token token.Token
+	Expr  Expression
+}
+
+func (es *ExprStmt) String() string {
+	if es.Expr != nil {
+		return es.Expr.String()
+	}
+	return "<missing expression>"
+}
+
+func (es *ExprStmt) statementNode() {}
+
+type BlockStmt struct {
+	Token token.Token
+	Stmts []Statement
+}
+
+func (bs *BlockStmt) String() string {
+	var out bytes.Buffer
+	out.WriteString("{")
+	if len(bs.Stmts) > 0 {
+		out.WriteString("\n")
+	}
+	for i, stmt := range bs.Stmts {
+		out.WriteString(stmt.String())
+		if i < len(bs.Stmts)-1 {
+			out.WriteString("\n")
+		}
+	}
+	if len(bs.Stmts) > 0 {
+		out.WriteString("\n")
+	}
+	out.WriteString("}")
+	return out.String()
+}
+
+func (bs *BlockStmt) statementNode() {}
+
+type IfStmt struct {
+	Token       token.Token
+	Condition   Expression
+	Consequence *BlockStmt
+	Else        Statement
+}
+
+func (is *IfStmt) String() string {
+	var out bytes.Buffer
+	out.WriteString("if (")
+	if is.Condition == nil {
+		out.WriteString("<missing condition>")
+	} else {
+		out.WriteString(is.Condition.String())
+	}
+	out.WriteString(") ")
+	if is.Consequence == nil {
+		out.WriteString("{}")
+	} else {
+		out.WriteString(is.Consequence.String())
+	}
+	if is.Else != nil {
+		out.WriteString(" else ")
+		out.WriteString(is.Else.String())
+	}
+	return out.String()
+}
+
+func (is *IfStmt) statementNode() {}
 
 func IsBadExpr(expression Expression) bool {
 	_, ok := expression.(*BadExpr)

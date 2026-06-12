@@ -54,7 +54,9 @@ func New(l *lexer.Lexer) *Parser {
 		token.GTEQ:     p.parseInfixExpr,
 		token.AND:      p.parseInfixExpr,
 		token.OR:       p.parseInfixExpr,
-		token.DOT:      p.parseCallExpr,
+		token.DOT:      p.parseMemberExpr,
+		token.LPAREN:   p.parseCallExpr,
+		token.LBRACKET: p.parseIndexExpr,
 	}
 	return p
 }
@@ -89,7 +91,16 @@ func (p *Parser) Parse() *ast.Program {
 				prog.Outputs = append(prog.Outputs, decl)
 			}
 		case token.FUNCTION:
-			p.addNotImplemented(p.currentToken.Pos, "functionDecl")
+			decl := p.parseFunctionDecl()
+			if len(p.errors) == errsBefore {
+				switch decl.Identifier.String() {
+				case InitFnIdent:
+					prog.InitFn = decl
+				case RunFnIdent:
+					prog.RunFn = decl
+				default: // Unreachable
+				}
+			}
 		default:
 			p.addNotImplemented(p.currentToken.Pos, "unknownDecl. Add normal error!")
 		}
@@ -198,6 +209,194 @@ func (p *Parser) parseConstDecl() *ast.ConstDecl {
 	}
 	decl.Value = p.parseExpression(LowestPrec)
 	return decl
+}
+
+func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
+	decl := &ast.FunctionDecl{Token: p.currentToken}
+	p.nextToken()
+	errsBeforeDecl := len(p.errors)
+	if p.currTokenIs(token.IDENT) {
+		if p.currentToken.Literal != InitFnIdent && p.currentToken.Literal != RunFnIdent {
+			p.addForbiddenFunc(p.currentToken.Pos)
+			// don't need to parse func body if it's forbidden func
+			return decl
+		}
+
+		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
+		p.nextToken()
+	} else {
+		p.addUnexpectedToken(p.currentToken, token.IDENT)
+	}
+
+	if p.currTokenIs(token.LPAREN) {
+		p.nextToken()
+	} else {
+		if len(p.errors) == errsBeforeDecl {
+			p.addUnexpectedToken(p.currentToken, token.LPAREN)
+		}
+	}
+	if p.currTokenIs(token.RPAREN) {
+		p.nextToken()
+	} else {
+		if len(p.errors) == errsBeforeDecl {
+			p.addUnexpectedToken(p.currentToken, token.RPAREN)
+		}
+	}
+
+	if !p.currTokenIs(token.LBRACE) {
+		if len(p.errors) == errsBeforeDecl {
+			p.addUnexpectedToken(p.currentToken, token.LBRACE)
+		}
+		// we didn't find func block declaration start. don't need to parse
+		return decl
+	}
+
+	errsBeforeBody := len(p.errors)
+	decl.Body = p.parseBlock() // leaves current ON `}` (or EOF)
+
+	// only Run (and the unreachable unnamed case) reject a genuinely empty body
+	notInitFn := decl.Identifier == nil || decl.Identifier.String() == RunFnIdent
+	if len(decl.Body.Stmts) == 0 && len(p.errors) == errsBeforeBody && notInitFn {
+		p.addEmptyFunctionBody(p.currentToken.Pos)
+	}
+
+	return decl
+}
+
+// parseBlock parses a `{ ... }` block. Precondition: current token is `{`.
+func (p *Parser) parseBlock() *ast.BlockStmt {
+	block := &ast.BlockStmt{Token: p.currentToken} // current is `{`
+	p.nextToken()                                  // consume `{`
+
+	for {
+		if p.currTokenIs(token.NEWLINE) {
+			p.nextToken()
+			continue
+		}
+		if p.currTokenIs(token.RBRACE) {
+			break
+		}
+		if p.currTokenIs(token.EOF) {
+			p.addUnexpectedToken(p.currentToken, token.RBRACE) // the opening `{` was never closed
+			break
+		}
+
+		errsBeforeStmt := len(p.errors)
+		block.Stmts = append(block.Stmts, p.parseStatement())
+		switch {
+		case len(p.errors) != errsBeforeStmt:
+			p.syncToStmtEnd() // already reported; just recover position
+		case !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.RBRACE) && !p.peekTokenIs(token.EOF):
+			p.addUnexpectedToken(p.peekToken, token.NEWLINE)
+			p.syncToStmtEnd()
+		}
+		p.nextToken()
+	}
+
+	return block
+}
+
+func (p *Parser) parseStatement() ast.Statement {
+	switch p.currentToken.Type {
+	case token.LET:
+		return p.parseLetStmt()
+	case token.IF:
+		return p.parseIfStmt()
+	default:
+		return p.parseExprOrAssignStmt()
+	}
+}
+
+func (p *Parser) parseIfStmt() ast.Statement {
+	ifTok := p.currentToken
+	stmt := &ast.IfStmt{Token: ifTok}
+	beforeCondErrs := len(p.errors)
+
+	if p.peekTokenIs(token.LPAREN) {
+		p.nextToken() // current = `(`
+		p.nextToken() // current = first condition token
+		stmt.Condition = p.parseExpression(LowestPrec)
+		if p.peekTokenIs(token.RPAREN) {
+			p.nextToken() // current = `)`
+		} else if len(p.errors) == beforeCondErrs {
+			p.addUnexpectedToken(p.peekToken, token.RPAREN)
+		}
+	} else {
+		// didn't find condition. but will try to parse blocks anyway
+		p.addUnexpectedToken(p.peekToken, token.LPAREN)
+	}
+
+	if p.peekTokenIs(token.LBRACE) {
+		p.nextToken() // current = `{`
+	} else {
+		if len(p.errors) == beforeCondErrs {
+			p.addUnexpectedToken(p.peekToken, token.LBRACE)
+		}
+		if !p.advanceToLBrace() {
+			return &ast.BadStmt{From: ifTok.Pos, To: p.currentToken.Pos}
+		}
+	}
+	stmt.Consequence = p.parseBlock() // leaves current ON `}`
+
+	if !p.peekTokenIs(token.ELSE) {
+		return stmt
+	}
+	p.nextToken() // current = `else`
+
+	switch {
+	case p.peekTokenIs(token.IF): // else if — the nested if becomes the Else stmt directly
+		p.nextToken() // current = `if`
+		stmt.Else = p.parseIfStmt()
+	case p.peekTokenIs(token.LBRACE):
+		p.nextToken() // current = `{`
+		stmt.Else = p.parseBlock()
+	default:
+		p.addUnexpectedToken(p.peekToken, token.LBRACE)
+		if p.advanceToLBrace() {
+			stmt.Else = p.parseBlock()
+		}
+	}
+	return stmt
+}
+
+func (p *Parser) parseExprOrAssignStmt() ast.Statement {
+	tok := p.currentToken
+	expr := p.parseExpression(LowestPrec)
+
+	if !p.peekTokenIs(token.ASSIGN) {
+		return &ast.ExprStmt{Token: tok, Expr: expr}
+	}
+
+	p.nextToken() // current = `=`
+	stmt := &ast.AssignStmt{Token: p.currentToken, Target: expr}
+	p.nextToken() // current = first RHS token
+	stmt.Value = p.parseExpression(LowestPrec)
+	return stmt
+}
+
+func (p *Parser) parseLetStmt() *ast.LetStmt {
+	letStmt := &ast.LetStmt{Token: p.currentToken}
+
+	p.nextToken()
+
+	if p.currTokenIs(token.IDENT) {
+		letStmt.Name = &ast.IdentExpr{Token: p.currentToken}
+		p.nextToken()
+	} else {
+		p.addUnexpectedToken(p.currentToken, token.IDENT)
+	}
+
+	if p.currTokenIs(token.ASSIGN) {
+		p.nextToken()
+	} else {
+		if letStmt.Name != nil {
+			p.addUnexpectedToken(p.currentToken, token.ASSIGN)
+		}
+	}
+
+	letStmt.Value = p.parseExpression(LowestPrec)
+
+	return letStmt
 }
 
 func (p *Parser) parseCustomTypeDecl() *ast.TypeExpr {
@@ -324,7 +523,7 @@ func (p *Parser) parseGroupExpr() ast.Expression {
 	return expr
 }
 
-func (p *Parser) parseCallExpr(left ast.Expression) ast.Expression {
+func (p *Parser) parseMemberExpr(left ast.Expression) ast.Expression {
 	expr := ast.MemberAccessExpr{Token: p.currentToken, Object: left}
 	p.nextToken() // advance past `.` onto the member name
 	if !p.currTokenIs(token.IDENT) {
@@ -333,6 +532,71 @@ func (p *Parser) parseCallExpr(left ast.Expression) ast.Expression {
 	}
 	expr.Method = p.parseIdentExpr()
 	return &expr
+}
+
+func (p *Parser) parseIndexExpr(left ast.Expression) ast.Expression {
+	expr := &ast.IndexExpr{Token: p.currentToken, Left: left}
+	p.nextToken()
+	expr.Index = p.parseExpression(LowestPrec)
+	if ast.IsBadExpr(expr.Index) {
+		return expr.Index
+	}
+
+	if p.peekTokenIs(token.RBRACKET) {
+		p.nextToken() // consume `]`
+	} else {
+		p.addUnexpectedToken(p.peekToken, token.RBRACKET)
+		return &ast.BadExpr{Token: expr.Token}
+	}
+	return expr
+}
+
+func (p *Parser) parseCallExpr(callee ast.Expression) ast.Expression {
+	callExpr := &ast.CallExpr{Token: p.currentToken, Callee: callee}
+	if p.peekTokenIs(token.RPAREN) {
+		p.nextToken() // consume `(`
+		return callExpr
+	}
+	kwargSeen := false
+	for {
+		p.nextToken()
+
+		errsBefore := len(p.errors)
+		if p.currTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
+			kwargSeen = true
+			kwarg := &ast.KwargsExpr{Token: p.currentToken, Key: &ast.IdentExpr{Token: p.currentToken}}
+			p.nextToken() // consume `=`
+			p.nextToken()
+			value := p.parseExpression(LowestPrec)
+			if len(p.errors) == errsBefore {
+				kwarg.Value = value
+				callExpr.Kwargs = append(callExpr.Kwargs, kwarg)
+			}
+		} else {
+			if kwargSeen {
+				p.addArgsOrder(p.currentToken.Pos)
+				break
+			}
+			arg := p.parseExpression(LowestPrec)
+			if len(p.errors) == errsBefore {
+				callExpr.Args = append(callExpr.Args, arg)
+			}
+		}
+
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken()
+			continue
+		}
+
+		break
+	}
+
+	if p.peekTokenIs(token.RPAREN) {
+		p.nextToken()
+		return callExpr
+	}
+	p.addUnexpectedToken(p.peekToken, token.RPAREN)
+	return &ast.BadExpr{Token: callExpr.Token}
 }
 
 func (p *Parser) parseIdentExpr() ast.Expression {
@@ -379,6 +643,43 @@ func (p *Parser) syncToNewLine() {
 		}
 		p.nextToken()
 	}
+}
+
+// syncToStmtEnd recovers to the next  `}`, NEWLINE or EOF.
+func (p *Parser) syncToStmtEnd() {
+	depth := 0
+	for {
+		if p.currTokenIs(token.EOF) {
+			return
+		}
+		if depth == 0 {
+			if p.currTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.RBRACE) {
+				return
+			}
+			if p.peekTokenIs(token.NEWLINE) {
+				p.nextToken()
+				return
+			}
+		}
+		switch p.peekToken.Type {
+		case token.LBRACE:
+			depth++
+		case token.RBRACE:
+			depth--
+		}
+		p.nextToken()
+	}
+}
+
+// advanceToLBrace true if `{` found. Otherwise false
+func (p *Parser) advanceToLBrace() bool {
+	for !p.currTokenIs(token.LBRACE) {
+		if p.currTokenIs(token.NEWLINE) || p.currTokenIs(token.RBRACE) || p.currTokenIs(token.EOF) {
+			return false
+		}
+		p.nextToken()
+	}
+	return true
 }
 
 func (p *Parser) skipPeekNewLines() {
@@ -429,6 +730,27 @@ func (p *Parser) addTypeOrCustomTypeExpected(pos token.Pos) {
 
 func (p *Parser) addEmptyCustomType(pos token.Pos) {
 	p.errors = append(p.errors, &diag.EmptyCustomType{
+		Phase: diag.PhaseParse,
+		Pos:   pos,
+	})
+}
+
+func (p *Parser) addForbiddenFunc(pos token.Pos) {
+	p.errors = append(p.errors, &diag.ForbiddenFunc{
+		Phase: diag.PhaseParse,
+		Pos:   pos,
+	})
+}
+
+func (p *Parser) addEmptyFunctionBody(pos token.Pos) {
+	p.errors = append(p.errors, &diag.EmptyFunctionBody{
+		Phase: diag.PhaseParse,
+		Pos:   pos,
+	})
+}
+
+func (p *Parser) addArgsOrder(pos token.Pos) {
+	p.errors = append(p.errors, &diag.ArgsOrder{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})

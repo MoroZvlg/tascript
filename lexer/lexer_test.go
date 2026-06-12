@@ -80,7 +80,7 @@ function Init() {
 		{Pos: token.Pos{Line: 11, Col: 12}, Type: token.STRING, Literal: "foo"},
 		{Pos: token.Pos{Line: 11, Col: 17}, Type: token.NEWLINE, Literal: ""},
 
-		{Pos: token.Pos{Line: 12, Col: 2}, Type: token.EMIT, Literal: "emit"},
+		{Pos: token.Pos{Line: 12, Col: 2}, Type: token.IDENT, Literal: "emit"},
 		{Pos: token.Pos{Line: 12, Col: 6}, Type: token.LPAREN, Literal: "("},
 		{Pos: token.Pos{Line: 13, Col: 3}, Type: token.IDENT, Literal: "alert"},
 		{Pos: token.Pos{Line: 13, Col: 8}, Type: token.COMMA, Literal: ","},
