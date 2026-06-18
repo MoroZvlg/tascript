@@ -103,3 +103,12 @@ type ArgsOrder struct {
 func (ao ArgsOrder) Error() string {
 	return fmt.Sprintf("%s [ARGS_ORDER] %s: args after kwargs not allowed", ao.Phase, ao.Pos.String())
 }
+
+type MissingRunFunc struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (mr MissingRunFunc) Error() string {
+	return fmt.Sprintf("%s [MISSING_REQUIRED_FN] %s: Run function is required", mr.Phase, mr.Pos.String())
+}

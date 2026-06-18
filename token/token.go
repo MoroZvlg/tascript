@@ -26,6 +26,7 @@ const (
 	BANG     TokenType = "!"
 	ASTERISK TokenType = "*"
 	SLASH    TokenType = "/"
+	PERCENT  TokenType = "%"
 	AND      TokenType = "&&"
 	OR       TokenType = "||"
 

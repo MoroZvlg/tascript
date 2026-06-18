@@ -144,6 +144,10 @@ func TestLexer_Simple(t *testing.T) {
 			"(1 +\n2)",
 			[]token.TokenType{token.LPAREN, token.INTEGER, token.PLUS, token.INTEGER, token.RPAREN, token.EOF},
 		},
+		{"arithmetic operators including modulo",
+			"7 % 3 * 2",
+			[]token.TokenType{token.INTEGER, token.PERCENT, token.INTEGER, token.ASTERISK, token.INTEGER, token.EOF},
+		},
 		// Tripwire: a stray closer must not underflow depth and swallow newlines
 		// (don't switch bracketDepth back to an unsigned type).
 		{"stray closer keeps newline significant",

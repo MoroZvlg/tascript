@@ -46,6 +46,7 @@ func New(l *lexer.Lexer) *Parser {
 		token.MINUS:    p.parseInfixExpr,
 		token.ASTERISK: p.parseInfixExpr,
 		token.SLASH:    p.parseInfixExpr,
+		token.PERCENT:  p.parseInfixExpr,
 		token.EQ:       p.parseInfixExpr,
 		token.NEQ:      p.parseInfixExpr,
 		token.LT:       p.parseInfixExpr,
@@ -114,6 +115,12 @@ func (p *Parser) Parse() *ast.Program {
 		}
 		p.nextToken()
 	}
+
+	if prog.RunFn == nil && len(p.errors) == 0 {
+		prog.Valid = false
+		p.addMissingRun(p.currentToken.Pos)
+	}
+
 	return prog
 }
 
@@ -751,6 +758,13 @@ func (p *Parser) addEmptyFunctionBody(pos token.Pos) {
 
 func (p *Parser) addArgsOrder(pos token.Pos) {
 	p.errors = append(p.errors, &diag.ArgsOrder{
+		Phase: diag.PhaseParse,
+		Pos:   pos,
+	})
+}
+
+func (p *Parser) addMissingRun(pos token.Pos) {
+	p.errors = append(p.errors, &diag.MissingRunFunc{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})

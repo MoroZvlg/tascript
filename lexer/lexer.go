@@ -171,6 +171,8 @@ func (l *Lexer) NextToken() token.Token {
 		t = token.Token{Pos: l.pos(), Type: token.ASTERISK, Literal: "*"}
 	case '/':
 		t = token.Token{Pos: l.pos(), Type: token.SLASH, Literal: "/"}
+	case '%':
+		t = token.Token{Pos: l.pos(), Type: token.PERCENT, Literal: "%"}
 	case '&':
 		pos := l.pos()
 		if l.peek() == '&' {

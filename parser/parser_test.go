@@ -13,6 +13,8 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
+const runSuffix = "\nfunction Run() {\nlet a = 1\n}"
+
 func TestParser_ParseConstSimple(t *testing.T) {
 	tests := []struct {
 		input  string
@@ -26,6 +28,8 @@ func TestParser_ParseConstSimple(t *testing.T) {
 		{"const foo = -5.3 + 3", "const foo = (-5.3 + 3)"},
 		{"const foo = -(5.3 + 3)", "const foo = -(5.3 + 3)"},
 		{"const foo = 5.3 + 3", "const foo = (5.3 + 3)"},
+		{"const foo = 7 % 3", "const foo = (7 % 3)"},
+		{"const foo = 7 % 3 * 2", "const foo = ((7 % 3) * 2)"},
 		{"const foo = (5.3 + 3) * 2", "const foo = ((5.3 + 3) * 2)"},
 		{"const foo = true == 5 > 2", "const foo = (true == (5 > 2))"},
 		{"const foo = module.math.PI", "const foo = module.math.PI"},
@@ -34,7 +38,7 @@ func TestParser_ParseConstSimple(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			l := lexer.New(tt.input)
+			l := lexer.New(tt.input + runSuffix)
 			p := parser.New(l)
 			prog := p.Parse()
 			if len(p.Diagnostics()) > 0 {
@@ -283,7 +287,7 @@ func TestParser_ParseInputSimple(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			l := lexer.New(tt.input)
+			l := lexer.New(tt.input + runSuffix)
 			p := parser.New(l)
 			prog := p.Parse()
 			if len(p.Diagnostics()) > 0 {
@@ -370,11 +374,12 @@ func TestParser_Input(t *testing.T) {
 			},
 		},
 		{
+			// function Run added in test on the next line
 			"missing right brace",
-			"input btc: {btc: btc^",
+			"input btc: {btc: btc",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					unexpectedErr(ps[0], token.RBRACE, token.EOF),
+					unexpectedErr(token.Pos{Line: 2, Col: 1}, token.RBRACE, token.FUNCTION),
 				}
 			},
 		},
@@ -432,7 +437,7 @@ func TestParser_Input(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runDiagCases(t, tt.input, tt.buildDiags)
+			runDiagCases(t, tt.input+runSuffix, tt.buildDiags)
 		})
 	}
 }
@@ -476,7 +481,7 @@ func TestParser_ParseOutputSimple(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			l := lexer.New(tt.input)
+			l := lexer.New(tt.input + runSuffix)
 			p := parser.New(l)
 			prog := p.Parse()
 			if len(p.Diagnostics()) > 0 {
@@ -563,11 +568,12 @@ func TestParser_Output(t *testing.T) {
 			},
 		},
 		{
+			// function Run added in test on the next line
 			"missing right brace",
-			"output alert: {alert: alert^",
+			"output alert: {alert: alert",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					unexpectedErr(ps[0], token.RBRACE, token.EOF),
+					unexpectedErr(token.Pos{Line: 2, Col: 1}, token.RBRACE, token.FUNCTION),
 				}
 			},
 		},
@@ -625,7 +631,7 @@ func TestParser_Output(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runDiagCases(t, tt.input, tt.buildDiags)
+			runDiagCases(t, tt.input+runSuffix, tt.buildDiags)
 		})
 	}
 }
@@ -743,10 +749,21 @@ func TestParser_ParseFunc(t *testing.T) {
 			},
 		},
 		{
-			"empty Init(allowed)",
-			"function Init() {}",
+			"empty Init allowed",
+			"function Init() {}^",
 			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{}
+				return []diag.Diagnostic{
+					missingRunErr(ps[0]),
+				}
+			},
+		},
+		{
+			"missing Run on otherwise empty program",
+			"^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					missingRunErr(ps[0]),
+				}
 			},
 		},
 		{
@@ -1104,6 +1121,10 @@ func emptyFuncErr(pos token.Pos) *diag.EmptyFunctionBody {
 
 func forbiddenFuncErr(pos token.Pos) *diag.ForbiddenFunc {
 	return &diag.ForbiddenFunc{Phase: diag.PhaseParse, Pos: pos}
+}
+
+func missingRunErr(pos token.Pos) *diag.MissingRunFunc {
+	return &diag.MissingRunFunc{Phase: diag.PhaseParse, Pos: pos}
 }
 
 func extractErrorsPos(input string) (string, []token.Pos) {
