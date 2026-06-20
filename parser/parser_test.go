@@ -24,6 +24,7 @@ func TestParser_ParseConstSimple(t *testing.T) {
 		{"const foo = 5", "const foo = 5"},
 		{"const foo = 5.3", "const foo = 5.3"},
 		{`const foo = "bar"`, `const foo = "bar"`},
+		{`const foo = "a\"b"`, `const foo = "a\"b"`},
 		{"const foo = false", "const foo = false"},
 		{"const foo = -5.3 + 3", "const foo = (-5.3 + 3)"},
 		{"const foo = -(5.3 + 3)", "const foo = -(5.3 + 3)"},
@@ -1127,6 +1128,10 @@ func missingRunErr(pos token.Pos) *diag.MissingRunFunc {
 	return &diag.MissingRunFunc{Phase: diag.PhaseParse, Pos: pos}
 }
 
+func unexpectedTopDeclErr(pos token.Pos) diag.UnexpectedTopDecl {
+	return diag.UnexpectedTopDecl{Phase: diag.PhaseParse, Pos: pos}
+}
+
 func extractErrorsPos(input string) (string, []token.Pos) {
 	var out []byte
 	var pos []token.Pos
@@ -1213,4 +1218,62 @@ func TestParser_ErrorModeLeak(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestParser_UnexpectedTopDecl(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{"stray integer", "^5", func(ps []token.Pos) []diag.Diagnostic {
+			return []diag.Diagnostic{unexpectedTopDeclErr(ps[0])}
+		}},
+		{"stray illegal", "^@", func(ps []token.Pos) []diag.Diagnostic {
+			return []diag.Diagnostic{unexpectedTopDeclErr(ps[0])}
+		}},
+		{"stray rbrace", "^}", func(ps []token.Pos) []diag.Diagnostic {
+			return []diag.Diagnostic{unexpectedTopDeclErr(ps[0])}
+		}},
+		{"let at top level", "^let x = 1", func(ps []token.Pos) []diag.Diagnostic {
+			return []diag.Diagnostic{unexpectedTopDeclErr(ps[0])}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input+runSuffix, tt.buildDiags)
+		})
+	}
+}
+
+func TestParser_DeepNesting(t *testing.T) {
+	const depth = 5000
+	tests := map[string]string{
+		"nested parens": "const a = " + strings.Repeat("(", depth) + "5" + strings.Repeat(")", depth) + runSuffix,
+		"prefix minus":  "const a = " + strings.Repeat("-", depth) + "5" + runSuffix,
+		"prefix bang":   "const a = " + strings.Repeat("!", depth) + "true" + runSuffix,
+		"else if chain": "function Run() {\nif (a) {}" + strings.Repeat(" else if (a) {}", depth) + "\n}",
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			p := parser.New(lexer.New(src))
+			prog := p.Parse()
+
+			if prog.Valid {
+				t.Errorf("expected invalid program for deeply nested input, got valid")
+			}
+			if !hasNestingTooDeep(p.Diagnostics()) {
+				t.Errorf("expected a NESTING_TOO_DEEP diagnostic, got: %v", p.Diagnostics())
+			}
+		})
+	}
+}
+
+func hasNestingTooDeep(diags []diag.Diagnostic) bool {
+	for _, d := range diags {
+		if _, ok := d.(diag.NestingTooDeep); ok {
+			return true
+		}
+	}
+	return false
 }

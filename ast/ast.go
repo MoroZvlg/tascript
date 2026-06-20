@@ -210,7 +210,8 @@ type StringExpr struct {
 }
 
 func (se *StringExpr) String() string {
-	return fmt.Sprintf("\"%s\"", se.Value)
+	// %q re-escapes the decoded value so the rendered source round-trips
+	return fmt.Sprintf("%q", se.Value)
 }
 
 func (se *StringExpr) expressionNode() {}

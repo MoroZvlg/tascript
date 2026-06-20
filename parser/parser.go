@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	InitFnIdent = "Init"
-	RunFnIdent  = "Run"
+	InitFnIdent     = "Init"
+	RunFnIdent      = "Run"
+	maxNestingDepth = 64
 )
 
 type Parser struct {
@@ -19,6 +20,7 @@ type Parser struct {
 	currentToken token.Token
 	peekToken    token.Token
 	errors       []diag.Diagnostic
+	depth        int
 
 	prefixFns map[token.TokenType]func() ast.Expression
 	infixFns  map[token.TokenType]func(ast.Expression) ast.Expression
@@ -96,14 +98,26 @@ func (p *Parser) Parse() *ast.Program {
 			if len(p.errors) == errsBefore {
 				switch decl.Identifier.String() {
 				case InitFnIdent:
-					prog.InitFn = decl
+					if prog.InitFn != nil {
+						// NOTE: this is incorrect phase for such an error. But otherwise we will replace func and that's it
+						// Will see in the future if there will be a better way to handle it
+						p.addDuplicateDecl(decl.Token, decl.Identifier.Token)
+					} else {
+						prog.InitFn = decl
+					}
 				case RunFnIdent:
-					prog.RunFn = decl
+					if prog.RunFn != nil {
+						// NOTE: this is incorrect phase for such an error. But otherwise we will replace func and that's it
+						// Will see in the future if there will be a better way to handle it
+						p.addDuplicateDecl(decl.Token, decl.Identifier.Token)
+					} else {
+						prog.RunFn = decl
+					}
 				default: // Unreachable
 				}
 			}
 		default:
-			p.addNotImplemented(p.currentToken.Pos, "unknownDecl. Add normal error!")
+			p.addUnexpectedTopDecl(p.currentToken.Pos)
 		}
 		if len(p.errors) == errsBefore &&
 			!p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) {
@@ -315,6 +329,13 @@ func (p *Parser) parseStatement() ast.Statement {
 }
 
 func (p *Parser) parseIfStmt() ast.Statement {
+	p.depth++
+	defer func() { p.depth-- }()
+	if p.depth > maxNestingDepth {
+		p.addNestingTooDeep(p.currentToken.Pos)
+		return &ast.BadStmt{From: p.currentToken.Pos, To: p.currentToken.Pos}
+	}
+
 	ifTok := p.currentToken
 	stmt := &ast.IfStmt{Token: ifTok}
 	beforeCondErrs := len(p.errors)
@@ -467,13 +488,21 @@ func (p *Parser) parseCustomTypeDecl() *ast.TypeExpr {
 }
 
 func (p *Parser) parseExpression(prec precedence) ast.Expression {
+	p.depth++
+	defer func() { p.depth-- }()
+	if p.depth > maxNestingDepth {
+		p.addNestingTooDeep(p.currentToken.Pos)
+		return &ast.BadExpr{Token: p.currentToken}
+	}
+
 	prefFn, ok := p.prefixFns[p.currentToken.Type]
 	if !ok {
 		p.addExpressionExpected(p.currentToken)
 		return &ast.BadExpr{Token: p.currentToken}
 	}
 	leftExpr := prefFn()
-	for !p.peekTokenIs(token.NEWLINE) && prec < p.peekPrecedence() {
+	// bad leftExpr - no further parsing. Protects against repeated NestingTooDeep errors
+	for !ast.IsBadExpr(leftExpr) && !p.peekTokenIs(token.NEWLINE) && prec < p.peekPrecedence() {
 		infixExprFn, okInf := p.infixFns[p.peekToken.Type]
 		if !okInf {
 			return leftExpr
@@ -712,11 +741,18 @@ func (p *Parser) addUnexpectedToken(tok token.Token, expected token.TokenType) {
 	})
 }
 
-func (p *Parser) addNotImplemented(pos token.Pos, subject string) {
-	p.errors = append(p.errors, diag.NotImplemented{
-		Phase:   diag.PhaseParse,
-		Pos:     pos,
-		Subject: subject,
+func (p *Parser) addUnexpectedTopDecl(pos token.Pos) {
+	p.errors = append(p.errors, diag.UnexpectedTopDecl{
+		Phase: diag.PhaseParse,
+		Pos:   pos,
+	})
+}
+
+func (p *Parser) addDuplicateDecl(kwToken, identToken token.Token) {
+	p.errors = append(p.errors, diag.DuplicateDeclaration{
+		Phase:        diag.PhaseParse,
+		KeywordToken: kwToken,
+		IdentToken:   identToken,
 	})
 }
 
@@ -765,6 +801,13 @@ func (p *Parser) addArgsOrder(pos token.Pos) {
 
 func (p *Parser) addMissingRun(pos token.Pos) {
 	p.errors = append(p.errors, &diag.MissingRunFunc{
+		Phase: diag.PhaseParse,
+		Pos:   pos,
+	})
+}
+
+func (p *Parser) addNestingTooDeep(pos token.Pos) {
+	p.errors = append(p.errors, diag.NestingTooDeep{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})

@@ -158,6 +158,36 @@ func TestLexer_Simple(t *testing.T) {
 			"123 \n  \n foo",
 			[]token.TokenType{token.INTEGER, token.NEWLINE, token.IDENT, token.EOF},
 		},
+		{"NUL byte is illegal not EOF",
+			"a\x00b",
+			[]token.TokenType{token.IDENT, token.ILLEGAL, token.IDENT, token.EOF},
+		},
+		{"NUL after number keeps lexing",
+			"5\x00foo",
+			[]token.TokenType{token.INTEGER, token.ILLEGAL, token.IDENT, token.EOF},
+		},
+		// #5: a lone CR and a CRLF each act as a single NEWLINE; runs collapse like \n
+		{"lone CR is a newline",
+			"a\rb",
+			[]token.TokenType{token.IDENT, token.NEWLINE, token.IDENT, token.EOF},
+		},
+		{"CRLF is a single newline",
+			"a\r\nb",
+			[]token.TokenType{token.IDENT, token.NEWLINE, token.IDENT, token.EOF},
+		},
+		{"consecutive CR collapse",
+			"a\r\rb",
+			[]token.TokenType{token.IDENT, token.NEWLINE, token.IDENT, token.EOF},
+		},
+		{"mixed LF and CR collapse",
+			"a\n\rb",
+			[]token.TokenType{token.IDENT, token.NEWLINE, token.IDENT, token.EOF},
+		},
+		// a // comment must end at a lone CR too, not run to EOF
+		{"comment ends at CR",
+			"123 // comment\r foo",
+			[]token.TokenType{token.INTEGER, token.NEWLINE, token.IDENT, token.EOF},
+		},
 	}
 
 	for _, tt := range tests {
@@ -196,5 +226,65 @@ func TestLexer_EmptySrc(t *testing.T) {
 	secondEOFTok := l.NextToken()
 	if secondEOFTok.Type != token.EOF {
 		t.Errorf("expected EOF token, got '%s'", secondEOFTok.Type)
+	}
+}
+
+func TestLexer_CarriageReturnLineTracking(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantLine int // line of the trailing `b`
+	}{
+		{"lone CR", "a\rb", 2},
+		{"CRLF counts once", "a\r\nb", 2},
+		{"two lone CR", "a\r\rb", 3},
+		{"two CRLF", "a\r\n\r\nb", 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokens := allTokens(t, lexer.New(tt.input))
+			last := tokens[len(tokens)-2] // the token before EOF
+			if last.Type != token.IDENT || last.Literal != "b" {
+				t.Fatalf("expected trailing ident b, got %s %q", last.Type, last.Literal)
+			}
+			if last.Pos.Line != tt.wantLine {
+				t.Errorf("trailing ident: expected line %d, got %d", tt.wantLine, last.Pos.Line)
+			}
+		})
+	}
+}
+
+func TestLexer_StringEscapes(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantType    token.TokenType
+		wantLiteral string // checked only when wantType is STRING
+	}{
+		{"plain", `"foo"`, token.STRING, "foo"},
+		{"escaped quote", `"he said \"hi\""`, token.STRING, `he said "hi"`},
+		{"escaped backslash", `"a\\b"`, token.STRING, `a\b`},
+		{"newline escape", `"a\nb"`, token.STRING, "a\nb"},
+		{"tab escape", `"a\tb"`, token.STRING, "a\tb"},
+		{"carriage return escape", `"a\rb"`, token.STRING, "a\rb"},
+		{"invalid escape recovers to closing quote", `"a\qb"`, token.ILLEGAL, ""},
+		{"embedded NUL is illegal", "\"a\x00b\"", token.ILLEGAL, ""},
+		{"trailing backslash", `"abc\`, token.ILLEGAL, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// One literal must lex to exactly one token (+ EOF): a bad escape or NUL
+			// recovers to the closing quote instead of cascading into trailing tokens.
+			tokens := allTokens(t, lexer.New(tt.input))
+			if len(tokens) != 2 {
+				t.Fatalf("expected 1 token + EOF, got %d: %v", len(tokens), tokens)
+			}
+			if tokens[0].Type != tt.wantType {
+				t.Fatalf("expected %s, got %s (%q)", tt.wantType, tokens[0].Type, tokens[0].Literal)
+			}
+			if tt.wantType == token.STRING && tokens[0].Literal != tt.wantLiteral {
+				t.Errorf("literal: expected %q, got %q", tt.wantLiteral, tokens[0].Literal)
+			}
+		})
 	}
 }

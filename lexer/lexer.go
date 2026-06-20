@@ -1,6 +1,8 @@
 package lexer
 
 import (
+	"strings"
+
 	"github.com/MoroZvlg/tascript/token"
 )
 
@@ -29,7 +31,7 @@ func New(input string) *Lexer {
 }
 
 func (l *Lexer) advance() {
-	if l.currChar == '\n' {
+	if l.currChar == '\n' || (l.currChar == '\r' && l.peek() != '\n') {
 		l.line++
 		l.col = 0
 	}
@@ -62,19 +64,19 @@ func (l *Lexer) NextToken() token.Token {
 			l.skipCommentLine()
 		}
 
-		if l.currChar == '\n' && l.bracketDepth > 0 {
+		if l.atNewline() && l.bracketDepth > 0 {
 			l.advance()
 			continue
 		}
 
-		if l.currChar != ' ' && l.currChar != '\t' && l.currChar != '\r' {
+		if l.currChar != ' ' && l.currChar != '\t' {
 			break
 		}
 
 		l.advance()
 	}
 
-	if l.currChar == '\n' {
+	if l.atNewline() {
 		pos := l.pos()
 		for { // collapse consecutive newlines, including blank lines with whitespace
 			l.advance()
@@ -214,12 +216,12 @@ func (l *Lexer) NextToken() token.Token {
 	case ':':
 		t = token.Token{Pos: l.pos(), Type: token.COLON, Literal: ":"}
 	case 0:
-		t = token.Token{Pos: l.pos(), Type: token.EOF, Literal: ""}
+		t = token.Token{Pos: l.pos(), Type: token.ILLEGAL, Literal: "illegal NUL byte"}
 	case '"':
 		pos := l.pos()
-		lit, ok := l.readString()
-		if !ok {
-			t = token.Token{Pos: pos, Type: token.ILLEGAL, Literal: "unterminated string"}
+		lit, errMsg := l.readString()
+		if errMsg != "" {
+			t = token.Token{Pos: pos, Type: token.ILLEGAL, Literal: errMsg}
 		} else {
 			t = token.Token{Pos: pos, Type: token.STRING, Literal: lit}
 		}
@@ -232,15 +234,51 @@ func (l *Lexer) NextToken() token.Token {
 	return t
 }
 
-func (l *Lexer) readString() (string, bool) {
-	startIdx := l.peekCursor // skip " char
+func (l *Lexer) readString() (string, string) {
+	var sb strings.Builder
+	errMsg := "" // first error wins; we keep scanning to the closing quote either way
 	for {
 		l.advance()
-		if l.currChar == 0 {
-			return l.src[startIdx:l.currCursor], false
-		}
-		if l.currChar == '"' {
-			return l.src[startIdx:l.currCursor], true
+		switch l.currChar {
+		case 0:
+			if l.eof() {
+				if errMsg == "" {
+					errMsg = "unterminated string"
+				}
+				return "", errMsg
+			}
+			// embedded NUL (not end-of-input): illegal, same as outside a string
+			if errMsg == "" {
+				errMsg = "illegal NUL byte"
+			}
+		case '"':
+			if errMsg != "" {
+				return "", errMsg
+			}
+			return sb.String(), ""
+		case '\\':
+			l.advance()
+			if l.eof() {
+				return "", "unterminated string"
+			}
+			switch l.currChar {
+			case '"':
+				sb.WriteByte('"')
+			case '\\':
+				sb.WriteByte('\\')
+			case 'n':
+				sb.WriteByte('\n')
+			case 't':
+				sb.WriteByte('\t')
+			case 'r':
+				sb.WriteByte('\r')
+			default:
+				if errMsg == "" {
+					errMsg = "invalid escape sequence"
+				}
+			}
+		default:
+			sb.WriteByte(l.currChar)
 		}
 	}
 }
@@ -251,7 +289,7 @@ func (l *Lexer) isCommentStart() bool {
 
 func (l *Lexer) skipCommentLine() {
 	for {
-		if l.eof() || l.currChar == '\n' {
+		if l.eof() || l.atNewline() {
 			break
 		}
 		l.advance()
@@ -264,6 +302,8 @@ func (l *Lexer) pos() token.Pos {
 		Col:  l.col,
 	}
 }
+
+func (l *Lexer) atNewline() bool { return l.currChar == '\n' || l.currChar == '\r' }
 
 func (l *Lexer) eof() bool { return l.currCursor >= len(l.src) }
 

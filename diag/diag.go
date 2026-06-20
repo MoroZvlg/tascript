@@ -18,16 +18,6 @@ type Diagnostic interface {
 	Error() string
 }
 
-type NotImplemented struct {
-	Phase   Phase
-	Pos     token.Pos
-	Subject string
-}
-
-func (ni NotImplemented) Error() string {
-	return fmt.Sprintf("%s [NOT_IMPLEMENTED] %s: %s not implemented", ni.Phase, ni.Pos.String(), ni.Subject)
-}
-
 type UnexpectedToken struct {
 	Phase    Phase
 	Pos      token.Pos
@@ -111,4 +101,32 @@ type MissingRunFunc struct {
 
 func (mr MissingRunFunc) Error() string {
 	return fmt.Sprintf("%s [MISSING_REQUIRED_FN] %s: Run function is required", mr.Phase, mr.Pos.String())
+}
+
+type UnexpectedTopDecl struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (ud UnexpectedTopDecl) Error() string {
+	return fmt.Sprintf("%s [UNEXPECTED_TOP_DECL] %s: only const, input, output, Init and Run functions allowed at top level", ud.Phase, ud.Pos.String())
+}
+
+type DuplicateDeclaration struct {
+	Phase        Phase
+	KeywordToken token.Token // keyword token
+	IdentToken   token.Token
+}
+
+func (dd DuplicateDeclaration) Error() string {
+	return fmt.Sprintf("%s [DUPLICATE_DECLARATION] %s: duplicate declaration of %s %s", dd.Phase, dd.KeywordToken.Pos.String(), dd.KeywordToken.Literal, dd.IdentToken.Literal)
+}
+
+type NestingTooDeep struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (nt NestingTooDeep) Error() string {
+	return fmt.Sprintf("%s [DEPTH_LIMIT] %s: expression nested too deep", nt.Phase, nt.Pos.String())
 }
