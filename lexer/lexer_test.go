@@ -125,7 +125,7 @@ func TestLexer_Simple(t *testing.T) {
 		expectedTokens []token.TokenType
 	}{
 		{"ends on peek token call",
-			"const foo =",
+			"const FOO =",
 			[]token.TokenType{token.CONST, token.IDENT, token.ASSIGN, token.EOF},
 		},
 		{"float parsing, multiple dots",
@@ -151,7 +151,7 @@ func TestLexer_Simple(t *testing.T) {
 		// Tripwire: a stray closer must not underflow depth and swallow newlines
 		// (don't switch bracketDepth back to an unsigned type).
 		{"stray closer keeps newline significant",
-			")\nconst a = 1",
+			")\nconst VALUE = 1",
 			[]token.TokenType{token.RPAREN, token.NEWLINE, token.CONST, token.IDENT, token.ASSIGN, token.INTEGER, token.EOF},
 		},
 		{"whitespace-only blank line collapses",

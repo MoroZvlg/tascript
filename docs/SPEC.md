@@ -83,10 +83,10 @@ deviations:
 - **C-style blocks.** `if (cond) { ... } else { ... }` — parentheses around
   conditions, braces around bodies.
 - **C-style logical operators.** `&&`, `||`, `!` (not `and`, `or`, `not`).
-- **No variable-declaration keywords inside function bodies.** There is no
-  `var`, `let`, or `const` inside `Init()` or `Run()`. A bare assignment such as
-  `uptrend = ema(50) > ema(200)` creates a binding that lives **only for the
-  current invocation** of that function and is dropped when it returns.
+- **Function-local bindings use `let`.** Inside `Init()` and `Run()`,
+  `let uptrend = ema(50) > ema(200)` creates a binding that lives **only for
+  the current invocation** of that function and is dropped when it returns.
+  There is no `var`, and `const` is not valid inside function bodies.
 - **Top-level constants use `const`.** `const` is a declaration keyword only at
   the top level. It is not valid inside function bodies.
 - **Persistent state is namespaced.** Values that must survive across candles
@@ -104,7 +104,8 @@ Every tascript program is composed of:
    The right-hand side is evaluated **once at program load**. The binding is
    readable from inside `Init()` and `Run()` by name, but **reassignment from
    inside any function is a parse-time error** — top-level constants are
-   read-only after load.
+   read-only after load. By convention, top-level constant names use
+   `UPPER_SNAKE_CASE`.
 
 2. **One or more input declarations.** A top-level declaration of the form
    `input name: Type` declares that the program consumes a runtime-wired
@@ -650,7 +651,7 @@ tascript exposes two complementary forms of memory across candles:
    forces every persistent field to be intentionally bootstrapped and prevents
    typo-driven foot-guns.
 
-Plain bindings inside a function body are scoped to that single invocation and
+`let` bindings inside a function body are scoped to that single invocation and
 do not persist.
 
 ## 5. Standard Library

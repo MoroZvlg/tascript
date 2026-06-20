@@ -20,21 +20,21 @@ func TestParser_ParseConstSimple(t *testing.T) {
 		input  string
 		output string
 	}{
-		{"const foo = bar", "const foo = bar"},
-		{"const foo = 5", "const foo = 5"},
-		{"const foo = 5.3", "const foo = 5.3"},
-		{`const foo = "bar"`, `const foo = "bar"`},
-		{`const foo = "a\"b"`, `const foo = "a\"b"`},
-		{"const foo = false", "const foo = false"},
-		{"const foo = -5.3 + 3", "const foo = (-5.3 + 3)"},
-		{"const foo = -(5.3 + 3)", "const foo = -(5.3 + 3)"},
-		{"const foo = 5.3 + 3", "const foo = (5.3 + 3)"},
-		{"const foo = 7 % 3", "const foo = (7 % 3)"},
-		{"const foo = 7 % 3 * 2", "const foo = ((7 % 3) * 2)"},
-		{"const foo = (5.3 + 3) * 2", "const foo = ((5.3 + 3) * 2)"},
-		{"const foo = true == 5 > 2", "const foo = (true == (5 > 2))"},
-		{"const foo = module.math.PI", "const foo = module.math.PI"},
-		{"\nconst foo = 5\n", "const foo = 5"},
+		{"const FOO = bar", "const FOO = bar"},
+		{"const FOO = 5", "const FOO = 5"},
+		{"const FOO = 5.3", "const FOO = 5.3"},
+		{`const FOO = "bar"`, `const FOO = "bar"`},
+		{`const FOO = "a\"b"`, `const FOO = "a\"b"`},
+		{"const FOO = false", "const FOO = false"},
+		{"const FOO = -5.3 + 3", "const FOO = (-5.3 + 3)"},
+		{"const FOO = -(5.3 + 3)", "const FOO = -(5.3 + 3)"},
+		{"const FOO = 5.3 + 3", "const FOO = (5.3 + 3)"},
+		{"const FOO = 7 % 3", "const FOO = (7 % 3)"},
+		{"const FOO = 7 % 3 * 2", "const FOO = ((7 % 3) * 2)"},
+		{"const FOO = (5.3 + 3) * 2", "const FOO = ((5.3 + 3) * 2)"},
+		{"const FOO = true == 5 > 2", "const FOO = (true == (5 > 2))"},
+		{"const FOO = module.math.PI", "const FOO = module.math.PI"},
+		{"\nconst FOO = 5\n", "const FOO = 5"},
 	}
 
 	for _, tt := range tests {
@@ -77,7 +77,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"missing =",
-			"const foo ^3",
+			"const FOO ^3",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.ASSIGN, token.INTEGER),
@@ -86,7 +86,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"missing expression",
-			"const foo = ^",
+			"const FOO = ^",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					exprExpectedErr(ps[0], token.EOF),
@@ -114,7 +114,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"missing `=` and expression",
-			"const foo^",
+			"const FOO^",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.ASSIGN, token.EOF),
@@ -123,7 +123,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"missing `=` and bad expression",
-			"const foo ^3 + ^#",
+			"const FOO ^3 + ^#",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.ASSIGN, token.INTEGER),
@@ -142,7 +142,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"[Infix] missing RHS",
-			"const foo = 3 + ^",
+			"const FOO = 3 + ^",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					exprExpectedErr(ps[0], token.EOF),
@@ -151,7 +151,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"[Infix] missing LHS",
-			"const foo = ^* 3",
+			"const FOO = ^* 3",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					exprExpectedErr(ps[0], token.ASTERISK),
@@ -160,7 +160,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"[Infix] missing both hands",
-			"const foo = 3 + ^*",
+			"const FOO = 3 + ^*",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					exprExpectedErr(ps[0], token.ASTERISK),
@@ -169,7 +169,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"???",
-			"const foo = (3 + ^) * ^#",
+			"const FOO = (3 + ^) * ^#",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					exprExpectedErr(ps[0], token.RPAREN),
@@ -179,7 +179,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"prefix expr error",
-			"const foo = -^#",
+			"const FOO = -^#",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					exprExpectedErr(ps[0], token.ILLEGAL),
@@ -188,7 +188,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"member access call. no ident",
-			"const foo = math.^3",
+			"const FOO = math.^3",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.IDENT, token.INTEGER),
@@ -197,7 +197,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"integer literal overflow",
-			"const foo = ^" + strings.Repeat("9", 100),
+			"const FOO = ^" + strings.Repeat("9", 100),
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					parseFailedErr(ps[0], token.INTEGER),
@@ -206,7 +206,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"float literal overflow",
-			"const foo = ^" + strings.Repeat("9", 400) + ".0",
+			"const FOO = ^" + strings.Repeat("9", 400) + ".0",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					parseFailedErr(ps[0], token.FLOAT),
@@ -215,7 +215,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"empty group expression",
-			"const foo = (^)",
+			"const FOO = (^)",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					exprExpectedErr(ps[0], token.RPAREN),
@@ -224,7 +224,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"group expression. missing RPAREN",
-			"const foo = (3 + 1 ^",
+			"const FOO = (3 + 1 ^",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.RPAREN, token.EOF),
@@ -233,7 +233,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 		},
 		{
 			"trailing token after expression",
-			"const foo = a ^b",
+			"const FOO = a ^b",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.NEWLINE, token.IDENT),
@@ -250,7 +250,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 }
 
 func TestParser_ParseConstRecovery(t *testing.T) {
-	src := "const = bar\n const foo = baz\nconst math = pi"
+	src := "const = bar\n const FOO = baz\nconst MATH = pi"
 	l := lexer.New(src)
 	p := parser.New(l)
 	prog := p.Parse()
@@ -1184,7 +1184,7 @@ func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []dia
 // Program-level recovery: a junk top-level token must not drop the following good const
 func TestParser_ErrorModeLeak(t *testing.T) {
 	t.Run("junk before good const is recovered", func(t *testing.T) {
-		src := "@\nconst foo = 5"
+		src := "@\nconst FOO = 5"
 		l := lexer.New(src)
 		p := parser.New(l)
 		prog := p.Parse()
@@ -1195,11 +1195,11 @@ func TestParser_ErrorModeLeak(t *testing.T) {
 		if len(prog.Consts) != 1 {
 			t.Fatalf("expected 1 const recovered after junk, got %d", len(prog.Consts))
 		}
-		if prog.Consts[0].Identifier.String() != "foo" {
+		if prog.Consts[0].Identifier.String() != "FOO" {
 			t.Errorf("expected recovered const to be valid")
 		}
-		if got := prog.Consts[0].String(); got != "const foo = 5" {
-			t.Errorf("expected recovered const %q, got %q", "const foo = 5", got)
+		if got := prog.Consts[0].String(); got != "const FOO = 5" {
+			t.Errorf("expected recovered const %q, got %q", "const FOO = 5", got)
 		}
 	})
 
@@ -1249,9 +1249,9 @@ func TestParser_UnexpectedTopDecl(t *testing.T) {
 func TestParser_DeepNesting(t *testing.T) {
 	const depth = 5000
 	tests := map[string]string{
-		"nested parens": "const a = " + strings.Repeat("(", depth) + "5" + strings.Repeat(")", depth) + runSuffix,
-		"prefix minus":  "const a = " + strings.Repeat("-", depth) + "5" + runSuffix,
-		"prefix bang":   "const a = " + strings.Repeat("!", depth) + "true" + runSuffix,
+		"nested parens": "const VALUE = " + strings.Repeat("(", depth) + "5" + strings.Repeat(")", depth) + runSuffix,
+		"prefix minus":  "const VALUE = " + strings.Repeat("-", depth) + "5" + runSuffix,
+		"prefix bang":   "const VALUE = " + strings.Repeat("!", depth) + "true" + runSuffix,
 		"else if chain": "function Run() {\nif (a) {}" + strings.Repeat(" else if (a) {}", depth) + "\n}",
 	}
 	for name, src := range tests {
