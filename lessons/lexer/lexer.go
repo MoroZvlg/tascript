@@ -77,7 +77,7 @@ func (l *Lexer) NextToken() token.Token {
 	case '/':
 		if l.peekChar() == '/' {
 			l.skipComment()
-			return l.NextToken() // TODO: Recursive?? is it ok??
+			return l.NextToken()
 		}
 		t = token.Token{Type: token.SLASH, Literal: "/"}
 	case '&':
