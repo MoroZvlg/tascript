@@ -40,8 +40,8 @@ outside the DSL:
 ```js
 input btc: CandleSeries
 
-output alerts {
-  kind: String
+output alerts: {
+  kind: String,
   price: Number
 }
 output logs: String
@@ -83,10 +83,12 @@ deviations:
 - **C-style blocks.** `if (cond) { ... } else { ... }` — parentheses around
   conditions, braces around bodies.
 - **C-style logical operators.** `&&`, `||`, `!` (not `and`, `or`, `not`).
-- **No variable-declaration keywords.** There is no `var` / `let` / `const`.
-  Inside a function body, a bare assignment such as
+- **No variable-declaration keywords inside function bodies.** There is no
+  `var`, `let`, or `const` inside `Init()` or `Run()`. A bare assignment such as
   `uptrend = ema(50) > ema(200)` creates a binding that lives **only for the
   current invocation** of that function and is dropped when it returns.
+- **Top-level constants use `const`.** `const` is a declaration keyword only at
+  the top level. It is not valid inside function bodies.
 - **Persistent state is namespaced.** Values that must survive across candles
   live on a special `state` object: `state.cooldown = 20`, `state["my key"]`.
   Both dot and bracket access are supported, matching JS conventions.
@@ -97,8 +99,8 @@ deviations:
 
 Every tascript program is composed of:
 
-1. **Zero or more top-level constants.** A bare assignment at the top level
-   (`COOLDOWN_BARS = 20`, `THRESHOLD = 0.5`) declares a *module constant*.
+1. **Zero or more top-level constants.** A declaration at the top level
+   (`const COOLDOWN_BARS = 20`, `const THRESHOLD = 0.5`) declares a *module constant*.
    The right-hand side is evaluated **once at program load**. The binding is
    readable from inside `Init()` and `Run()` by name, but **reassignment from
    inside any function is a parse-time error** — top-level constants are
@@ -110,32 +112,34 @@ Every tascript program is composed of:
    type. See section 3.3 for full semantics.
 
 3. **One or more output declarations.** A top-level declaration of the form
-   `output name: Type` declares that the program can emit to a runtime-wired
-   output port. Optional output schemas describe valid payload fields.
+   `output name: Type` or `output name: { ... }` declares that the program can
+   emit to a runtime-wired output port.
 
-4. **A required `function Init() { ... }`.** Runs **exactly once** before the
-   first candle is processed. Intended for initialising `state.*` fields.
+4. **An optional `function Init() { ... }`.** When present, it runs **exactly
+   once** before the first candle is processed. It is intended for initialising
+   `state.*` fields. If omitted, the runtime behaves as if an empty `Init`
+   existed.
 
 5. **A required `function Run() { ... }`.** Runs **once per candle**, in
    order. This is where indicators are read, conditions evaluated, and
    `emit(...)` calls produced.
 
-Both `Init` and `Run` are mandatory. A program missing either is rejected at
-parse time. No other top-level forms are permitted in the current language
-revision; user-defined helper functions may be added later.
+Only `Run` is mandatory. A program missing `Run` is rejected at parse time.
+No other top-level forms are permitted in the current language revision;
+user-defined helper functions may be added later.
 
 Canonical program shape:
 
 ```js
-COOLDOWN_BARS = 20
+const COOLDOWN_BARS = 20
 
 input btc: CandleSeries
 input eth: CandleSeries
 
-output alerts {
-  kind: String
-  price: Number
-  rsi: Number
+output alerts: {
+  kind: String,
+  price: Number,
+  rsi: Number,
   eth_rsi: Number
 }
 
@@ -171,8 +175,8 @@ level:
 input btc: CandleSeries
 input sentiment: Series
 
-output alerts {
-  kind: String
+output alerts: {
+  kind: String,
   price: Number
 }
 output logs: String
@@ -206,21 +210,20 @@ above is readable inside `Init()` and `Run()` as a `CandleSeries`.
 
 #### Output declarations
 
-An output is **either** a value output, a structured output, or both. The
-type after `:` (if present) is the primary emitted `value`; a `{ … }` block
-(if present) declares structured `data` fields.
+An output is **either** a value output or a structured output. The form after
+`:` determines which kind it is: a value type emits a single `value`; an
+anonymous `{ … }` schema emits structured `data` fields. Combining both forms
+is not allowed.
 
 ```js
-output <name>: <ValueType>             // value output  — emit a single value
-output <name> { field: Type, … }       // structured    — emit keyword fields
-output <name>: <ValueType> { field: Type, … }   // both: value + fields
+output <name>: <ValueType>              // value output — emit a single value
+output <name>: { field: Type, ... }     // structured output — emit keyword fields
 ```
 
-`<ValueType>` is an ordinary value type. Current revision allows `String` and
-`Number`; structured `data` fields may be any value type. The three shapes map
-directly onto the event record: a value output sets `value` and leaves `data`
-empty, a structured output leaves `value` `null` and fills `data`, and the
-combined form sets both.
+`<ValueType>` is a built-in value type. Current revision allows `String` and
+`Number`; structured `data` fields may be any value type. A value output sets
+`value` and leaves `data` empty. A structured output leaves `value` `null` and
+fills `data`.
 
 Output names are not readable values and cannot be assigned, passed around,
 or called as objects. They are valid only as the first argument to
@@ -230,8 +233,9 @@ or called as objects. They are valid only as the first argument to
 
 - Port declarations may appear **only at the top level**.
 - Port names are normal identifiers, not string literals.
-- Input, output, constant, function, namespace, and reserved names share one
-  top-level namespace; duplicate names are parse-time errors.
+- Input, output, constant, function, namespace, and reserved names occupy one
+  top-level namespace. Duplicate `Init`/`Run` declarations are parse-time
+  errors; broader duplicate-name validation is deferred.
 - An input binding is **read-only**; reassignment inside a function is a
   parse-time error.
 - An output name is **emit-only**; reading or assigning it is a parse-time
@@ -245,9 +249,8 @@ or called as objects. They are valid only as the first argument to
 
 - User-tunable config inputs (`input period: Number = 14` or similar).
 - **Named, reusable custom types** (e.g. `type Alert { … }` then
-  `output x: Alert`). v1 only has the *anonymous* inline `{ … }` schema per
-  output; a named type-declaration system is an open question deferred until
-  real demand. Anonymous schemas cover the rich-payload use case without it.
+  `output x: Alert`). Outputs use built-in value types or anonymous inline
+  `{ … }` schemas only.
 - Per-input metadata (`btc.symbol`, `btc.exchange`, `btc.timeframe`). For
   now, payload identifiers are explicit fields emitted by the program.
 
@@ -385,11 +388,11 @@ the delivery boundary), and assigned to per-call locals.
 #### Example
 
 ```js
-COOLDOWN = 30 * time.MINUTE
+const COOLDOWN = 30 * time.MINUTE
 
 input btc: CandleSeries
 
-output alerts {
+output alerts: {
   price: Number
 }
 
@@ -640,11 +643,12 @@ tascript exposes two complementary forms of memory across candles:
 
 2. **User-declared persistent state.** A program writes persistent values to
    the namespaced `state` object (e.g. `state.cooldown = 20`). All `state.*`
-   fields survive between candle executions. Initial values are established in
-   the program's `Init()` function, which runs once before the first candle.
-   Reading a `state.*` field that has never been assigned is a runtime error
-   (no silent zero / null defaults); this forces every persistent field to be
-   declared in `Init()` and prevents typo-driven foot-guns.
+   fields survive between candle executions. Initial values should be
+   established in `Init()` when persistent state is needed. If `Init()` is
+   omitted, `state.*` starts empty. Reading a `state.*` field that has never
+   been assigned is a runtime error (no silent zero / null defaults); this
+   forces every persistent field to be intentionally bootstrapped and prevents
+   typo-driven foot-guns.
 
 Plain bindings inside a function body are scoped to that single invocation and
 do not persist.
@@ -741,8 +745,8 @@ the registry — no DSL change required.
 ### 5.2 emit(...) — signal emission
 
 ```
-emit(OUTPUT [, ident=expr]*)
-emit(OUTPUT, value_expr [, ident=expr]*)
+emit(OUTPUT, value_expr)
+emit(OUTPUT, ident=expr [, ident=expr]*)
 ```
 
 Where:
@@ -753,17 +757,14 @@ Where:
 - For a **structured** output (`{ … }`), the payload is keyword arguments
   only — no leading value.
 - For a **value** output (`: <ValueType>`), the second argument is the value
-  and must match the declared type. If the output *also* declares a `{ … }`
-  schema, keyword arguments may follow.
+  and must match the declared type. Keyword arguments are not accepted for
+  value outputs.
 - `ident` is a normal identifier — letters and digits and underscores
   (initial revision may restrict to letters only and relax later).
 - `expr` must evaluate to a serialisable value: `Number`, `Bool`, `String`,
   `Null`, `Time`, or `Duration`. A `Series` is read at its current value per
   the lift rule (§3.6). Passing a `CandleSeries`, `Candle`, or `Tuple` is a
   runtime error.
-- Empty structured payload is legal: `emit(heartbeat)` produces an event
-  with `data: {}` when `heartbeat` is a declared structured output.
-
 Examples:
 
 ```js
@@ -781,20 +782,21 @@ function Run() {
 ```js
 input btc: CandleSeries
 
-output price_alert: String {
+output price_alert: {
+  message: String,
   price: Number
 }
 
 function Init() {}
 
 function Run() {
-  emit(price_alert, "BTC crossed above EMA", price=btc.closes[0])
+  emit(price_alert, message="BTC crossed above EMA", price=btc.closes[0])
 }
 ```
 
-There is no in-language string interpolation in v1. Parameters attached to a
-value output are structured `data` for the host-side renderer, not template
-variables interpreted by tascript.
+There is no in-language string interpolation in v1. Structured output fields
+are data for the host-side renderer, not template variables interpreted by
+tascript.
 
 **Reserved kwarg names** — runtime-injected, cannot be passed by the user.
 Using any reserved name as a kwarg is a parse-time error. The set is
@@ -937,7 +939,7 @@ message strings. The initial set, expanded as the implementation lands:
 | `EMIT_PAYLOAD`          | parse / runtime | Emitted value or kwargs do not match the output declaration. |
 | `INDICATOR_PARAM`       | parse / runtime | Indicator parameter constraint violated (e.g. non-integer period). |
 | `TOP_LEVEL_FORM`        | parse | A construct used at the top level that is not permitted there (e.g. `state.*`, `if`). |
-| `MISSING_REQUIRED_FN`   | parse | Program does not declare `function Init()` or `function Run()`. |
+| `MISSING_REQUIRED_FN`   | parse | Program does not declare `function Run()`. |
 | `EMIT_RESERVED_KWARG`   | parse | User passed a reserved kwarg name to `emit(...)` (e.g. `ts=`). |
 
 Future categories are additive; existing codes never change meaning.
@@ -989,13 +991,13 @@ The simplest realistic alert. Uses one input, one persistent counter, an
 indicator crossing condition, and a context-trend filter.
 
 ```js
-COOLDOWN_BARS = 20
+const COOLDOWN_BARS = 20
 
 input btc: CandleSeries
 
-output alerts {
-  kind: String
-  price: Number
+output alerts: {
+  kind: String,
+  price: Number,
   rsi: Number
 }
 
@@ -1027,10 +1029,10 @@ output series.
 ```js
 input btc: CandleSeries
 
-output alerts {
-  kind: String
-  price: Number
-  line: Number
+output alerts: {
+  kind: String,
+  price: Number,
+  line: Number,
   signal: Number
 }
 
@@ -1057,13 +1059,13 @@ Exercises `Duration`, `Time` arithmetic, `state.*` holding a `Time` value,
 and a multi-output indicator with one slot ignored.
 
 ```js
-COOLDOWN = 10 * time.MINUTE
+const COOLDOWN = 10 * time.MINUTE
 
 input btc: CandleSeries
 
-output alerts {
-  kind: String
-  price: Number
+output alerts: {
+  kind: String,
+  price: Number,
   volume: Number
 }
 
@@ -1098,8 +1100,8 @@ a filter `if`.
 ```js
 input btc: CandleSeries
 
-output alerts {
-  kind: String
+output alerts: {
+  kind: String,
   price: Number
 }
 
@@ -1134,16 +1136,16 @@ sync" it emits at most once per shared candle. The author handles either
 with the `state.last_alert` time cooldown.
 
 ```js
-SPREAD_THRESHOLD = 0.05
-COOLDOWN         = 15 * time.MINUTE
+const SPREAD_THRESHOLD = 0.05
+const COOLDOWN         = 15 * time.MINUTE
 
 input btc: CandleSeries
 input eth: CandleSeries
 
-output alerts {
-  kind: String
-  btc_change: Number
-  eth_change: Number
+output alerts: {
+  kind: String,
+  btc_change: Number,
+  eth_change: Number,
   divergence: Number
 }
 
@@ -1175,22 +1177,19 @@ function Run() {
 Writing the examples surfaced a few details the spec has not yet pinned
 down. They will be picked up when implementation begins:
 
-1. **Empty `Init()` body.** `function Init() { }` is legal in §8.2 — no
-   `state.*` to bootstrap. Confirm: an empty function body is valid (it is,
-   under the locked grammar).
-2. **`return` statement.** No early-return form is locked. The natural
+1. **`return` statement.** No early-return form is locked. The natural
    substitute is wrapping body code in a filter `if` (see §8.4). If real
    programs grow nested, `return` should be a small addition.
-3. **Negative numeric literals.** `state.last_alert = btc.timestamps[0] - time.DAY`
+2. **Negative numeric literals.** `state.last_alert = btc.timestamps[0] - time.DAY`
    uses subtraction; the unary minus operator covers writing `-5` directly.
    Confirmed by §3.6 precedence (unary `-` at tier 2). No separate negative
    literal token needed.
-4. **Aliasing of indicator output through a local.** `line = btc.macd(...)[0]`
+3. **Aliasing of indicator output through a local.** `line = btc.macd(...)[0]`
    binds a per-tick local to a `Series`. The static analyser must trace
    through such aliases to attribute lookback (`ta.crossover(line, signal)`)
    to the underlying `Series`. Doable but worth calling out explicitly in
    the static-analysis pass.
-5. **Multi-line expressions / line continuation.** Bracket-depth suppression
+4. **Multi-line expressions / line continuation.** Bracket-depth suppression
    is locked: a NEWLINE is swallowed while inside an open `(` `[` `{`. This
    permits multi-line output schemas, multi-line `emit(...)` calls, and
    parenthesised splits:
