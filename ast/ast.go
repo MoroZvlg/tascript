@@ -404,7 +404,7 @@ func (ls *LetStmt) statementNode() {}
 
 type AssignStmt struct {
 	Token  token.Token // the `=`
-	Target Expression
+	Target Expression  // TODO: should be ident?
 	Value  Expression
 }
 

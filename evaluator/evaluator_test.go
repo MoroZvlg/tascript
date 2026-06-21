@@ -1,0 +1,39 @@
+package evaluator_test
+
+import (
+	"testing"
+
+	"github.com/MoroZvlg/tascript/evaluator"
+	"github.com/MoroZvlg/tascript/lexer"
+	"github.com/MoroZvlg/tascript/parser"
+	"github.com/MoroZvlg/tascript/registry"
+	"github.com/MoroZvlg/tascript/token"
+)
+
+func TestEvaluator_EvalConstAndRunBlock(t *testing.T) {
+	reg := registry.DefaultRegistry()
+	reg.RegisterBinary(token.PLUS, registry.IntegerID, registry.IntegerID, registry.BinaryRule{
+		EvalType: registry.IntegerID,
+		EvalFn: func(tok token.TokenType, left, right registry.Value) registry.Value {
+			return registry.Integer(int(left.(registry.Integer)) + int(right.(registry.Integer)))
+		},
+	})
+
+	src := `
+const a = 1 + 2
+function Run() {
+let b = a + 3
+b
+}
+`
+	p := parser.New(lexer.New(src))
+	prog := p.Parse()
+	if len(p.Diagnostics()) > 0 {
+		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
+	}
+
+	got, _ := evaluator.New(prog, reg).EvalRun()
+	if got != registry.Integer(6) {
+		t.Fatalf("got %v, want 6", got)
+	}
+}
