@@ -48,7 +48,7 @@ func TestDefaultNumericOperations(t *testing.T) {
 			if rule.EvalType != test.wantType {
 				t.Errorf("result type = %v, want %v", rule.EvalType, test.wantType)
 			}
-			if got := rule.EvalFn(test.operator, test.left, test.right); got != test.want {
+			if got := rule.EvalFn(test.left, test.right); got != test.want {
 				t.Errorf("result = %v, want %v", got, test.want)
 			}
 		})

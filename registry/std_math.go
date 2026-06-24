@@ -36,7 +36,7 @@ func RegisterStdMath(reg *Registry) {
 				resultType = FloatID
 			}
 			reg.RegisterBinary(operator, pair.left, pair.right, BinaryRule{
-				EvalFn:   evalNumericBinary,
+				EvalFn:   makeNumericBinary(operator),
 				EvalType: resultType,
 			})
 		}
@@ -64,11 +64,11 @@ func RegisterStdMath(reg *Registry) {
 	})
 }
 
-func evalStringConcat(operator token.TokenType, left, right Value) Value {
+func evalStringConcat(left, right Value) Value {
 	return left.(String) + right.(String)
 }
 
-func evalNumericNegate(operator token.TokenType, operand Value) Value {
+func evalNumericNegate(operand Value) Value {
 	switch operand := operand.(type) {
 	case Integer:
 		return -operand
@@ -79,43 +79,48 @@ func evalNumericNegate(operator token.TokenType, operand Value) Value {
 	}
 }
 
-func evalBoolNot(operator token.TokenType, operand Value) Value {
+func evalBoolNot(operand Value) Value {
 	return Bool(!operand.(Bool))
 }
 
-func evalNumericBinary(operator token.TokenType, left, right Value) Value {
-	leftInt, leftIsInt := left.(Integer)
-	rightInt, rightIsInt := right.(Integer)
-	if leftIsInt && rightIsInt {
+// makeNumericBinary captures the operator in a closure so a single
+// implementation can back every arithmetic token without the EvalFn needing
+// the operator passed back in at eval time (the rule is already keyed by it).
+func makeNumericBinary(operator token.TokenType) func(left, right Value) Value {
+	return func(left, right Value) Value {
+		leftInt, leftIsInt := left.(Integer)
+		rightInt, rightIsInt := right.(Integer)
+		if leftIsInt && rightIsInt {
+			switch operator {
+			case token.PLUS:
+				return leftInt + rightInt
+			case token.MINUS:
+				return leftInt - rightInt
+			case token.ASTERISK:
+				return leftInt * rightInt
+			case token.SLASH:
+				return Float(leftInt) / Float(rightInt)
+			case token.PERCENT:
+				return leftInt % rightInt
+			}
+		}
+
+		leftFloat := asFloat(left)
+		rightFloat := asFloat(right)
 		switch operator {
 		case token.PLUS:
-			return leftInt + rightInt
+			return Float(leftFloat + rightFloat)
 		case token.MINUS:
-			return leftInt - rightInt
+			return Float(leftFloat - rightFloat)
 		case token.ASTERISK:
-			return leftInt * rightInt
+			return Float(leftFloat * rightFloat)
 		case token.SLASH:
-			return Float(leftInt) / Float(rightInt)
+			return Float(leftFloat / rightFloat)
 		case token.PERCENT:
-			return leftInt % rightInt
+			return Float(math.Mod(leftFloat, rightFloat))
+		default:
+			panic("unsupported numeric operator: " + operator)
 		}
-	}
-
-	leftFloat := asFloat(left)
-	rightFloat := asFloat(right)
-	switch operator {
-	case token.PLUS:
-		return Float(leftFloat + rightFloat)
-	case token.MINUS:
-		return Float(leftFloat - rightFloat)
-	case token.ASTERISK:
-		return Float(leftFloat * rightFloat)
-	case token.SLASH:
-		return Float(leftFloat / rightFloat)
-	case token.PERCENT:
-		return Float(math.Mod(leftFloat, rightFloat))
-	default:
-		panic("unsupported numeric operator: " + operator)
 	}
 }
 

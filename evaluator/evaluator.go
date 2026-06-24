@@ -133,7 +133,7 @@ func (e *Evaluator) evalInfix(expr *ast.InfixExpr, env *Env) (registry.Value, er
 	if !ok {
 		return nil, fmt.Errorf("%s can't be %s with %s", left.TypeID(), expr.Token.Type, right.TypeID())
 	}
-	return rule.EvalFn(expr.Token.Type, left, right), nil
+	return rule.EvalFn(left, right), nil
 }
 
 func (e *Evaluator) evalPrefix(expr *ast.PrefixExpr, env *Env) (registry.Value, error) {
@@ -146,5 +146,5 @@ func (e *Evaluator) evalPrefix(expr *ast.PrefixExpr, env *Env) (registry.Value, 
 	if !ok {
 		return nil, fmt.Errorf("%s can't be %s", expr.Token.Type, right.TypeID())
 	}
-	return rule.EvalFn(expr.Token.Type, right), nil
+	return rule.EvalFn(right), nil
 }

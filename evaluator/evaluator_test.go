@@ -14,7 +14,7 @@ func TestEvaluator_EvalConstAndRunBlock(t *testing.T) {
 	reg := registry.DefaultRegistry()
 	reg.RegisterBinary(token.PLUS, registry.IntegerID, registry.IntegerID, registry.BinaryRule{
 		EvalType: registry.IntegerID,
-		EvalFn: func(tok token.TokenType, left, right registry.Value) registry.Value {
+		EvalFn: func(left, right registry.Value) registry.Value {
 			return registry.Integer(int(left.(registry.Integer)) + int(right.(registry.Integer)))
 		},
 	})

@@ -7,12 +7,12 @@ import (
 )
 
 type BinaryRule struct {
-	EvalFn   func(tok token.TokenType, left, right Value) Value
+	EvalFn   func(left, right Value) Value
 	EvalType TypeID
 }
 
 type UnaryRule struct {
-	EvalFn   func(tok token.TokenType, right Value) Value
+	EvalFn   func(right Value) Value
 	EvalType TypeID
 }
 

@@ -45,7 +45,7 @@ function Run() { foo }
 
 	// NOTE: test operations injection
 	err := engine.RegisterBinary(token.PLUS, registry.StringID, registry.StringID, registry.BinaryRule{
-		EvalFn: func(tok token.TokenType, left, right registry.Value) registry.Value {
+		EvalFn: func(left, right registry.Value) registry.Value {
 			leftV := left.(registry.String)
 			rightV := right.(registry.String)
 			result := fmt.Sprintf("%s%s", leftV, rightV)
