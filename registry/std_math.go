@@ -41,6 +41,46 @@ func RegisterStdMath(reg *Registry) {
 			})
 		}
 	}
+
+	// String concatenation: "a" + "b" -> "ab". No other operator is defined
+	// for strings (e.g. `*` repetition), so they fall through to InvalidBinaryOp.
+	reg.RegisterBinary(token.PLUS, StringID, StringID, BinaryRule{
+		EvalFn:   evalStringConcat,
+		EvalType: StringID,
+	})
+
+	// Numeric negation: -Integer -> Integer, -Float -> Float.
+	for _, operand := range []TypeID{IntegerID, FloatID} {
+		reg.RegisterUnary(token.MINUS, operand, UnaryRule{
+			EvalFn:   evalNumericNegate,
+			EvalType: operand,
+		})
+	}
+
+	// Logical not: !Bool -> Bool.
+	reg.RegisterUnary(token.BANG, BoolID, UnaryRule{
+		EvalFn:   evalBoolNot,
+		EvalType: BoolID,
+	})
+}
+
+func evalStringConcat(operator token.TokenType, left, right Value) Value {
+	return left.(String) + right.(String)
+}
+
+func evalNumericNegate(operator token.TokenType, operand Value) Value {
+	switch operand := operand.(type) {
+	case Integer:
+		return -operand
+	case Float:
+		return -operand
+	default:
+		panic("operand is not numeric")
+	}
+}
+
+func evalBoolNot(operator token.TokenType, operand Value) Value {
+	return Bool(!operand.(Bool))
 }
 
 func evalNumericBinary(operator token.TokenType, left, right Value) Value {

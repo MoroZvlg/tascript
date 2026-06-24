@@ -132,13 +132,23 @@ func (nt NestingTooDeep) Error() string {
 	return fmt.Sprintf("%s [DEPTH_LIMIT] %s: expression nested too deep", nt.Phase, nt.Pos.String())
 }
 
-type UncomparableTypes struct {
+type InvalidBinaryOperation struct {
 	Phase Phase
-	Pos   token.Pos
+	Token token.Token
 	Left  registry.TypeID
 	Right registry.TypeID
 }
 
-func (ut UncomparableTypes) Error() string {
-	return fmt.Sprintf("%s [COMPARE_ERROR] %s: %s can't be compared with %s", ut.Phase, ut.Pos.String(), ut.Left, ut.Right)
+func (ib InvalidBinaryOperation) Error() string {
+	return fmt.Sprintf("%s [INVALID_OPERATION] %s: %s can't be %s with %s", ib.Phase, ib.Token.Pos.String(), ib.Left, ib.Token.String(), ib.Right)
+}
+
+type UnaryBinaryOperation struct {
+	Phase Phase
+	Token token.Token
+	Right registry.TypeID
+}
+
+func (iu UnaryBinaryOperation) Error() string {
+	return fmt.Sprintf("%s [INVALID_OPERATION] %s: %s can't be %s", iu.Phase, iu.Token.Pos.String(), iu.Right, iu.Token.String())
 }

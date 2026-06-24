@@ -70,11 +70,25 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) registry.TypeID {
 			return binaryRule.EvalType
 		}
 		if len(r.errs) == errsBefore {
-			r.addCompareErr(typedExpr.Token, left, right)
+			r.addInvalidBinaryOp(typedExpr.Token, left, right)
 		}
 		return registry.UnknownTypeID
-	default:
+	case *ast.PrefixExpr:
+		errsBefore := len(r.errs)
+		right := r.resolveExpr(typedExpr.Right, env)
+		unaryRule, exists := r.reg.LookupUnary(typedExpr.Token.Type, right)
+		if exists {
+			return unaryRule.EvalType
+		}
+		if len(r.errs) == errsBefore {
+			r.addInvalidUnaryOp(typedExpr.Token, right)
+		}
 		return registry.UnknownTypeID
+	case *ast.MemberAccessExpr:
+		// TODO: member access resolution — next task
+		return registry.UnknownTypeID
+	default:
+		return registry.UnknownTypeID // unreachable. we know all ast types. otherwise error on prev phase
 	}
 }
 
@@ -86,11 +100,19 @@ func (r *Resolver) addDuplicateDeclaration(kwToken, identToken token.Token) {
 	})
 }
 
-func (r *Resolver) addCompareErr(cmpToken token.Token, left, right registry.TypeID) {
-	r.errs = append(r.errs, &diag.UncomparableTypes{
+func (r *Resolver) addInvalidBinaryOp(cmpToken token.Token, left, right registry.TypeID) {
+	r.errs = append(r.errs, &diag.InvalidBinaryOperation{
 		Phase: diag.PhaseCheck,
-		Pos:   cmpToken.Pos,
+		Token: cmpToken,
 		Left:  left,
+		Right: right,
+	})
+}
+
+func (r *Resolver) addInvalidUnaryOp(opToken token.Token, right registry.TypeID) {
+	r.errs = append(r.errs, &diag.UnaryBinaryOperation{
+		Phase: diag.PhaseCheck,
+		Token: opToken,
 		Right: right,
 	})
 }

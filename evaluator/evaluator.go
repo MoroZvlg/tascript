@@ -103,6 +103,8 @@ func (e *Evaluator) evalExpr(expr ast.Expression, env *Env) (registry.Value, err
 		return e.evalIdent(n, env)
 	case *ast.InfixExpr:
 		return e.evalInfix(n, env)
+	case *ast.PrefixExpr:
+		return e.evalPrefix(n, env)
 	default:
 		return nil, fmt.Errorf("not implemented expression %T", expr)
 	}
@@ -132,4 +134,17 @@ func (e *Evaluator) evalInfix(expr *ast.InfixExpr, env *Env) (registry.Value, er
 		return nil, fmt.Errorf("%s can't be %s with %s", left.TypeID(), expr.Token.Type, right.TypeID())
 	}
 	return rule.EvalFn(expr.Token.Type, left, right), nil
+}
+
+func (e *Evaluator) evalPrefix(expr *ast.PrefixExpr, env *Env) (registry.Value, error) {
+	right, err := e.evalExpr(expr.Right, env)
+	if err != nil {
+		return nil, err
+	}
+
+	rule, ok := e.registry.LookupUnary(expr.Token.Type, right.TypeID())
+	if !ok {
+		return nil, fmt.Errorf("%s can't be %s", expr.Token.Type, right.TypeID())
+	}
+	return rule.EvalFn(expr.Token.Type, right), nil
 }

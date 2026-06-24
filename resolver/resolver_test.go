@@ -38,7 +38,22 @@ func TestResolver_ResolveConst(t *testing.T) {
 			`const foo = 1 ^+ "foo"`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addCompareError(ps[0], registry.IntegerID, registry.StringID),
+					addInvalidBinaryOp(
+						token.Token{Type: token.PLUS, Pos: ps[0], Literal: "+"},
+						registry.IntegerID, registry.StringID,
+					),
+				}
+			},
+		},
+		{
+			"not on int",
+			`const foo = ^!1`,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInvalidUnaryOp(
+						token.Token{Type: token.BANG, Pos: ps[0], Literal: "!"},
+						registry.IntegerID,
+					),
 				}
 			},
 		},
@@ -107,6 +122,10 @@ func addDuplicateDecl(kwToken, identToken token.Token) *diag.DuplicateDeclaratio
 	return &diag.DuplicateDeclaration{Phase: diag.PhaseCheck, KeywordToken: kwToken, IdentToken: identToken}
 }
 
-func addCompareError(pos token.Pos, left, right registry.TypeID) *diag.UncomparableTypes {
-	return &diag.UncomparableTypes{Phase: diag.PhaseCheck, Pos: pos, Left: left, Right: right}
+func addInvalidBinaryOp(tok token.Token, left, right registry.TypeID) *diag.InvalidBinaryOperation {
+	return &diag.InvalidBinaryOperation{Phase: diag.PhaseCheck, Token: tok, Left: left, Right: right}
+}
+
+func addInvalidUnaryOp(tok token.Token, right registry.TypeID) *diag.UnaryBinaryOperation {
+	return &diag.UnaryBinaryOperation{Phase: diag.PhaseCheck, Token: tok, Right: right}
 }
