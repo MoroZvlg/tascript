@@ -86,7 +86,7 @@ func (p *Parser) parseMemberExpr(left ast.Expression) ast.Expression {
 		p.addUnexpectedToken(p.currentToken, token.IDENT)
 		return &ast.BadExpr{Token: p.currentToken}
 	}
-	expr.Method = p.parseIdentExpr()
+	expr.Method = &ast.IdentExpr{Token: p.currentToken}
 	return &expr
 }
 

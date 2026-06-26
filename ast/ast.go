@@ -264,7 +264,7 @@ func (pe *PrefixExpr) expressionNode() {}
 type MemberAccessExpr struct {
 	Token  token.Token
 	Object Expression
-	Method Expression
+	Method *IdentExpr
 }
 
 func (ma *MemberAccessExpr) String() string {

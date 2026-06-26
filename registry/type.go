@@ -23,7 +23,7 @@ type TypeDef struct {
 
 type Value interface {
 	TypeID() TypeID
-	TypeShape() TypeShape
+	//TypeShape() TypeShape
 }
 
 type Integer int
@@ -32,9 +32,9 @@ func (i Integer) TypeID() TypeID {
 	return IntegerID
 }
 
-func (i Integer) TypeShape() TypeShape {
-	return ScalarShape
-}
+//func (i Integer) TypeShape() TypeShape {
+//	return ScalarShape
+//}
 
 type Float float64
 
@@ -42,9 +42,9 @@ func (f Float) TypeID() TypeID {
 	return FloatID
 }
 
-func (f Float) TypeShape() TypeShape {
-	return ScalarShape
-}
+//func (f Float) TypeShape() TypeShape {
+//	return ScalarShape
+//}
 
 type String string
 
@@ -52,9 +52,9 @@ func (s String) TypeID() TypeID {
 	return StringID
 }
 
-func (s String) TypeShape() TypeShape {
-	return ScalarShape
-}
+//func (s String) TypeShape() TypeShape {
+//	return ScalarShape
+//}
 
 type Bool bool
 
@@ -62,6 +62,14 @@ func (b Bool) TypeID() TypeID {
 	return BoolID
 }
 
-func (b Bool) TypeShape() TypeShape {
-	return ScalarShape
+//func (b Bool) TypeShape() TypeShape {
+//	return ScalarShape
+//}
+
+type PlainModule struct {
+	typeID TypeID
+}
+
+func (pm *PlainModule) TypeID() TypeID {
+	return pm.typeID
 }

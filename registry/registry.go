@@ -17,7 +17,8 @@ type UnaryRule struct {
 }
 
 type MemberAccessRule struct {
-	EvalFn   func(object TypeID, method string) Value
+	Callable bool
+	EvalFn   func() Value
 	EvalType TypeID
 }
 
@@ -31,20 +32,35 @@ type UnaryKey struct {
 	right TypeID
 }
 
+type MemberAccessKey struct {
+	owner  TypeID
+	method string
+}
+
+type GlobalRule struct {
+	Type  TypeID
+	Value Value
+}
+
 type Registry struct {
-	Binary map[BinaryKey]BinaryRule
-	Unary  map[UnaryKey]UnaryRule
-	Types  map[TypeID]TypeDef
+	Binary       map[BinaryKey]BinaryRule
+	Unary        map[UnaryKey]UnaryRule
+	MemberAccess map[MemberAccessKey]MemberAccessRule
+	Modules      map[string]*PlainModule
+	Types        map[TypeID]TypeDef
 }
 
 func DefaultRegistry() *Registry {
 	reg := &Registry{
-		Binary: make(map[BinaryKey]BinaryRule),
-		Unary:  make(map[UnaryKey]UnaryRule),
-		Types:  make(map[TypeID]TypeDef),
+		Binary:       make(map[BinaryKey]BinaryRule),
+		Unary:        make(map[UnaryKey]UnaryRule),
+		MemberAccess: make(map[MemberAccessKey]MemberAccessRule),
+		Modules:      make(map[string]*PlainModule),
+		Types:        make(map[TypeID]TypeDef),
 	}
 
 	RegisterStdMath(reg)
+	RegisterMathModule(reg)
 
 	return reg
 }
@@ -56,6 +72,18 @@ func (r *Registry) RegisterType(customType string) (TypeID, error) {
 	}
 	r.Types[id] = TypeDef{}
 	return id, nil
+}
+
+// TODO: Make check in every Register as we did in RegisterType
+
+func (r *Registry) RegisterModule(name string) (Value, error) {
+	moduleType, err := r.RegisterType(name)
+	if err != nil {
+		return nil, err
+	}
+	moduleValue := &PlainModule{typeID: moduleType}
+	r.Modules[name] = moduleValue
+	return moduleValue, nil
 }
 
 func (r *Registry) RegisterBinary(tok token.TokenType, left, right TypeID, rule BinaryRule) error {
@@ -93,5 +121,23 @@ func (r *Registry) LookupUnary(tok token.TokenType, right TypeID) (UnaryRule, bo
 		right: right,
 	}
 	rule, ok := r.Unary[key]
+	return rule, ok
+}
+
+func (r *Registry) RegisterMemberAccess(owner TypeID, member string, rule MemberAccessRule) error {
+	key := MemberAccessKey{
+		owner:  owner,
+		method: member,
+	}
+	r.MemberAccess[key] = rule
+	return nil
+}
+
+func (r *Registry) LookupMemberAccess(owner TypeID, member string) (MemberAccessRule, bool) {
+	key := MemberAccessKey{
+		owner:  owner,
+		method: member,
+	}
+	rule, ok := r.MemberAccess[key]
 	return rule, ok
 }

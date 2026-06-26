@@ -7,8 +7,12 @@ type Env struct {
 	values map[string]registry.Value
 }
 
-func NewEnv() *Env {
-	return &Env{values: make(map[string]registry.Value)}
+func EnvFromRegistry(reg *registry.Registry) *Env {
+	env := &Env{values: make(map[string]registry.Value)}
+	for name, rule := range reg.Modules {
+		env.values[name] = rule
+	}
+	return env
 }
 
 func NewEnclosedEnv(parent *Env) *Env {

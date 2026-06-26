@@ -17,7 +17,7 @@ func New(prog *ast.Program, reg *registry.Registry) *Evaluator {
 	return &Evaluator{
 		prog:     prog,
 		registry: reg,
-		env:      NewEnv(),
+		env:      EnvFromRegistry(reg),
 	}
 }
 
@@ -105,6 +105,8 @@ func (e *Evaluator) evalExpr(expr ast.Expression, env *Env) (registry.Value, err
 		return e.evalInfix(n, env)
 	case *ast.PrefixExpr:
 		return e.evalPrefix(n, env)
+	case *ast.MemberAccessExpr:
+		return e.evalMemberAccess(n, env)
 	default:
 		return nil, fmt.Errorf("not implemented expression %T", expr)
 	}
@@ -129,8 +131,8 @@ func (e *Evaluator) evalInfix(expr *ast.InfixExpr, env *Env) (registry.Value, er
 		return nil, err
 	}
 
-	rule, ok := e.registry.LookupBinary(expr.Token.Type, left.TypeID(), right.TypeID())
-	if !ok {
+	rule, exists := e.registry.LookupBinary(expr.Token.Type, left.TypeID(), right.TypeID())
+	if !exists {
 		return nil, fmt.Errorf("%s can't be %s with %s", left.TypeID(), expr.Token.Type, right.TypeID())
 	}
 	return rule.EvalFn(left, right), nil
@@ -142,9 +144,23 @@ func (e *Evaluator) evalPrefix(expr *ast.PrefixExpr, env *Env) (registry.Value, 
 		return nil, err
 	}
 
-	rule, ok := e.registry.LookupUnary(expr.Token.Type, right.TypeID())
-	if !ok {
+	rule, exists := e.registry.LookupUnary(expr.Token.Type, right.TypeID())
+	if !exists {
+		// TODO: unreachable? we are doing the same lookup on resolve stage?
 		return nil, fmt.Errorf("%s can't be %s", expr.Token.Type, right.TypeID())
 	}
 	return rule.EvalFn(right), nil
+}
+
+func (e *Evaluator) evalMemberAccess(expr *ast.MemberAccessExpr, env *Env) (registry.Value, error) {
+	object, err := e.evalExpr(expr.Object, env)
+	if err != nil {
+		return nil, err
+	}
+	rule, exists := e.registry.LookupMemberAccess(object.TypeID(), expr.Method.String())
+	if !exists {
+		// TODO: unreachable? we are doing the same lookup on resolve stage?
+		return nil, fmt.Errorf("undefined attribute %s for %s", expr.Method, expr.Object)
+	}
+	return rule.EvalFn(), nil
 }

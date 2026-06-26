@@ -32,7 +32,7 @@ func (r *Resolver) Resolve() bool {
 		return false
 	}
 
-	topLevelEnv := &Env{values: make(map[Symbol]registry.TypeID)}
+	topLevelEnv := EnvFromRegistry(r.reg)
 
 	r.resolveConst(r.prog.Consts, topLevelEnv)
 
@@ -61,6 +61,13 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) registry.TypeID {
 		return registry.FloatID
 	case *ast.StringExpr:
 		return registry.StringID
+	case *ast.IdentExpr:
+		value, exists := env.values[Symbol(typedExpr.String())]
+		if !exists {
+			r.addUndefinedIdent(typedExpr.Token)
+			return registry.UnknownTypeID
+		}
+		return value
 	case *ast.InfixExpr:
 		errsBefore := len(r.errs)
 		left := r.resolveExpr(typedExpr.Left, env)
@@ -85,7 +92,15 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) registry.TypeID {
 		}
 		return registry.UnknownTypeID
 	case *ast.MemberAccessExpr:
-		// TODO: member access resolution — next task
+		errsBefore := len(r.errs)
+		objectID := r.resolveExpr(typedExpr.Object, env)
+		rule, exists := r.reg.LookupMemberAccess(objectID, typedExpr.Method.String())
+		if exists {
+			return rule.EvalType
+		}
+		if len(r.errs) == errsBefore {
+			r.addUndefinedAttribute(typedExpr.Method.Token)
+		}
 		return registry.UnknownTypeID
 	default:
 		return registry.UnknownTypeID // unreachable. we know all ast types. otherwise error on prev phase
@@ -114,5 +129,19 @@ func (r *Resolver) addInvalidUnaryOp(opToken token.Token, right registry.TypeID)
 		Phase: diag.PhaseCheck,
 		Token: opToken,
 		Right: right,
+	})
+}
+
+func (r *Resolver) addUndefinedIdent(opToken token.Token) {
+	r.errs = append(r.errs, &diag.UndefinedIdent{
+		Phase: diag.PhaseCheck,
+		Token: opToken,
+	})
+}
+
+func (r *Resolver) addUndefinedAttribute(opToken token.Token) {
+	r.errs = append(r.errs, &diag.UndefinedAttribute{
+		Phase:  diag.PhaseCheck,
+		Member: opToken,
 	})
 }

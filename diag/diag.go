@@ -152,3 +152,21 @@ type UnaryBinaryOperation struct {
 func (iu UnaryBinaryOperation) Error() string {
 	return fmt.Sprintf("%s [INVALID_OPERATION] %s: %s can't be %s", iu.Phase, iu.Token.Pos.String(), iu.Right, iu.Token.String())
 }
+
+type UndefinedIdent struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (ui UndefinedIdent) Error() string {
+	return fmt.Sprintf("%s [UNDEFINED_IDENT] %s: unknown identifier %s", ui.Phase, ui.Token.Pos.String(), ui.Token.String())
+}
+
+type UndefinedAttribute struct {
+	Phase  Phase
+	Member token.Token
+}
+
+func (ua UndefinedAttribute) Error() string {
+	return fmt.Sprintf("%s [UNDEFINED_ATTRIBUTE] %s: unknown attribute %s", ua.Phase, ua.Member.Pos.String(), ua.Member.String())
+}
