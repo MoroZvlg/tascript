@@ -95,16 +95,77 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) registry.TypeID {
 		errsBefore := len(r.errs)
 		objectID := r.resolveExpr(typedExpr.Object, env)
 		rule, exists := r.reg.LookupMemberAccess(objectID, typedExpr.Method.String())
-		if exists {
-			return rule.EvalType
+		if !exists {
+			if len(r.errs) == errsBefore {
+				r.addUndefinedAttribute(typedExpr.Method.Token)
+			}
+			return registry.UnknownTypeID
 		}
-		if len(r.errs) == errsBefore {
-			r.addUndefinedAttribute(typedExpr.Method.Token)
+		return rule.EvalType
+	case *ast.CallExpr:
+		switch callee := typedExpr.Callee.(type) {
+		case *ast.MemberAccessExpr:
+			errsBefore := len(r.errs)
+			objectID := r.resolveExpr(callee.Object, env)
+
+			rule, callExists := r.reg.LookupCall(objectID, callee.Method.String())
+			if !callExists {
+				if len(r.errs) == errsBefore {
+					r.addUndefinedAttribute(callee.Method.Token)
+				}
+				return registry.UnknownTypeID
+			}
+
+			argsValid := r.checkAllArgs(typedExpr.Token, typedExpr.Args, typedExpr.Kwargs, rule, env)
+			if argsValid {
+				return rule.EvalType
+			}
+			return registry.UnknownTypeID
+		default:
+			return registry.UnknownTypeID
 		}
-		return registry.UnknownTypeID
+
 	default:
 		return registry.UnknownTypeID // unreachable. we know all ast types. otherwise error on prev phase
 	}
+}
+
+func (r *Resolver) checkAllArgs(token token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, env *Env) bool {
+	if len(args) != len(rule.Args) {
+		r.addArgsNumberMismatch(token, len(rule.Args), len(args))
+		return false
+	}
+
+	hasErrs := false
+
+	for i, arg := range args {
+		argType := r.resolveExpr(arg, env)
+		expectedType := rule.Args[i]
+		if argType != expectedType {
+			r.addArgTypeMissmatch(token, expectedType, argType)
+			hasErrs = true
+		}
+	}
+
+	kwArgs := make(map[string]ast.Expression)
+	for _, kwExpr := range kwargs {
+		kwArgs[kwExpr.Key.String()] = kwExpr.Value
+	}
+
+	for name, expectedType := range rule.KWArgs {
+		kwArg, exists := kwArgs[name]
+		if !exists {
+			r.addArgsMissingKWArg(token, name)
+			hasErrs = true
+			continue
+		}
+		gotType := r.resolveExpr(kwArg, env)
+		if expectedType != gotType {
+			r.addArgTypeMissmatch(token, expectedType, gotType)
+			hasErrs = true
+		}
+	}
+	return !hasErrs
 }
 
 func (r *Resolver) addDuplicateDeclaration(kwToken, identToken token.Token) {
@@ -143,5 +204,38 @@ func (r *Resolver) addUndefinedAttribute(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedAttribute{
 		Phase:  diag.PhaseCheck,
 		Member: opToken,
+	})
+}
+
+func (r *Resolver) addUndefinedMethod(opToken token.Token) {
+	r.errs = append(r.errs, &diag.UndefinedMethod{
+		Phase:  diag.PhaseCheck,
+		Method: opToken,
+	})
+}
+
+func (r *Resolver) addArgsNumberMismatch(opToken token.Token, expected, got int) {
+	r.errs = append(r.errs, &diag.ArgsNumberMissmatch{
+		Phase:    diag.PhaseCheck,
+		Token:    opToken,
+		Expected: expected,
+		Got:      got,
+	})
+}
+
+func (r *Resolver) addArgsMissingKWArg(opToken token.Token, expected string) {
+	r.errs = append(r.errs, &diag.MissingKWARG{
+		Phase:    diag.PhaseCheck,
+		Token:    opToken,
+		Expected: expected,
+	})
+}
+
+func (r *Resolver) addArgTypeMissmatch(opToken token.Token, expected, got registry.TypeID) {
+	r.errs = append(r.errs, &diag.ArgTypeMissmatch{
+		Phase:    diag.PhaseCheck,
+		Token:    opToken,
+		Expected: expected,
+		Got:      got,
 	})
 }

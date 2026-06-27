@@ -21,6 +21,11 @@ type TypeDef struct {
 	Shape TypeShape
 }
 
+type NamedValue struct {
+	Name  string
+	Value Value
+}
+
 type Value interface {
 	TypeID() TypeID
 	//TypeShape() TypeShape

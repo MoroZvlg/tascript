@@ -107,6 +107,8 @@ func (e *Evaluator) evalExpr(expr ast.Expression, env *Env) (registry.Value, err
 		return e.evalPrefix(n, env)
 	case *ast.MemberAccessExpr:
 		return e.evalMemberAccess(n, env)
+	case *ast.CallExpr:
+		return e.evalCall(n, env)
 	default:
 		return nil, fmt.Errorf("not implemented expression %T", expr)
 	}
@@ -163,4 +165,41 @@ func (e *Evaluator) evalMemberAccess(expr *ast.MemberAccessExpr, env *Env) (regi
 		return nil, fmt.Errorf("undefined attribute %s for %s", expr.Method, expr.Object)
 	}
 	return rule.EvalFn(), nil
+}
+
+func (e *Evaluator) evalCall(expr *ast.CallExpr, env *Env) (registry.Value, error) {
+	switch callee := expr.Callee.(type) {
+	case *ast.MemberAccessExpr:
+		object, err := e.evalExpr(callee.Object, env)
+		if err != nil {
+			return nil, err
+		}
+		rule, exists := e.registry.LookupCall(object.TypeID(), callee.Method.String())
+		if !exists {
+			// TODO: unreachable? we are doing the same lookup on resolve stage?
+			return nil, fmt.Errorf("undefined attribute %s for %s", callee.Method, callee.Object)
+		}
+
+		var args []registry.Value
+		for _, arg := range expr.Args {
+			value, err := e.evalExpr(arg, env)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, value)
+		}
+
+		kwArgs := make(map[string]registry.Value)
+		for _, kwArg := range expr.Kwargs {
+			value, err := e.evalExpr(kwArg.Value, env)
+			if err != nil {
+				return nil, err
+			}
+			kwArgs[kwArg.Key.String()] = value
+		}
+		return rule.EvalFn(args, kwArgs), nil
+	default:
+		return nil, fmt.Errorf("call on type %T not supported", callee)
+	}
+
 }

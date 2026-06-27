@@ -170,3 +170,44 @@ type UndefinedAttribute struct {
 func (ua UndefinedAttribute) Error() string {
 	return fmt.Sprintf("%s [UNDEFINED_ATTRIBUTE] %s: unknown attribute %s", ua.Phase, ua.Member.Pos.String(), ua.Member.String())
 }
+
+type UndefinedMethod struct {
+	Phase  Phase
+	Method token.Token
+}
+
+func (um UndefinedMethod) Error() string {
+	return fmt.Sprintf("%s [UNDEFINED_MEETHOD] %s: unknown method %s", um.Phase, um.Method.Pos.String(), um.Method.String())
+}
+
+type ArgsNumberMissmatch struct {
+	Phase    Phase
+	Token    token.Token
+	Expected int
+	Got      int
+}
+
+func (am ArgsNumberMissmatch) Error() string {
+	return fmt.Sprintf("%s [ARGS_NUMBER_MISSMATCH] %s: expected %d args but got %d", am.Phase, am.Token.Pos.String(), am.Expected, am.Got)
+}
+
+type MissingKWARG struct {
+	Phase    Phase
+	Token    token.Token
+	Expected string
+}
+
+func (am MissingKWARG) Error() string {
+	return fmt.Sprintf("%s [KWARG_MISSING] %s: missing %s KWArg", am.Phase, am.Token.Pos.String(), am.Expected)
+}
+
+type ArgTypeMissmatch struct {
+	Phase    Phase
+	Token    token.Token
+	Expected registry.TypeID
+	Got      registry.TypeID
+}
+
+func (am ArgTypeMissmatch) Error() string {
+	return fmt.Sprintf("%s [ARG_TYPE_MISSMATCH] %s: expected %s type got %s", am.Phase, am.Token.Pos.String(), am.Expected, am.Got)
+}

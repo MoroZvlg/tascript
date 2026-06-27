@@ -34,7 +34,7 @@ func (tam TaScriptMoney) TypeShape() registry.TypeShape {
 }
 
 func main() {
-	src := `const foo = math.PI
+	src := `const foo = math.sqrt(foo=5.0)
 function Run() { foo }
 `
 	engine, diags := tascript.NewEngine(src)

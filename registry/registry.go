@@ -17,8 +17,14 @@ type UnaryRule struct {
 }
 
 type MemberAccessRule struct {
-	Callable bool
 	EvalFn   func() Value
+	EvalType TypeID
+}
+
+type CallRule struct {
+	Args     []TypeID
+	KWArgs   map[string]TypeID
+	EvalFn   func([]Value, map[string]Value) Value
 	EvalType TypeID
 }
 
@@ -37,6 +43,11 @@ type MemberAccessKey struct {
 	method string
 }
 
+type CallKey struct {
+	owner  TypeID
+	method string
+}
+
 type GlobalRule struct {
 	Type  TypeID
 	Value Value
@@ -46,6 +57,7 @@ type Registry struct {
 	Binary       map[BinaryKey]BinaryRule
 	Unary        map[UnaryKey]UnaryRule
 	MemberAccess map[MemberAccessKey]MemberAccessRule
+	Call         map[CallKey]CallRule
 	Modules      map[string]*PlainModule
 	Types        map[TypeID]TypeDef
 }
@@ -55,6 +67,7 @@ func DefaultRegistry() *Registry {
 		Binary:       make(map[BinaryKey]BinaryRule),
 		Unary:        make(map[UnaryKey]UnaryRule),
 		MemberAccess: make(map[MemberAccessKey]MemberAccessRule),
+		Call:         make(map[CallKey]CallRule),
 		Modules:      make(map[string]*PlainModule),
 		Types:        make(map[TypeID]TypeDef),
 	}
@@ -139,5 +152,23 @@ func (r *Registry) LookupMemberAccess(owner TypeID, member string) (MemberAccess
 		method: member,
 	}
 	rule, ok := r.MemberAccess[key]
+	return rule, ok
+}
+
+func (r *Registry) RegisterCall(owner TypeID, member string, rule CallRule) error {
+	key := CallKey{
+		owner:  owner,
+		method: member,
+	}
+	r.Call[key] = rule
+	return nil
+}
+
+func (r *Registry) LookupCall(owner TypeID, member string) (CallRule, bool) {
+	key := CallKey{
+		owner:  owner,
+		method: member,
+	}
+	rule, ok := r.Call[key]
 	return rule, ok
 }
