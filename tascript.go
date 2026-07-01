@@ -33,13 +33,13 @@ func NewEngine(src string) (*Engine, []diag.Diagnostic) {
 
 func (e *Engine) Compile() (*Executable, []diag.Diagnostic) {
 	r := resolver.New(e.prog, e.reg)
-	r.Resolve()
+	resolvedProg, ok := r.Resolve()
 
-	if len(r.Diagnostics()) > 0 {
+	if !ok || len(r.Diagnostics()) > 0 {
 		return nil, r.Diagnostics()
 	}
 
-	eval := evaluator.New(e.prog, e.reg)
+	eval := evaluator.New(resolvedProg, e.reg)
 	return &Executable{eval: eval}, nil
 }
 

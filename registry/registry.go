@@ -22,10 +22,16 @@ type MemberAccessRule struct {
 }
 
 type CallRule struct {
-	Args     []TypeID
-	KWArgs   map[string]TypeID
-	EvalFn   func([]Value, map[string]Value) Value
+	Args     []ParamRule
+	EvalFn   func(args map[string]Value) Value
 	EvalType TypeID
+}
+
+type ParamRule struct {
+	Type    TypeID
+	Name    string
+	Exact   bool
+	Default Value
 }
 
 type BinaryKey struct {
@@ -53,6 +59,15 @@ type GlobalRule struct {
 	Value Value
 }
 
+type CoerceKey struct {
+	from, to TypeID
+}
+
+type CoerceRule struct {
+	EvalType TypeID
+	EvalFn   func(value Value) Value
+}
+
 type Registry struct {
 	Binary       map[BinaryKey]BinaryRule
 	Unary        map[UnaryKey]UnaryRule
@@ -60,6 +75,7 @@ type Registry struct {
 	Call         map[CallKey]CallRule
 	Modules      map[string]*PlainModule
 	Types        map[TypeID]TypeDef
+	Coerces      map[CoerceKey]CoerceRule
 }
 
 func DefaultRegistry() *Registry {
@@ -70,10 +86,18 @@ func DefaultRegistry() *Registry {
 		Call:         make(map[CallKey]CallRule),
 		Modules:      make(map[string]*PlainModule),
 		Types:        make(map[TypeID]TypeDef),
+		Coerces:      make(map[CoerceKey]CoerceRule),
 	}
 
 	RegisterStdMath(reg)
 	RegisterMathModule(reg)
+
+	reg.RegisterCoercion(IntegerID, FloatID, CoerceRule{
+		EvalType: FloatID,
+		EvalFn: func(value Value) Value {
+			return Float(float64(value.(Integer)))
+		},
+	})
 
 	return reg
 }
@@ -88,6 +112,18 @@ func (r *Registry) RegisterType(customType string) (TypeID, error) {
 }
 
 // TODO: Make check in every Register as we did in RegisterType
+
+func (r *Registry) RegisterCoercion(from, to TypeID, rule CoerceRule) error {
+	key := CoerceKey{from: from, to: to}
+	r.Coerces[key] = rule
+	return nil
+}
+
+func (r *Registry) LookupCoerce(from, to TypeID) (CoerceRule, bool) {
+	key := CoerceKey{from: from, to: to}
+	rule, ok := r.Coerces[key]
+	return rule, ok
+}
 
 func (r *Registry) RegisterModule(name string) (Value, error) {
 	moduleType, err := r.RegisterType(name)

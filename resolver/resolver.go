@@ -4,6 +4,7 @@ import (
 	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/diag"
 	"github.com/MoroZvlg/tascript/registry"
+	"github.com/MoroZvlg/tascript/resolved"
 	"github.com/MoroZvlg/tascript/token"
 )
 
@@ -11,15 +12,17 @@ type Symbol string
 
 // Resolver doing both resolve and type check
 type Resolver struct {
-	prog *ast.Program
-	reg  *registry.Registry
-	errs []diag.Diagnostic
+	prog         *ast.Program
+	resolvedProg *resolved.Program
+	reg          *registry.Registry
+	errs         []diag.Diagnostic
 }
 
 func New(prog *ast.Program, reg *registry.Registry) *Resolver {
 	return &Resolver{
-		prog: prog,
-		reg:  reg,
+		prog:         prog,
+		resolvedProg: &resolved.Program{},
+		reg:          reg,
 	}
 }
 
@@ -27,146 +30,213 @@ func (r *Resolver) Diagnostics() []diag.Diagnostic {
 	return r.errs
 }
 
-func (r *Resolver) Resolve() bool {
+func (r *Resolver) Resolve() (*resolved.Program, bool) {
 	if !r.prog.Valid {
-		return false
+		return r.resolvedProg, false
 	}
 
 	topLevelEnv := EnvFromRegistry(r.reg)
 
-	r.resolveConst(r.prog.Consts, topLevelEnv)
+	r.resolvedProg.Consts = r.resolveConst(r.prog.Consts, topLevelEnv)
+
+	r.resolvedProg.RunFn = r.resolveFunc(r.prog.RunFn, topLevelEnv)
+	if r.prog.InitFn != nil {
+		r.resolvedProg.InitFn = r.resolveFunc(r.prog.InitFn, topLevelEnv)
+	}
 
 	if len(r.errs) > 0 {
-		return false
+		return r.resolvedProg, false
 	}
-	return true
+	return r.resolvedProg, true
 }
 
-func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) {
+func (r *Resolver) resolveFunc(astFunc *ast.FunctionDecl, env *Env) *resolved.Function {
+	resolvedFunc := &resolved.Function{Token: astFunc.Token}
+	resolvedStmts := make([]resolved.Statement, 0)
+	for _, stmt := range astFunc.Body.Stmts {
+		resolvedStmts = append(resolvedStmts, r.resolveStmt(stmt, env))
+	}
+	resolvedFunc.Body = &resolved.BlockStmt{
+		Token: astFunc.Body.Token,
+		Stmts: resolvedStmts,
+	}
+	return resolvedFunc
+}
+
+func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Statement {
+	switch astStmtTyped := astStmt.(type) {
+	case *ast.ExprStmt:
+		return &resolved.ExprStmt{
+			Token: astStmtTyped.Token,
+			Expr:  r.resolveExpr(astStmtTyped.Expr, env),
+		}
+	default:
+		return nil // TODO: raise error?
+	}
+}
+
+func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.ConstDecl {
+	resolvedConsts := make([]*resolved.ConstDecl, 0)
 	for _, c := range consts {
 		sym := Symbol(c.Identifier.String())
 		if _, exists := env.values[sym]; exists {
 			r.addDuplicateDeclaration(c.Token, c.Identifier.Token) // How to add existing
-			return
+			return resolvedConsts
 		}
-		env.values[sym] = r.resolveExpr(c.Value, env)
+		constValue := r.resolveExpr(c.Value, env)
+		env.values[sym] = constValue.Type()
+		resolvedConsts = append(resolvedConsts, &resolved.ConstDecl{
+			Token: c.Token,
+			Name:  &resolved.IdentExpr{Token: c.Identifier.Token, T: constValue.Type()},
+			Value: constValue,
+		})
 	}
+	return resolvedConsts
 }
 
-func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) registry.TypeID {
+func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expression {
 	switch typedExpr := expr.(type) {
 	case *ast.IntegerExpr:
-		return registry.IntegerID
+		return &resolved.IntegerExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.IntegerID}
 	case *ast.FloatExpr:
-		return registry.FloatID
+		return &resolved.FloatExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.FloatID}
 	case *ast.StringExpr:
-		return registry.StringID
+		return &resolved.StringExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.StringID}
 	case *ast.IdentExpr:
-		value, exists := env.values[Symbol(typedExpr.String())]
+		t, exists := env.values[Symbol(typedExpr.String())]
 		if !exists {
 			r.addUndefinedIdent(typedExpr.Token)
-			return registry.UnknownTypeID
+			return &resolved.BadExpr{Token: typedExpr.Token}
 		}
-		return value
+		return &resolved.IdentExpr{Token: typedExpr.Token, T: t}
 	case *ast.InfixExpr:
 		errsBefore := len(r.errs)
 		left := r.resolveExpr(typedExpr.Left, env)
 		right := r.resolveExpr(typedExpr.Right, env)
-		binaryRule, exists := r.reg.LookupBinary(typedExpr.Token.Type, left, right)
-		if exists {
-			return binaryRule.EvalType
+		binaryRule, exists := r.reg.LookupBinary(typedExpr.Token.Type, left.Type(), right.Type())
+		if !exists {
+			if len(r.errs) == errsBefore {
+				r.addInvalidBinaryOp(typedExpr.Token, left.Type(), right.Type())
+			}
+			return &resolved.BadExpr{Token: typedExpr.Token}
 		}
-		if len(r.errs) == errsBefore {
-			r.addInvalidBinaryOp(typedExpr.Token, left, right)
-		}
-		return registry.UnknownTypeID
+		return &resolved.InfixExpr{Token: typedExpr.Token, Left: left, Right: right, T: binaryRule.EvalType, EvalFn: binaryRule.EvalFn}
 	case *ast.PrefixExpr:
 		errsBefore := len(r.errs)
 		right := r.resolveExpr(typedExpr.Right, env)
-		unaryRule, exists := r.reg.LookupUnary(typedExpr.Token.Type, right)
-		if exists {
-			return unaryRule.EvalType
-		}
-		if len(r.errs) == errsBefore {
-			r.addInvalidUnaryOp(typedExpr.Token, right)
-		}
-		return registry.UnknownTypeID
-	case *ast.MemberAccessExpr:
-		errsBefore := len(r.errs)
-		objectID := r.resolveExpr(typedExpr.Object, env)
-		rule, exists := r.reg.LookupMemberAccess(objectID, typedExpr.Method.String())
+		unaryRule, exists := r.reg.LookupUnary(typedExpr.Token.Type, right.Type())
 		if !exists {
 			if len(r.errs) == errsBefore {
-				r.addUndefinedAttribute(typedExpr.Method.Token)
+				r.addInvalidUnaryOp(typedExpr.Token, right.Type())
 			}
-			return registry.UnknownTypeID
+			return &resolved.BadExpr{Token: typedExpr.Token}
 		}
-		return rule.EvalType
-	case *ast.CallExpr:
-		switch callee := typedExpr.Callee.(type) {
-		case *ast.MemberAccessExpr:
-			errsBefore := len(r.errs)
-			objectID := r.resolveExpr(callee.Object, env)
+		return &resolved.PrefixExpr{Token: typedExpr.Token, Right: right, T: unaryRule.EvalType, EvalFn: unaryRule.EvalFn}
 
-			rule, callExists := r.reg.LookupCall(objectID, callee.Method.String())
-			if !callExists {
-				if len(r.errs) == errsBefore {
-					r.addUndefinedAttribute(callee.Method.Token)
-				}
-				return registry.UnknownTypeID
-			}
-
-			argsValid := r.checkAllArgs(typedExpr.Token, typedExpr.Args, typedExpr.Kwargs, rule, env)
-			if argsValid {
-				return rule.EvalType
-			}
-			return registry.UnknownTypeID
-		default:
-			return registry.UnknownTypeID
-		}
+	//case *ast.MemberAccessExpr:
+	//	errsBefore := len(r.errs)
+	//	objectID := r.resolveExpr(typedExpr.Object, env)
+	//	rule, exists := r.reg.LookupMemberAccess(objectID, typedExpr.Method.String())
+	//	if !exists {
+	//		if len(r.errs) == errsBefore {
+	//			r.addUndefinedAttribute(typedExpr.Method.Token)
+	//		}
+	//		return registry.UnknownTypeID
+	//	}
+	//	return rule.EvalType
+	//case *ast.CallExpr:
+	//	switch callee := typedExpr.Callee.(type) {
+	//	case *ast.MemberAccessExpr:
+	//		errsBefore := len(r.errs)
+	//		objectID := r.resolveExpr(callee.Object, env)
+	//
+	//		rule, callExists := r.reg.LookupCall(objectID, callee.Method.String())
+	//		if !callExists {
+	//			if len(r.errs) == errsBefore {
+	//				r.addUndefinedAttribute(callee.Method.Token)
+	//			}
+	//			return registry.UnknownTypeID
+	//		}
+	//
+	//		argsValid := r.checkAllArgs(typedExpr.Token, typedExpr.Args, typedExpr.Kwargs, rule, env)
+	//		if argsValid {
+	//			return rule.EvalType
+	//		}
+	//		return registry.UnknownTypeID
+	//	default:
+	//		return registry.UnknownTypeID
+	//	}
 
 	default:
-		return registry.UnknownTypeID // unreachable. we know all ast types. otherwise error on prev phase
+		return &resolved.BadExpr{} // unreachable. we know all ast types. otherwise error on prev phase
 	}
 }
 
-func (r *Resolver) checkAllArgs(token token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, env *Env) bool {
-	if len(args) != len(rule.Args) {
-		r.addArgsNumberMismatch(token, len(rule.Args), len(args))
-		return false
-	}
-
-	hasErrs := false
-
-	for i, arg := range args {
-		argType := r.resolveExpr(arg, env)
-		expectedType := rule.Args[i]
-		if argType != expectedType {
-			r.addArgTypeMissmatch(token, expectedType, argType)
-			hasErrs = true
-		}
-	}
-
-	kwArgs := make(map[string]ast.Expression)
-	for _, kwExpr := range kwargs {
-		kwArgs[kwExpr.Key.String()] = kwExpr.Value
-	}
-
-	for name, expectedType := range rule.KWArgs {
-		kwArg, exists := kwArgs[name]
-		if !exists {
-			r.addArgsMissingKWArg(token, name)
-			hasErrs = true
-			continue
-		}
-		gotType := r.resolveExpr(kwArg, env)
-		if expectedType != gotType {
-			r.addArgTypeMissmatch(token, expectedType, gotType)
-			hasErrs = true
-		}
-	}
-	return !hasErrs
-}
+//func (r *Resolver) checkAllArgs(token token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, env *Env) bool {
+//	if len(args)+len(kwargs) != len(rule.Args) {
+//		r.addArgsNumberMismatch(token, len(rule.Args), len(args)+len(kwargs))
+//		return false
+//	}
+//	argSlots := make(map[string]registry.TypeID)
+//
+//	hasErrs := false
+//
+//	for i, arg := range args {
+//		argType := r.resolveExpr(arg, env)
+//		paramRule := rule.Args[i]
+//
+//		ok := argType == paramRule.Type
+//		if !ok && !paramRule.Exact {
+//			_, ok = r.reg.LookupCoerce(argType, paramRule.Type)
+//		}
+//
+//		if !ok {
+//			hasErrs = true
+//			r.addArgTypeMissmatch(token, paramRule.Type, argType)
+//		}
+//
+//		argSlots[paramRule.Name] = argType
+//	}
+//
+//	for _, kwExpr := range kwargs {
+//		argType := r.resolveExpr(kwExpr.Value, env)
+//		argName := kwExpr.Key.String()
+//		var paramRule *registry.ParamRule
+//
+//		for _, argRule := range rule.Args {
+//			if argRule.Name == argName {
+//				paramRule = &argRule
+//				break
+//			}
+//		}
+//
+//		if paramRule == nil {
+//			continue
+//		}
+//
+//		ok := argType == paramRule.Type
+//		if !ok && !paramRule.Exact {
+//			_, ok = r.reg.LookupCoerce(argType, paramRule.Type)
+//		}
+//
+//		if !ok {
+//			hasErrs = true
+//			r.addArgTypeMissmatch(token, paramRule.Type, argType)
+//		}
+//		argSlots[argName] = argType
+//		break
+//	}
+//
+//	for _, argRule := range rule.Args {
+//		_, exists := argSlots[argRule.Name]
+//		if !exists && argRule.Exact {
+//			hasErrs = true
+//			r.addArgsMissingKWArg(token, argRule.Name)
+//		}
+//	}
+//
+//	return !hasErrs
+//}
 
 func (r *Resolver) addDuplicateDeclaration(kwToken, identToken token.Token) {
 	r.errs = append(r.errs, &diag.DuplicateDeclaration{

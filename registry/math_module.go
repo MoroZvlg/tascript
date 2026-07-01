@@ -13,18 +13,24 @@ func RegisterMathModule(reg *Registry) {
 	})
 
 	reg.RegisterCall(mathModuleType.TypeID(), "sqrt", CallRule{
-		KWArgs:   map[string]TypeID{"foo": FloatID},
+		Args: []ParamRule{
+			{
+				Type:    FloatID,
+				Name:    "number",
+				Exact:   false,
+				Default: nil,
+			},
+		},
 		EvalType: FloatID,
-		EvalFn: func(_ []Value, kwArgs map[string]Value) Value {
-			return Float(math.Sqrt(float64(kwArgs["foo"].(Float))))
+		EvalFn: func(args map[string]Value) Value {
+			switch args["number"].(type) {
+			case Integer:
+				return Float(math.Sqrt(float64(args["number"].(Integer))))
+			case Float:
+				return Float(math.Sqrt(float64(args["number"].(Float))))
+			default:
+				panic("unknown type")
+			}
 		},
 	})
-
-	//reg.RegisterCall(mathModuleType.TypeID(), "sqrt", CallRule{
-	//	Args:     []TypeID{IntegerID}, // TODO: it will override float. float stops working...
-	//	EvalType: FloatID,
-	//	EvalFn: func(args []Value, _ map[string]Value) Value {
-	//		return Float(math.Sqrt(float64(args[0].(Integer))))
-	//	},
-	//})
 }
