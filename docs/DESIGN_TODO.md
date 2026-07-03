@@ -128,14 +128,6 @@ decide trailing commas are illegal, it must be **one** error (the trailing comma
 not a cascade: the parser currently misreads the `,` `)` sequence as a positional arg
 after kwargs and then trips again on the close paren.
 
-## Diag: `MissingKWARG` → general missing-argument error
-
-`diag.MissingKWARG` (`[KWARG_MISSING] missing %s KWArg`) is misnamed: a parameter left
-unfilled isn't a "missing kwarg" — it's a **missing argument** that merely *could* have been
-supplied by keyword. Rename to `MissingArg` / `[ARG_MISSING]` with wording like
-"missing argument %s" and use it for any unfilled parameter, positional or keyword-only.
-Single emit site: `resolver.go` `addArgsMissingKWArg`.
-
 ## Member-access receiver (near-term, not really deferred)
 
 `MemberAccessRule.EvalFn` is `func() Value` — **no receiver**. Works for `math.PI` (constant),

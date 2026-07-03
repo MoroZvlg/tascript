@@ -13,9 +13,57 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
-const runSuffix = "\nfunction Run() {\nlet a = 1\n}"
+const runSuffix = "\nfunction Run() {\n1\n}"
 
-func TestResolver_ResolveConst(t *testing.T) {
+func TestResolver_ResolveConstSimple(t *testing.T) {
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{"const FOO = 5", "const FOO:Integer = 5"},
+		{"const FOO = 5.3", "const FOO:Float = 5.3"},
+		{`const FOO = "bar"`, `const FOO:String = "bar"`},
+		{`const FOO = "a\"b"`, `const FOO:String = "a\"b"`},
+		{"const FOO = false", "const FOO:Bool = false"},
+		{"const FOO = -(5.3 + 3)", "const FOO:Float = (prefix:Float, -, (infix:Float, +, 5.3, 3))"},
+		{"const FOO = 7 % 3 * 2", "const FOO:Integer = (infix:Integer, *, (infix:Integer, %, 7, 3), 2)"},
+		{"const FOO = true == 5 > 2", "const FOO:Bool = (infix:Bool, ==, true, (infix:Bool, >, 5, 2))"},
+		{"const FOO = math.PI", "const FOO:Float = (member_access:Float, math:math, PI)"},
+		{"const FOO = math.sqrt(3*3)", "const FOO:Float = (method_call:Float, math:math, sqrt, number=(coerce:Float, (infix:Integer, *, 3, 3)))"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input + runSuffix)
+			p := parser.New(l)
+			prog := p.Parse()
+			if len(p.Diagnostics()) > 0 {
+				for _, d := range p.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
+			}
+
+			reg := registry.DefaultRegistry()
+			resolv := resolver.New(prog, reg)
+
+			resolvedProg := resolv.Resolve()
+
+			if len(resolv.Diagnostics()) > 0 {
+				for _, d := range resolv.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(resolv.Diagnostics()))
+			}
+			dumpedRes := dumpConst(t, resolvedProg.Consts[0])
+			if tt.output != dumpedRes {
+				t.Errorf("expected %s, got %s", tt.output, dumpedRes)
+			}
+		})
+	}
+}
+
+func TestResolver_ResolveConstErrors(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
@@ -23,19 +71,19 @@ func TestResolver_ResolveConst(t *testing.T) {
 	}{
 		{
 			"duplicate declaration",
-			"const foo = bar\n ^const ^foo = baz",
+			"const FOO = 3\n ^const ^FOO = 4",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
 						token.Token{Type: token.CONST, Pos: ps[0], Literal: "const"},
-						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "foo"},
+						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "FOO"},
 					),
 				}
 			},
 		},
 		{
 			"int + string",
-			`const foo = 1 ^+ "foo"`,
+			`const FOO = 1 ^+ "foo"`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addInvalidBinaryOp(
@@ -47,7 +95,7 @@ func TestResolver_ResolveConst(t *testing.T) {
 		},
 		{
 			"not on int",
-			`const foo = ^!1`,
+			`const FOO = ^!1`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addInvalidUnaryOp(
@@ -57,6 +105,61 @@ func TestResolver_ResolveConst(t *testing.T) {
 				}
 			},
 		},
+		{
+			"undefined ident",
+			`const FOO = ^bar`,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "bar"}),
+				}
+			},
+		},
+		{
+			"undefined attribute",
+			`const FOO = math.^FOO`,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedAttribute(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "FOO"}),
+				}
+			},
+		},
+		{
+			"undefined method call",
+			`const FOO = math.^foo()`,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedMethod(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "foo"}),
+				}
+			},
+		},
+		{
+			"args number missmatch",
+			`const FOO = math.sqrt^(1, 2)`,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addArgsNumberMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, 1, 2),
+				}
+			},
+		},
+		{
+			"args number missmatch",
+			`const FOO = math.sqrt^("foo")`,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addArgTypeMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, registry.FloatID, registry.StringID),
+				}
+			},
+		},
+		// TODO: we need some builtin func with at least 2 args to implement this test
+		//{
+		//	"arg missing",
+		//	`const FOO = math.sqrt^()`,
+		//	func(ps []token.Pos) []diag.Diagnostic {
+		//		return []diag.Diagnostic{
+		//			addMissingArg(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, "number"),
+		//		}
+		//	},
+		//},
 	}
 
 	for _, tt := range tests {
@@ -79,7 +182,7 @@ func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []dia
 	prog := p.Parse()
 	reg := registry.DefaultRegistry()
 	resolv := resolver.New(prog, reg)
-	result := resolv.Resolve()
+	_ = resolv.Resolve()
 
 	got := resolv.Diagnostics()
 	if len(got) != len(expected) {
@@ -91,10 +194,6 @@ func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []dia
 
 	if diff := cmp.Diff(expected, got, cmpopts.EquateEmpty(), cmpopts.EquateComparable(registry.TypeID{})); diff != "" {
 		t.Errorf("diagnostics mismatch (-want +got):\n%s", diff)
-	}
-
-	if len(expected) > 0 && result {
-		t.Errorf("expected resolver to return false")
 	}
 }
 
@@ -128,4 +227,28 @@ func addInvalidBinaryOp(tok token.Token, left, right registry.TypeID) *diag.Inva
 
 func addInvalidUnaryOp(tok token.Token, right registry.TypeID) *diag.UnaryBinaryOperation {
 	return &diag.UnaryBinaryOperation{Phase: diag.PhaseCheck, Token: tok, Right: right}
+}
+
+func addUndefinedIdent(tok token.Token) *diag.UndefinedIdent {
+	return &diag.UndefinedIdent{Phase: diag.PhaseCheck, Token: tok}
+}
+
+func addUndefinedAttribute(member token.Token) *diag.UndefinedAttribute {
+	return &diag.UndefinedAttribute{Phase: diag.PhaseCheck, Member: member}
+}
+
+func addUndefinedMethod(method token.Token) *diag.UndefinedMethod {
+	return &diag.UndefinedMethod{Phase: diag.PhaseCheck, Method: method}
+}
+
+func addArgsNumberMismatch(tok token.Token, expected, got int) *diag.ArgsNumberMissmatch {
+	return &diag.ArgsNumberMissmatch{Phase: diag.PhaseCheck, Token: tok, Expected: expected, Got: got}
+}
+
+func addMissingArg(tok token.Token, expected string) *diag.MissingArg {
+	return &diag.MissingArg{Phase: diag.PhaseCheck, Token: tok, Expected: expected}
+}
+
+func addArgTypeMismatch(tok token.Token, expected, got registry.TypeID) *diag.ArgTypeMissmatch {
+	return &diag.ArgTypeMissmatch{Phase: diag.PhaseCheck, Token: tok, Expected: expected, Got: got}
 }

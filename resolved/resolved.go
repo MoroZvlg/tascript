@@ -434,4 +434,26 @@ type ConstDecl struct {
 	Token token.Token
 	Name  *IdentExpr
 	Value Expression
+	T     registry.TypeID
+}
+
+func (cd *ConstDecl) Type() registry.TypeID {
+	return cd.T
+}
+
+func (cd *ConstDecl) String() string {
+	var out bytes.Buffer
+	out.WriteString("const ")
+	if cd.Name == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(cd.Name.String())
+	}
+	out.WriteString(" = ")
+	if cd.Value == nil {
+		out.WriteString("<missing expression>")
+	} else {
+		out.WriteString(cd.Value.String())
+	}
+	return out.String()
 }

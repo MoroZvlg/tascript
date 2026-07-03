@@ -1128,8 +1128,8 @@ func missingRunErr(pos token.Pos) *diag.MissingRunFunc {
 	return &diag.MissingRunFunc{Phase: diag.PhaseParse, Pos: pos}
 }
 
-func unexpectedTopDeclErr(pos token.Pos) diag.UnexpectedTopDecl {
-	return diag.UnexpectedTopDecl{Phase: diag.PhaseParse, Pos: pos}
+func unexpectedTopDeclErr(pos token.Pos) *diag.UnexpectedTopDecl {
+	return &diag.UnexpectedTopDecl{Phase: diag.PhaseParse, Pos: pos}
 }
 
 func extractErrorsPos(input string) (string, []token.Pos) {

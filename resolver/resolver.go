@@ -86,6 +86,7 @@ func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.C
 			Token: c.Token,
 			Name:  &resolved.IdentExpr{Token: c.Identifier.Token, T: constValue.Type()},
 			Value: constValue,
+			T:     constValue.Type(),
 		})
 	}
 	return resolvedConsts
@@ -99,6 +100,8 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		return &resolved.FloatExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.FloatID}
 	case *ast.StringExpr:
 		return &resolved.StringExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.StringID}
+	case *ast.BooleanExpr:
+		return &resolved.BooleanExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.BoolID}
 	case *ast.IdentExpr:
 		t, exists := env.Get(Symbol(typedExpr.String()))
 		if !exists {
@@ -156,7 +159,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 			rule, callExists := r.reg.LookupCall(resolvedExpr.Type(), callee.Method.String())
 			if !callExists {
 				if len(r.errs) == errsBefore {
-					r.addUndefinedAttribute(callee.Method.Token)
+					r.addUndefinedMethod(callee.Method.Token)
 				}
 				return &resolved.BadExpr{Token: typedExpr.Token}
 			}
@@ -258,7 +261,7 @@ func (r *Resolver) resolveArgs(token token.Token, args []ast.Expression, kwargs 
 	for i, isResolved := range resolvedIdx {
 		if !isResolved {
 			unresolvedRule := rule.Args[i]
-			r.addArgsMissingKWArg(token, unresolvedRule.Name)
+			r.addArgsMissing(token, unresolvedRule.Name)
 			hasErrs = true
 		}
 	}
@@ -321,8 +324,8 @@ func (r *Resolver) addArgsNumberMismatch(opToken token.Token, expected, got int)
 	})
 }
 
-func (r *Resolver) addArgsMissingKWArg(opToken token.Token, expected string) {
-	r.errs = append(r.errs, &diag.MissingKWARG{
+func (r *Resolver) addArgsMissing(opToken token.Token, expected string) {
+	r.errs = append(r.errs, &diag.MissingArg{
 		Phase:    diag.PhaseCheck,
 		Token:    opToken,
 		Expected: expected,

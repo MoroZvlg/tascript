@@ -4,11 +4,15 @@ type TypeID struct {
 	id string
 }
 
+func (tid TypeID) String() string {
+	return tid.id
+}
+
 var IntegerID = TypeID{id: "Integer"}
 var FloatID = TypeID{id: "Float"}
 var StringID = TypeID{id: "String"}
 var BoolID = TypeID{id: "Bool"}
-var UnknownTypeID = TypeID{id: ""} // as default value. Is it ok?
+var UnknownTypeID = TypeID{id: "Unknown"} // as default value. Is it ok?
 
 type TypeShape string
 

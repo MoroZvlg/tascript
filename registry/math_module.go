@@ -20,12 +20,6 @@ func RegisterMathModule(reg *Registry) {
 				Exact:   false,
 				Default: nil,
 			},
-			{
-				Type:    FloatID,
-				Name:    "number_foo",
-				Exact:   false,
-				Default: nil,
-			},
 		},
 		EvalType: FloatID,
 		EvalFn: func(_ Value, args map[string]Value) Value {

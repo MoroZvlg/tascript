@@ -191,14 +191,14 @@ func (am ArgsNumberMissmatch) Error() string {
 	return fmt.Sprintf("%s [ARGS_NUMBER_MISSMATCH] %s: expected %d args but got %d", am.Phase, am.Token.Pos.String(), am.Expected, am.Got)
 }
 
-type MissingKWARG struct {
+type MissingArg struct {
 	Phase    Phase
 	Token    token.Token
 	Expected string
 }
 
-func (am MissingKWARG) Error() string {
-	return fmt.Sprintf("%s [KWARG_MISSING] %s: missing %s KWArg", am.Phase, am.Token.Pos.String(), am.Expected)
+func (am MissingArg) Error() string {
+	return fmt.Sprintf("%s [ARG_MISSING] %s: missing %s arg", am.Phase, am.Token.Pos.String(), am.Expected)
 }
 
 type ArgTypeMissmatch struct {

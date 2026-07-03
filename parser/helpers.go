@@ -79,14 +79,14 @@ func (p *Parser) addUnexpectedToken(tok token.Token, expected token.TokenType) {
 }
 
 func (p *Parser) addUnexpectedTopDecl(pos token.Pos) {
-	p.errors = append(p.errors, diag.UnexpectedTopDecl{
+	p.errors = append(p.errors, &diag.UnexpectedTopDecl{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})
 }
 
 func (p *Parser) addDuplicateDecl(kwToken, identToken token.Token) {
-	p.errors = append(p.errors, diag.DuplicateDeclaration{
+	p.errors = append(p.errors, &diag.DuplicateDeclaration{
 		Phase:        diag.PhaseParse,
 		KeywordToken: kwToken,
 		IdentToken:   identToken,

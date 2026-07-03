@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"cmp"
 	"math"
 
 	"github.com/MoroZvlg/tascript/token"
@@ -12,6 +13,15 @@ var arithmeticOperators = []token.TokenType{
 	token.ASTERISK,
 	token.SLASH,
 	token.PERCENT,
+}
+
+var comparisonOperators = []token.TokenType{
+	token.EQ,
+	token.NEQ,
+	token.LT,
+	token.GT,
+	token.LTEQ,
+	token.GTEQ,
 }
 
 var numericTypePairs = []struct {
@@ -40,6 +50,26 @@ func RegisterStdMath(reg *Registry) {
 				EvalType: resultType,
 			})
 		}
+	}
+
+	for _, operator := range comparisonOperators {
+		for _, pair := range numericTypePairs {
+			reg.RegisterBinary(operator, pair.left, pair.right, BinaryRule{
+				EvalFn:   makeNumericCompare(operator),
+				EvalType: BoolID,
+			})
+		}
+	}
+
+	for _, operand := range []TypeID{StringID, BoolID} {
+		reg.RegisterBinary(token.EQ, operand, operand, BinaryRule{
+			EvalFn:   evalScalarEq,
+			EvalType: BoolID,
+		})
+		reg.RegisterBinary(token.NEQ, operand, operand, BinaryRule{
+			EvalFn:   evalScalarNeq,
+			EvalType: BoolID,
+		})
 	}
 
 	// String concatenation: "a" + "b" -> "ab". No other operator is defined
@@ -83,9 +113,6 @@ func evalBoolNot(operand Value) Value {
 	return Bool(!operand.(Bool))
 }
 
-// makeNumericBinary captures the operator in a closure so a single
-// implementation can back every arithmetic token without the EvalFn needing
-// the operator passed back in at eval time (the rule is already keyed by it).
 func makeNumericBinary(operator token.TokenType) func(left, right Value) Value {
 	return func(left, right Value) Value {
 		leftInt, leftIsInt := left.(Integer)
@@ -122,6 +149,44 @@ func makeNumericBinary(operator token.TokenType) func(left, right Value) Value {
 			panic("unsupported numeric operator: " + operator)
 		}
 	}
+}
+
+func makeNumericCompare(operator token.TokenType) func(left, right Value) Value {
+	return func(left, right Value) Value {
+		leftInt, leftIsInt := left.(Integer)
+		rightInt, rightIsInt := right.(Integer)
+		if leftIsInt && rightIsInt {
+			return evalCompare(operator, leftInt, rightInt)
+		}
+		return evalCompare(operator, asFloat(left), asFloat(right))
+	}
+}
+
+func evalCompare[T cmp.Ordered](operator token.TokenType, left, right T) Bool {
+	switch operator {
+	case token.EQ:
+		return left == right
+	case token.NEQ:
+		return left != right
+	case token.LT:
+		return left < right
+	case token.GT:
+		return left > right
+	case token.LTEQ:
+		return left <= right
+	case token.GTEQ:
+		return left >= right
+	default:
+		panic("unsupported comparison operator: " + operator)
+	}
+}
+
+func evalScalarEq(left, right Value) Value {
+	return Bool(left == right)
+}
+
+func evalScalarNeq(left, right Value) Value {
+	return Bool(left != right)
 }
 
 func asFloat(value Value) float64 {
