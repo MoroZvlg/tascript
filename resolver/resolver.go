@@ -35,10 +35,10 @@ func (r *Resolver) Resolve() *resolved.Program {
 
 	r.resolvedProg.Consts = r.resolveConst(r.prog.Consts, topLevelEnv)
 
-	r.resolvedProg.RunFn = r.resolveFunc(r.prog.RunFn, topLevelEnv)
+	r.resolvedProg.RunFn = r.resolveFunc(r.prog.RunFn, NewEnclosedEnv(topLevelEnv))
 
 	if r.prog.InitFn != nil {
-		r.resolvedProg.InitFn = r.resolveFunc(r.prog.InitFn, topLevelEnv)
+		r.resolvedProg.InitFn = r.resolveFunc(r.prog.InitFn, NewEnclosedEnv(topLevelEnv))
 	}
 
 	if len(r.errs) > 0 {
@@ -76,12 +76,12 @@ func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.C
 	resolvedConsts := make([]*resolved.ConstDecl, 0)
 	for _, c := range consts {
 		sym := Symbol(c.Identifier.String())
-		if _, exists := env.values[sym]; exists {
+		if _, exists := env.Get(sym); exists {
 			r.addDuplicateDeclaration(c.Token, c.Identifier.Token) // How to add existing
 			return resolvedConsts
 		}
 		constValue := r.resolveExpr(c.Value, env)
-		env.values[sym] = constValue.Type()
+		env.Set(sym, constValue.Type())
 		resolvedConsts = append(resolvedConsts, &resolved.ConstDecl{
 			Token: c.Token,
 			Name:  &resolved.IdentExpr{Token: c.Identifier.Token, T: constValue.Type()},
@@ -100,7 +100,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 	case *ast.StringExpr:
 		return &resolved.StringExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.StringID}
 	case *ast.IdentExpr:
-		t, exists := env.values[Symbol(typedExpr.String())]
+		t, exists := env.Get(Symbol(typedExpr.String()))
 		if !exists {
 			r.addUndefinedIdent(typedExpr.Token)
 			return &resolved.BadExpr{Token: typedExpr.Token}

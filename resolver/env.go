@@ -11,10 +11,26 @@ func (s *Env) isTopLevel() bool {
 	return s.parent == nil
 }
 
+func (s *Env) Get(key Symbol) (registry.TypeID, bool) {
+	value, ok := s.values[key]
+	if ok {
+		return value, true
+	}
+	if s.isTopLevel() {
+		return registry.UnknownTypeID, false
+	}
+	return s.parent.Get(key)
+}
+
+func (s *Env) Set(key Symbol, value registry.TypeID) {
+	s.values[key] = value
+}
+
 func EnvFromRegistry(reg *registry.Registry) *Env {
 	env := &Env{values: make(map[Symbol]registry.TypeID)}
 	for name, value := range reg.Modules {
-		env.values[Symbol(name)] = value.TypeID()
+		typeID := value.TypeID()
+		env.Set(Symbol(name), typeID)
 	}
 	return env
 }
