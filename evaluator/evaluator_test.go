@@ -129,9 +129,7 @@ func TestEvaluator_Statements(t *testing.T) {
 		want registry.Value
 	}{
 		{"let then read", "let x = 2\nx * 3", registry.Integer(6)},
-		// TODO: enable when the resolver handles ast.AssignStmt (resolveStmt
-		// currently returns nil for it, so eval fails with "unsupported statement <nil>")
-		// {"assign overwrites", "let x = 1\nx = x + 41\nx", registry.Integer(42)},
+		{"assign overwrites", "let x = 1\nx = x + 41\nx", registry.Integer(42)},
 		{"two lets", "let a = 2\nlet b = 3\na * b", registry.Integer(6)},
 		{"let from expression", "let x = math.sqrt(4) + 1\nx", registry.Float(3)},
 		{"let value is coerced", "let x = 1\nx + 0.5", registry.Float(1.5)},

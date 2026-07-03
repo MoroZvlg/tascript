@@ -315,19 +315,16 @@ func (ls *LetStmt) Type() registry.TypeID {
 
 func (ls *LetStmt) statementNode() {}
 
-type AssignStmt struct {
+type AssignNameStmt struct {
 	Token  token.Token // the `=`
-	Target Expression
+	Target string
 	Value  Expression
+	T      registry.TypeID
 }
 
-func (as *AssignStmt) String() string {
+func (as *AssignNameStmt) String() string {
 	var out bytes.Buffer
-	if as.Target == nil {
-		out.WriteString("<unknown>")
-	} else {
-		out.WriteString(as.Target.String())
-	}
+	out.WriteString(as.Target)
 	out.WriteString(" = ")
 	if as.Value == nil {
 		out.WriteString("<missing expression>")
@@ -337,7 +334,11 @@ func (as *AssignStmt) String() string {
 	return out.String()
 }
 
-func (as *AssignStmt) statementNode() {}
+func (as *AssignNameStmt) Type() registry.TypeID {
+	return as.T
+}
+
+func (as *AssignNameStmt) statementNode() {}
 
 type ExprStmt struct {
 	Token token.Token
@@ -409,21 +410,14 @@ func (is *IfStmt) String() string {
 
 func (is *IfStmt) statementNode() {}
 
-// BadStmt mirrors ast.BadStmt: a placeholder kept when a statement is too broken
-// to resolve. It only exists so resolution can keep collecting errors; the
-// evaluator never walks a tree that contains one (resolution gates evaluation).
 type BadStmt struct {
-	From token.Pos
-	To   token.Pos
+	Token token.Token
 }
 
 func (bs *BadStmt) String() string { return "<bad statement>" }
 
 func (bs *BadStmt) statementNode() {}
 
-// Program is the resolver's output and the evaluator's input — the resolved
-// counterpart of ast.Program. Input/Output/Type declarations are resolve-time
-// only and are not carried here until the evaluator needs them at runtime.
 type Program struct {
 	Consts []*ConstDecl
 	InitFn *Function
@@ -461,4 +455,9 @@ func (cd *ConstDecl) String() string {
 		out.WriteString(cd.Value.String())
 	}
 	return out.String()
+}
+
+func IsBadExpr(expr Expression) bool {
+	_, ok := expr.(*BadExpr)
+	return ok
 }

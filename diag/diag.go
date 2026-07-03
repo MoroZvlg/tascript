@@ -162,6 +162,24 @@ func (ui UndefinedIdent) Error() string {
 	return fmt.Sprintf("%s [UNDEFINED_IDENT] %s: unknown identifier %s", ui.Phase, ui.Token.Pos.String(), ui.Token.String())
 }
 
+type UndefinedVar struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (uv UndefinedVar) Error() string {
+	return fmt.Sprintf("%s [UNDEFINED_VAR] %s: unknown variable %s", uv.Phase, uv.Token.Pos.String(), uv.Token.String())
+}
+
+type InvalidAssignTarget struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (ia InvalidAssignTarget) Error() string {
+	return fmt.Sprintf("%s [INVALID_ASSIGN_TARGET] %s: expression is not assignable", ia.Phase, ia.Token.Pos.String())
+}
+
 type UndefinedAttribute struct {
 	Phase  Phase
 	Member token.Token
@@ -201,13 +219,13 @@ func (am MissingArg) Error() string {
 	return fmt.Sprintf("%s [ARG_MISSING] %s: missing %s arg", am.Phase, am.Token.Pos.String(), am.Expected)
 }
 
-type ArgTypeMissmatch struct {
+type TypeMissmatch struct {
 	Phase    Phase
 	Token    token.Token
 	Expected registry.TypeID
 	Got      registry.TypeID
 }
 
-func (am ArgTypeMissmatch) Error() string {
-	return fmt.Sprintf("%s [ARG_TYPE_MISSMATCH] %s: expected %s type got %s", am.Phase, am.Token.Pos.String(), am.Expected, am.Got)
+func (tm TypeMissmatch) Error() string {
+	return fmt.Sprintf("%s [TYPE_MISSMATCH] %s: expected %s type got %s", tm.Phase, tm.Token.Pos.String(), tm.Expected, tm.Got)
 }

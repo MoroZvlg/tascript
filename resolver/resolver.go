@@ -77,6 +77,34 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			Value: exprVal,
 			T:     exprVal.Type(),
 		}
+	case *ast.AssignStmt:
+		value := r.resolveExpr(astStmtTyped.Value, env)
+		switch target := astStmtTyped.Target.(type) {
+		case *ast.IdentExpr:
+			storedType, exists := env.Get(Symbol(target.String()))
+			if !exists {
+				r.addUndefinedVar(target.Token)
+				return &resolved.BadStmt{Token: target.Token}
+			}
+			if resolved.IsBadExpr(value) {
+				return &resolved.BadStmt{Token: astStmtTyped.Token}
+			}
+			if storedType != value.Type() {
+				r.addTypeMissmatch(astStmtTyped.Token, storedType, value.Type())
+				return &resolved.BadStmt{Token: astStmtTyped.Token}
+			}
+
+			return &resolved.AssignNameStmt{
+				Token:  astStmtTyped.Token,
+				Target: target.String(),
+				Value:  value,
+				T:      storedType,
+			}
+		default:
+			r.addInvalidAssignTarget(astStmtTyped.Token)
+			return &resolved.BadStmt{Token: astStmtTyped.Token}
+		}
+
 	default:
 		return nil // TODO: raise error?
 	}
@@ -218,7 +246,7 @@ func (r *Resolver) resolveArgs(token token.Token, args []ast.Expression, kwargs 
 
 		if !ok {
 			hasErrs = true
-			r.addArgTypeMissmatch(token, argRule.Type, resolvedArg.Type())
+			r.addTypeMissmatch(token, argRule.Type, resolvedArg.Type())
 		}
 
 		resolvedArgs[i] = &resolved.CallArgExpr{
@@ -257,7 +285,7 @@ func (r *Resolver) resolveArgs(token token.Token, args []ast.Expression, kwargs 
 
 		if !ok {
 			hasErrs = true
-			r.addArgTypeMissmatch(token, argRule.Type, resolvedArg.Type())
+			r.addTypeMissmatch(token, argRule.Type, resolvedArg.Type())
 		}
 
 		resolvedArgs[argRuleIdx] = &resolved.CallArgExpr{
@@ -311,6 +339,20 @@ func (r *Resolver) addUndefinedIdent(opToken token.Token) {
 	})
 }
 
+func (r *Resolver) addUndefinedVar(opToken token.Token) {
+	r.errs = append(r.errs, &diag.UndefinedVar{
+		Phase: diag.PhaseCheck,
+		Token: opToken,
+	})
+}
+
+func (r *Resolver) addInvalidAssignTarget(opToken token.Token) {
+	r.errs = append(r.errs, &diag.InvalidAssignTarget{
+		Phase: diag.PhaseCheck,
+		Token: opToken,
+	})
+}
+
 func (r *Resolver) addUndefinedAttribute(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedAttribute{
 		Phase:  diag.PhaseCheck,
@@ -342,8 +384,8 @@ func (r *Resolver) addArgsMissing(opToken token.Token, expected string) {
 	})
 }
 
-func (r *Resolver) addArgTypeMissmatch(opToken token.Token, expected, got registry.TypeID) {
-	r.errs = append(r.errs, &diag.ArgTypeMissmatch{
+func (r *Resolver) addTypeMissmatch(opToken token.Token, expected, got registry.TypeID) {
+	r.errs = append(r.errs, &diag.TypeMissmatch{
 		Phase:    diag.PhaseCheck,
 		Token:    opToken,
 		Expected: expected,

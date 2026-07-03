@@ -61,8 +61,8 @@ func (e *Evaluator) evalStmt(stmt resolved.Statement, env *Env) (registry.Value,
 	switch n := stmt.(type) {
 	case *resolved.LetStmt:
 		return e.evalLet(n, env)
-	case *resolved.AssignStmt:
-		return e.evalAssign(n, env)
+	case *resolved.AssignNameStmt:
+		return e.evalAssignName(n, env)
 	case *resolved.ExprStmt:
 		return e.evalExpr(n.Expr, env)
 	case *resolved.BlockStmt:
@@ -80,13 +80,18 @@ func (e *Evaluator) evalLet(stmt *resolved.LetStmt, env *Env) (registry.Value, e
 	return env.Set(stmt.Name, value), nil
 }
 
-func (e *Evaluator) evalAssign(stmt *resolved.AssignStmt, env *Env) (registry.Value, error) {
+func (e *Evaluator) evalAssignName(stmt *resolved.AssignNameStmt, env *Env) (registry.Value, error) {
 	value, err := e.evalExpr(stmt.Value, env)
 	if err != nil {
 		return nil, err
 	}
 
-	return env.Set(stmt.Target.String(), value), nil
+	_, exists := env.Get(stmt.Target)
+	if !exists {
+		return nil, fmt.Errorf(`variable "%s" does not exist`, stmt.Target)
+	}
+
+	return env.Set(stmt.Target, value), nil
 }
 
 func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value, error) {

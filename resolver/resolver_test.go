@@ -146,7 +146,7 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 			`const FOO = math.sqrt^("foo")`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addArgTypeMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, registry.FloatID, registry.StringID),
+					addTypeMissmatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, registry.FloatID, registry.StringID),
 				}
 			},
 		},
@@ -165,6 +165,57 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runDiagCases(t, tt.input+runSuffix, tt.buildDiags)
+		})
+	}
+}
+
+func TestResolver_ResolveRunErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"assign to undefined variable",
+			"function Run() {\n^y = 3\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedVar(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "y"}),
+				}
+			},
+		},
+		{
+			"assign type missmatch",
+			"function Run() {\nlet x = 1\nx ^= \"foo\"\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addTypeMissmatch(token.Token{Type: token.ASSIGN, Pos: ps[0], Literal: "="}, registry.IntegerID, registry.StringID),
+				}
+			},
+		},
+		{
+			"assign to non-ident target",
+			"function Run() {\nmath.PI ^= 3\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInvalidAssignTarget(token.Token{Type: token.ASSIGN, Pos: ps[0], Literal: "="}),
+				}
+			},
+		},
+		{
+			"bad value reports only its own error",
+			"function Run() {\nlet x = 1\nx = ^z\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "z"}),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input, tt.buildDiags)
 		})
 	}
 }
@@ -249,6 +300,14 @@ func addMissingArg(tok token.Token, expected string) *diag.MissingArg {
 	return &diag.MissingArg{Phase: diag.PhaseCheck, Token: tok, Expected: expected}
 }
 
-func addArgTypeMismatch(tok token.Token, expected, got registry.TypeID) *diag.ArgTypeMissmatch {
-	return &diag.ArgTypeMissmatch{Phase: diag.PhaseCheck, Token: tok, Expected: expected, Got: got}
+func addTypeMissmatch(tok token.Token, expected, got registry.TypeID) *diag.TypeMissmatch {
+	return &diag.TypeMissmatch{Phase: diag.PhaseCheck, Token: tok, Expected: expected, Got: got}
+}
+
+func addUndefinedVar(tok token.Token) *diag.UndefinedVar {
+	return &diag.UndefinedVar{Phase: diag.PhaseCheck, Token: tok}
+}
+
+func addInvalidAssignTarget(tok token.Token) *diag.InvalidAssignTarget {
+	return &diag.InvalidAssignTarget{Phase: diag.PhaseCheck, Token: tok}
 }
