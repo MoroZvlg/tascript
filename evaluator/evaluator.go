@@ -77,7 +77,7 @@ func (e *Evaluator) evalLet(stmt *resolved.LetStmt, env *Env) (registry.Value, e
 	if err != nil {
 		return nil, err
 	}
-	return env.Set(stmt.Name.String(), value), nil
+	return env.Set(stmt.Name, value), nil
 }
 
 func (e *Evaluator) evalAssign(stmt *resolved.AssignStmt, env *Env) (registry.Value, error) {

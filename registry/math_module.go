@@ -23,7 +23,7 @@ func RegisterMathModule(reg *Registry) {
 		},
 		EvalType: FloatID,
 		EvalFn: func(_ Value, args map[string]Value) Value {
-			return Float(math.Sqrt(float64(args["number_foo"].(Float))))
+			return Float(math.Sqrt(float64(args["number"].(Float))))
 		},
 	})
 }

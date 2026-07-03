@@ -67,6 +67,16 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			Token: astStmtTyped.Token,
 			Expr:  r.resolveExpr(astStmtTyped.Expr, env),
 		}
+	case *ast.LetStmt:
+		name := astStmtTyped.Name.String()
+		exprVal := r.resolveExpr(astStmtTyped.Value, env)
+		env.Set(Symbol(name), exprVal.Type())
+		return &resolved.LetStmt{
+			Token: astStmtTyped.Token,
+			Name:  name,
+			Value: exprVal,
+			T:     exprVal.Type(),
+		}
 	default:
 		return nil // TODO: raise error?
 	}

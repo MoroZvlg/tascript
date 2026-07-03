@@ -291,14 +291,15 @@ func (ce *CoerceExpr) Type() registry.TypeID {
 
 type LetStmt struct {
 	Token token.Token
-	Name  token.Token
+	Name  string
 	Value Expression
+	T     registry.TypeID
 }
 
 func (ls *LetStmt) String() string {
 	var out bytes.Buffer
 	out.WriteString("let ")
-	out.WriteString(ls.Name.Literal)
+	out.WriteString(ls.Name)
 	out.WriteString(" = ")
 	if ls.Value == nil {
 		out.WriteString("<missing expression>")
@@ -306,6 +307,10 @@ func (ls *LetStmt) String() string {
 		out.WriteString(ls.Value.String())
 	}
 	return out.String()
+}
+
+func (ls *LetStmt) Type() registry.TypeID {
+	return ls.T
 }
 
 func (ls *LetStmt) statementNode() {}
