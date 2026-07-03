@@ -17,13 +17,13 @@ type UnaryRule struct {
 }
 
 type MemberAccessRule struct {
-	EvalFn   func() Value
+	EvalFn   func(receiver Value) Value
 	EvalType TypeID
 }
 
 type CallRule struct {
 	Args     []ParamRule
-	EvalFn   func(args map[string]Value) Value
+	EvalFn   func(receiver Value, args map[string]Value) Value
 	EvalType TypeID
 }
 

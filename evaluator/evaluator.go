@@ -105,10 +105,16 @@ func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value
 		return e.evalInfix(n, env)
 	case *resolved.PrefixExpr:
 		return e.evalPrefix(n, env)
-	//case *ast.MemberAccessExpr:
-	//	return e.evalMemberAccess(n, env)
-	//case *ast.CallExpr:
-	//	return e.evalCall(n, env)
+	case *resolved.CoerceExpr:
+		innerValue, err := e.evalExpr(n.Inner, env)
+		if err != nil {
+			return nil, err
+		}
+		return n.EvalFn(innerValue), nil
+	case *resolved.MemberAccessExpr:
+		return e.evalMemberAccess(n, env)
+	case *resolved.MethodCallExpr:
+		return e.evalMethodCall(n, env)
 	default:
 		return nil, fmt.Errorf("not implemented expression %T", expr)
 	}
@@ -145,57 +151,29 @@ func (e *Evaluator) evalPrefix(expr *resolved.PrefixExpr, env *Env) (registry.Va
 	return expr.EvalFn(right), nil
 }
 
-//func (e *Evaluator) evalMemberAccess(expr *resolved.MemberAccessExpr, env *Env) (registry.Value, error) {
-//	object, err := e.evalExpr(expr.Object, env)
-//	if err != nil {
-//		return nil, err
-//	}
-//	rule, exists := e.registry.LookupMemberAccess(object.TypeID(), expr.Method.String())
-//	if !exists {
-//		// TODO: unreachable? we are doing the same lookup on resolve stage?
-//		return nil, fmt.Errorf("undefined attribute %s for %s", expr.Method, expr.Object)
-//	}
-//	return rule.EvalFn(), nil
-//}
-//
-//func (e *Evaluator) evalCall(expr *resolved.CallExpr, env *Env) (registry.Value, error) {
-//	switch callee := expr.Callee.(type) {
-//	case *ast.MemberAccessExpr:
-//		object, err := e.evalExpr(callee.Object, env)
-//		if err != nil {
-//			return nil, err
-//		}
-//		callRule, exists := e.registry.LookupCall(object.TypeID(), callee.Method.String())
-//		if !exists {
-//			// TODO: unreachable? we are doing the same lookup on resolve stage?
-//			return nil, fmt.Errorf("undefined attribute %s for %s", callee.Method, callee.Object)
-//		}
-//
-//		args := make(map[string]registry.Value)
-//		for i, arg := range expr.Args {
-//			value, err := e.evalExpr(arg, env)
-//			if err != nil {
-//				return nil, err
-//			}
-//			argRule := callRule.Args[i]
-//			args[argRule.Name] = value
-//		}
-//
-//		for _, kwArg := range expr.Kwargs {
-//			value, err := e.evalExpr(kwArg.Value, env)
-//			if err != nil {
-//				return nil, err
-//			}
-//			for _, argRule := range callRule.Args {
-//				if kwArg.Key.String() == argRule.Name {
-//					args[argRule.Name] = value
-//					break
-//				}
-//			}
-//		}
-//		return callRule.EvalFn(args), nil
-//	default:
-//		return nil, fmt.Errorf("call on type %T not supported", callee)
-//	}
-//
-//}
+func (e *Evaluator) evalMemberAccess(expr *resolved.MemberAccessExpr, env *Env) (registry.Value, error) {
+	object, err := e.evalExpr(expr.Object, env)
+	if err != nil {
+		return nil, err
+	}
+
+	return expr.EvalFn(object), nil
+}
+
+func (e *Evaluator) evalMethodCall(expr *resolved.MethodCallExpr, env *Env) (registry.Value, error) {
+	resolvedRec, err := e.evalExpr(expr.Receiver, env)
+	if err != nil {
+		return nil, err
+	}
+	args := make(map[string]registry.Value)
+
+	for _, arg := range expr.Args {
+		value, err := e.evalExpr(arg.Value, env)
+		if err != nil {
+			return nil, err
+		}
+		args[arg.Name] = value
+	}
+
+	return expr.EvalFn(resolvedRec, args), nil
+}

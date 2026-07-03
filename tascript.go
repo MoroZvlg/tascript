@@ -33,9 +33,9 @@ func NewEngine(src string) (*Engine, []diag.Diagnostic) {
 
 func (e *Engine) Compile() (*Executable, []diag.Diagnostic) {
 	r := resolver.New(e.prog, e.reg)
-	resolvedProg, ok := r.Resolve()
+	resolvedProg := r.Resolve()
 
-	if !ok || len(r.Diagnostics()) > 0 {
+	if len(r.Diagnostics()) > 0 {
 		return nil, r.Diagnostics()
 	}
 

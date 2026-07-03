@@ -7,7 +7,7 @@ func RegisterMathModule(reg *Registry) {
 
 	reg.RegisterMemberAccess(mathModuleType.TypeID(), "PI", MemberAccessRule{
 		EvalType: FloatID,
-		EvalFn: func() Value {
+		EvalFn: func(_ Value) Value {
 			return Float(math.Pi)
 		},
 	})
@@ -20,17 +20,16 @@ func RegisterMathModule(reg *Registry) {
 				Exact:   false,
 				Default: nil,
 			},
+			{
+				Type:    FloatID,
+				Name:    "number_foo",
+				Exact:   false,
+				Default: nil,
+			},
 		},
 		EvalType: FloatID,
-		EvalFn: func(args map[string]Value) Value {
-			switch args["number"].(type) {
-			case Integer:
-				return Float(math.Sqrt(float64(args["number"].(Integer))))
-			case Float:
-				return Float(math.Sqrt(float64(args["number"].(Float))))
-			default:
-				panic("unknown type")
-			}
+		EvalFn: func(_ Value, args map[string]Value) Value {
+			return Float(math.Sqrt(float64(args["number_foo"].(Float))))
 		},
 	})
 }

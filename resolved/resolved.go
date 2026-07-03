@@ -166,15 +166,18 @@ func (pe *PrefixExpr) Type() registry.TypeID {
 type MemberAccessExpr struct {
 	Token  token.Token
 	Object Expression
-	Method token.Token
+	// TODO: i rewrote it to string, is it looks correct? method do not returns any type/evalFn/etc.
+	// It's just a name of the attribute. TypeID showed by MemberAccess itself
+	Method string
 	T      registry.TypeID
+	EvalFn func(registry.Value) registry.Value
 }
 
 func (ma *MemberAccessExpr) String() string {
 	var out bytes.Buffer
 	out.WriteString(ma.Object.String())
 	out.WriteString(ma.Token.Literal)
-	out.WriteString(ma.Method.Literal)
+	out.WriteString(ma.Method)
 	return out.String()
 }
 
@@ -206,27 +209,33 @@ func (ie *IndexExpr) Type() registry.TypeID {
 	return ie.T
 }
 
-type CallExpr struct {
-	Token  token.Token
-	Callee Expression
-	Args   []Expression
-	Kwargs []*KwargsExpr
-	T      registry.TypeID
+type MethodCallExpr struct {
+	Token    token.Token
+	Receiver Expression
+	Method   string
+	Args     []*CallArgExpr
+	T        registry.TypeID
+	EvalFn   func(receiver registry.Value, args map[string]registry.Value) registry.Value
 }
 
-func (ce *CallExpr) String() string {
+type CallArgExpr struct {
+	Token token.Token
+	Name  string
+	Value Expression
+	T     registry.TypeID
+}
+
+func (ce *MethodCallExpr) String() string {
 	var out bytes.Buffer
-	out.WriteString(ce.Callee.String())
+	out.WriteString(ce.Receiver.String())
+	out.WriteString(".")
+	out.WriteString(ce.Method)
 	out.WriteString("(")
 	for i, arg := range ce.Args {
-		out.WriteString(arg.String())
-		if i < len(ce.Args)-1 || len(ce.Kwargs) > 0 {
-			out.WriteString(", ")
-		}
-	}
-	for i, kwarg := range ce.Kwargs {
-		out.WriteString(kwarg.String())
-		if i < len(ce.Kwargs)-1 {
+		out.WriteString(arg.Name)
+		out.WriteString("=")
+		out.WriteString(arg.Value.String())
+		if i < len(ce.Args)-1 {
 			out.WriteString(", ")
 		}
 	}
@@ -234,9 +243,9 @@ func (ce *CallExpr) String() string {
 	return out.String()
 }
 
-func (ce *CallExpr) expressionNode() {}
+func (ce *MethodCallExpr) expressionNode() {}
 
-func (ce *CallExpr) Type() registry.TypeID {
+func (ce *MethodCallExpr) Type() registry.TypeID {
 	return ce.T
 }
 
@@ -264,8 +273,9 @@ func (ke *KwargsExpr) String() string {
 // to mark an implicit conversion of Inner to type T, e.g. Integer -> Float. The
 // evaluator applies the registered coercion when it reaches this node.
 type CoerceExpr struct {
-	Inner Expression
-	T     registry.TypeID
+	Inner  Expression
+	T      registry.TypeID
+	EvalFn func(registry.Value) registry.Value
 }
 
 func (ce *CoerceExpr) String() string {

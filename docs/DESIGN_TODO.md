@@ -78,6 +78,19 @@ whole-`resolved`-file change, so do it in one pass (touches every node + whereve
 constructs them). Note: only **value-domain** checks remain in eval — type checks are already
 gone; don't let type re-checking creep back in.
 
+## Rethink the public API surface (`Engine` / `Executable` / `tascript.go`)
+
+The top-level wiring feels ugly and needs a design pass. Smells so far:
+- `Engine` re-exports registry methods one-by-one as passthroughs (`RegisterType`,
+  `RegisterBinary`, …) — every new registry capability means another boilerplate forwarder.
+  Consider exposing the registry directly, or a dedicated builder, instead of mirroring it.
+- The `Engine` → `Compile()` → `Executable` split and lifecycle isn't clearly motivated
+  (when do you register types vs compile vs run? what's reusable across runs?).
+- Naming: `Engine`/`Executable`/`Compile` — settle on a coherent vocabulary for the phases
+  (parse → resolve/compile → execute per-bar).
+- Define the intended user flow end-to-end first (register custom types/funcs → compile a
+  script → feed bars → read outputs), then shape these types around it.
+
 ## Reconcile naming between `ast` and `resolved`
 
 The two packages mirror each other node-for-node, but small inconsistencies have crept in
@@ -100,6 +113,28 @@ divergence). Known so far:
 holds declarations as concrete slices (`Consts []*ConstDecl`, etc.), not `[]Declaration`.
 Dead code; drop the interface and the four marker methods. (Not mirrored in `resolved` for
 the same reason — `resolved.Program` also uses concrete slices.)
+
+## Parser: trailing comma in call args (bug — double error)
+
+`math.sqrt(number_foo=9.0, number=5, )` produces **2** errors:
+
+```
+parse [ARGS_ORDER] 1:49: args after kwargs not allowed
+parse [UNEXPECTED_TOKEN] 1:50: expected ) got NEWLINE
+```
+
+Should be **0** — a trailing comma before `)` is probably fine, allow it. Even if we
+decide trailing commas are illegal, it must be **one** error (the trailing comma itself),
+not a cascade: the parser currently misreads the `,` `)` sequence as a positional arg
+after kwargs and then trips again on the close paren.
+
+## Diag: `MissingKWARG` → general missing-argument error
+
+`diag.MissingKWARG` (`[KWARG_MISSING] missing %s KWArg`) is misnamed: a parameter left
+unfilled isn't a "missing kwarg" — it's a **missing argument** that merely *could* have been
+supplied by keyword. Rename to `MissingArg` / `[ARG_MISSING]` with wording like
+"missing argument %s" and use it for any unfilled parameter, positional or keyword-only.
+Single emit site: `resolver.go` `addArgsMissingKWArg`.
 
 ## Member-access receiver (near-term, not really deferred)
 
