@@ -145,6 +145,32 @@ func TestEvaluator_Statements(t *testing.T) {
 	}
 }
 
+func TestEvaluator_IfStmt(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want registry.Value
+	}{
+		{"true takes consequence", "let x = 1\nif (x > 0) {\nx = 2\n}\nx", registry.Integer(2)},
+		{"false skips consequence", "let x = 1\nif (x < 0) {\nx = 2\n}\nx", registry.Integer(1)},
+		{"false takes else", "let x = 1\nif (x < 0) {\nx = 2\n} else {\nx = 3\n}\nx", registry.Integer(3)},
+		{"else if chain", "let x = 0\nlet r = \"\"\nif (x > 0) {\nr = \"pos\"\n} else if (x == 0) {\nr = \"zero\"\n} else {\nr = \"neg\"\n}\nr", registry.String("zero")},
+		{"final else in chain", "let x = -1\nlet r = \"\"\nif (x > 0) {\nr = \"pos\"\n} else if (x == 0) {\nr = \"zero\"\n} else {\nr = \"neg\"\n}\nr", registry.String("neg")},
+		{"if yields branch value", "if (true) {\n42\n}", registry.Integer(42)},
+		{"untaken if yields nothing", "if (false) {\n42\n}", nil},
+		{"branch let shadows outer", "let x = 1\nif (true) {\nlet x = 2\nx = x + 1\n}\nx", registry.Integer(1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalRunBody(t, tt.body)
+			if got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEvaluator_Consts(t *testing.T) {
 	tests := []struct {
 		name string

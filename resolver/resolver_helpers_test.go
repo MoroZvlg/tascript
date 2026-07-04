@@ -3,6 +3,7 @@ package resolver_test
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/MoroZvlg/tascript/resolved"
@@ -41,9 +42,51 @@ func dump(t *testing.T, resolvedExpr resolved.Expression) string {
 		return fmt.Sprintf("(member_access:%s, %s, %s)", expr.Type(), dump(t, expr.Object), expr.Method)
 	case *resolved.MethodCallExpr:
 		return fmt.Sprintf("(method_call:%s, %s, %s, %s)", expr.Type(), dump(t, expr.Receiver), expr.Method, dumpArgs(t, expr.Args))
+	case *resolved.IndexExpr:
+		return fmt.Sprintf("(index:%s, %s, %s)", expr.Type(), dump(t, expr.Left), dump(t, expr.Index))
+	case *resolved.BadExpr:
+		return "<bad expression>"
 	default:
 		return fmt.Sprint("<dump error>")
 	}
+}
+
+func dumpStmt(t *testing.T, resolvedStmt resolved.Statement) string {
+	t.Helper()
+	switch stmt := resolvedStmt.(type) {
+	case *resolved.LetStmt:
+		return fmt.Sprintf("let %s:%s = %s", stmt.Name, stmt.Type(), dump(t, stmt.Value))
+	case *resolved.AssignNameStmt:
+		return fmt.Sprintf("%s:%s = %s", stmt.Target, stmt.Type(), dump(t, stmt.Value))
+	case *resolved.ExprStmt:
+		return dump(t, stmt.Expr)
+	case *resolved.BlockStmt:
+		return dumpBlock(t, stmt)
+	case *resolved.IfStmt:
+		var out bytes.Buffer
+		out.WriteString("if ")
+		out.WriteString(dump(t, stmt.Condition))
+		out.WriteString(" ")
+		out.WriteString(dumpBlock(t, stmt.Consequence))
+		if stmt.Else != nil {
+			out.WriteString(" else ")
+			out.WriteString(dumpStmt(t, stmt.Else))
+		}
+		return out.String()
+	case *resolved.BadStmt:
+		return "<bad statement>"
+	default:
+		return fmt.Sprint("<dump error>")
+	}
+}
+
+func dumpBlock(t *testing.T, block *resolved.BlockStmt) string {
+	t.Helper()
+	stmts := make([]string, 0, len(block.Stmts))
+	for _, stmt := range block.Stmts {
+		stmts = append(stmts, dumpStmt(t, stmt))
+	}
+	return "{" + strings.Join(stmts, "; ") + "}"
 }
 
 func dumpArgs(t *testing.T, args []*resolved.CallArgExpr) string {

@@ -51,15 +51,19 @@ func (r *Resolver) Resolve() *resolved.Program {
 
 func (r *Resolver) resolveFunc(astFunc *ast.FunctionDecl, env *Env) *resolved.Function {
 	resolvedFunc := &resolved.Function{Token: astFunc.Token}
-	resolvedStmts := make([]resolved.Statement, 0)
-	for _, stmt := range astFunc.Body.Stmts {
+	resolvedFunc.Body = r.resolveBlock(astFunc.Body, env)
+	return resolvedFunc
+}
+
+func (r *Resolver) resolveBlock(astBlock *ast.BlockStmt, env *Env) *resolved.BlockStmt {
+	resolvedStmts := make([]resolved.Statement, 0, len(astBlock.Stmts))
+	for _, stmt := range astBlock.Stmts {
 		resolvedStmts = append(resolvedStmts, r.resolveStmt(stmt, env))
 	}
-	resolvedFunc.Body = &resolved.BlockStmt{
-		Token: astFunc.Body.Token,
+	return &resolved.BlockStmt{
+		Token: astBlock.Token,
 		Stmts: resolvedStmts,
 	}
-	return resolvedFunc
 }
 
 func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Statement {
@@ -110,9 +114,37 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			r.addInvalidAssignTarget(astStmtTyped.Token)
 			return &resolved.BadStmt{Token: astStmtTyped.Token}
 		}
-
+	case *ast.BlockStmt:
+		return r.resolveBlock(astStmtTyped, NewEnclosedEnv(env))
+	case *ast.IfStmt:
+		return r.resolveIfStmt(astStmtTyped, env)
+	case *ast.BadStmt:
+		// parser already reported it
+		return &resolved.BadStmt{Token: token.Token{Pos: astStmtTyped.From}}
 	default:
-		return nil // TODO: raise error?
+		return &resolved.BadStmt{} // unreachable: all stmt types are handled above
+	}
+}
+
+func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Statement {
+	condition := r.resolveExpr(astStmt.Condition, env)
+	if !resolved.IsBadExpr(condition) && condition.Type() != registry.BoolID {
+		// TODO: point at the condition, not the `if` keyword. Needs Tok() on ast.Expression.
+		r.addTypeMissmatch(astStmt.Token, registry.BoolID, condition.Type())
+	}
+
+	consequence := r.resolveBlock(astStmt.Consequence, NewEnclosedEnv(env))
+
+	var elseStmt resolved.Statement
+	if astStmt.Else != nil {
+		elseStmt = r.resolveStmt(astStmt.Else, env)
+	}
+
+	return &resolved.IfStmt{
+		Token:       astStmt.Token,
+		Condition:   condition,
+		Consequence: consequence,
+		Else:        elseStmt,
 	}
 }
 

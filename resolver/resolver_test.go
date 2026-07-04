@@ -199,6 +199,52 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 	}
 }
 
+func TestResolver_ResolveIfStmt(t *testing.T) {
+	src := `function Run() {
+let x = 1
+if (x > 0) {
+let y = x + 1
+} else if (x == 0) {
+let y = 2
+} else {
+let y = 3
+}
+x
+}`
+	l := lexer.New(src)
+	p := parser.New(l)
+	prog := p.Parse()
+	if len(p.Diagnostics()) > 0 {
+		for _, d := range p.Diagnostics() {
+			t.Log(d)
+		}
+		t.Fatalf("expected 0 parser errors, got %d", len(p.Diagnostics()))
+	}
+
+	reg := registry.DefaultRegistry()
+	resolv := resolver.New(prog, reg)
+	resolvedProg := resolv.Resolve()
+
+	if len(resolv.Diagnostics()) > 0 {
+		for _, d := range resolv.Diagnostics() {
+			t.Log(d)
+		}
+		t.Fatalf("expected 0 resolver errors, got %d", len(resolv.Diagnostics()))
+	}
+
+	expected := "{" +
+		"let x:Integer = 1; " +
+		"if (infix:Bool, >, x:Integer, 0) {let y:Integer = (infix:Integer, +, x:Integer, 1)}" +
+		" else if (infix:Bool, ==, x:Integer, 0) {let y:Integer = 2}" +
+		" else {let y:Integer = 3}; " +
+		"x:Integer" +
+		"}"
+	dumpedRes := dumpStmt(t, resolvedProg.RunFn.Body)
+	if expected != dumpedRes {
+		t.Errorf("expected %s, got %s", expected, dumpedRes)
+	}
+}
+
 func TestResolver_ResolveConstErrors(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -388,6 +434,42 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "z"}),
+				}
+			},
+		},
+		{
+			"if condition must be bool",
+			"function Run() {\n^if (1) {}\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addTypeMissmatch(token.Token{Type: token.IF, Pos: ps[0], Literal: "if"}, registry.BoolID, registry.IntegerID),
+				}
+			},
+		},
+		{
+			"bad if condition reports only its own error",
+			"function Run() {\nif (^missing) {}\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "missing"}),
+				}
+			},
+		},
+		{
+			"if branch scope does not leak",
+			"function Run() {\nif (true) {\nlet x = 1\n}\n^x\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
+				}
+			},
+		},
+		{
+			"else branch scope does not leak",
+			"function Run() {\nif (true) {\n} else {\nlet x = 1\n}\n^x\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
 				}
 			},
 		},

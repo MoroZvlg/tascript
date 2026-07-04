@@ -67,9 +67,27 @@ func (e *Evaluator) evalStmt(stmt resolved.Statement, env *Env) (registry.Value,
 		return e.evalExpr(n.Expr, env)
 	case *resolved.BlockStmt:
 		return e.evalBlock(n, NewEnclosedEnv(env))
+	case *resolved.IfStmt:
+		return e.evalIf(n, env)
 	default:
 		return nil, fmt.Errorf("unsupported statement %T", stmt)
 	}
+}
+
+func (e *Evaluator) evalIf(stmt *resolved.IfStmt, env *Env) (registry.Value, error) {
+	condition, err := e.evalExpr(stmt.Condition, env)
+	if err != nil {
+		return nil, err
+	}
+	condBool, _ := condition.(registry.Bool)
+
+	if condBool {
+		return e.evalBlock(stmt.Consequence, NewEnclosedEnv(env))
+	}
+	if stmt.Else != nil {
+		return e.evalStmt(stmt.Else, env)
+	}
+	return nil, nil
 }
 
 func (e *Evaluator) evalLet(stmt *resolved.LetStmt, env *Env) (registry.Value, error) {
@@ -86,12 +104,10 @@ func (e *Evaluator) evalAssignName(stmt *resolved.AssignNameStmt, env *Env) (reg
 		return nil, err
 	}
 
-	_, exists := env.Get(stmt.Target)
-	if !exists {
+	if !env.Assign(stmt.Target, value) {
 		return nil, fmt.Errorf(`variable "%s" does not exist`, stmt.Target)
 	}
-
-	return env.Set(stmt.Target, value), nil
+	return value, nil
 }
 
 func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value, error) {
