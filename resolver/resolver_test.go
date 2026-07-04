@@ -286,21 +286,24 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 				}
 			},
 		},
-		// TODO: we need some builtin func with at least 2 args to implement this test
-		//{
-		//	"arg missing",
-		//	`const FOO = math.sqrt^()`,
-		//	func(ps []token.Pos) []diag.Diagnostic {
-		//		return []diag.Diagnostic{
-		//			addMissingArg(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, "number"),
-		//		}
-		//	},
-		//},
+		{
+			"arg missing",
+			`const FOO = test.fn^(1, foo=2)`,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addMissingArg(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, "right"),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runDiagCases(t, tt.input+runSuffix, tt.buildDiags)
+			var setupRegistry func(*registry.Registry)
+			if tt.name == "arg missing" {
+				setupRegistry = registerResolverTestModule
+			}
+			runDiagCasesWithRegistry(t, tt.input+runSuffix, tt.buildDiags, setupRegistry)
 		})
 	}
 }
@@ -339,6 +342,20 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			},
 		},
 		{
+			"reassign let is allowed",
+			"function Run() {\nlet x = 1\nx = 2\n}",
+			func(ps []token.Pos) []diag.Diagnostic { return nil },
+		},
+		{
+			"assign to const",
+			"const K = 1\nfunction Run() {\n^K = 2\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotAssignable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "K"}, "const"),
+				}
+			},
+		},
+		{
 			"bad value reports only its own error",
 			"function Run() {\nlet x = 1\nx = ^z\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -361,6 +378,11 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 // program must also be marked invalid. Empty vs nil diagnostic slices compare equal.
 func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []diag.Diagnostic) {
 	t.Helper()
+	runDiagCasesWithRegistry(t, input, buildDiags, nil)
+}
+
+func runDiagCasesWithRegistry(t *testing.T, input string, buildDiags func([]token.Pos) []diag.Diagnostic, setupRegistry func(*registry.Registry)) {
+	t.Helper()
 	src, pos := extractErrorsPos(input)
 	expected := buildDiags(pos)
 
@@ -368,6 +390,9 @@ func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []dia
 	p := parser.New(l)
 	prog := p.Parse()
 	reg := registry.DefaultRegistry()
+	if setupRegistry != nil {
+		setupRegistry(reg)
+	}
 	resolv := resolver.New(prog, reg)
 	_ = resolv.Resolve()
 
@@ -382,6 +407,20 @@ func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []dia
 	if diff := cmp.Diff(expected, got, cmpopts.EquateEmpty(), cmpopts.EquateComparable(registry.TypeID{})); diff != "" {
 		t.Errorf("diagnostics mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func registerResolverTestModule(reg *registry.Registry) {
+	testModule, _ := reg.RegisterModule("test")
+	reg.RegisterCall(testModule.TypeID(), "fn", registry.CallRule{
+		Args: []registry.ParamRule{
+			{Type: registry.FloatID, Name: "left"},
+			{Type: registry.FloatID, Name: "right"},
+		},
+		EvalType: registry.FloatID,
+		EvalFn: func(registry.Value, map[string]registry.Value) registry.Value {
+			return registry.Float(0)
+		},
+	})
 }
 
 func extractErrorsPos(input string) (string, []token.Pos) {

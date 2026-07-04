@@ -848,6 +848,8 @@ parse-time syntactic form.
 
 | Call | Behaviour |
 |------|-----------|
+| `math.E`           | Euler's number |
+| `math.PI`          | pi |
 | `math.max(a, b)`   | larger of two numbers |
 | `math.min(a, b)`   | smaller of two numbers |
 | `math.abs(x)`      | absolute value |
@@ -855,7 +857,10 @@ parse-time syntactic form.
 | `math.pow(x, y)`   | x to the y |
 | `math.floor(x)`    | round toward −∞ |
 | `math.ceil(x)`     | round toward +∞ |
-| `math.round(x)`    | round half-away-from-zero |
+| `math.round(x)`    | round to nearest integer, half toward +∞ |
+| `math.trunc(x)`    | integer part, rounded toward zero |
+| `math.sign(x)`     | sign of number |
+| `math.log(x)`      | natural logarithm |
 
 #### `ta` — technical-analysis helpers
 
