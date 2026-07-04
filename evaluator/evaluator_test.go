@@ -37,6 +37,70 @@ func evalRunBody(t *testing.T, body string) registry.Value {
 	return evalSrc(t, "function Run() {\n"+body+"\n}")
 }
 
+func TestEvaluator_Emit(t *testing.T) {
+	src := `output alert: String
+output sig: {dir: String, price: Float}
+function Run() {
+let threshold = 1.0
+emit(alert, "breakout")
+emit(sig, dir="up", price=threshold + 0.2)
+1
+}`
+	p := parser.New(lexer.New(src))
+	prog := p.Parse()
+	if len(p.Diagnostics()) > 0 {
+		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
+	}
+	reg := registry.DefaultRegistry()
+	resolv := resolver.New(prog, reg)
+	resolvedProg := resolv.Resolve()
+	if len(resolv.Diagnostics()) > 0 {
+		t.Fatalf("resolver diagnostics: %v", resolv.Diagnostics())
+	}
+
+	ev := evaluator.New(resolvedProg, reg)
+	if _, err := ev.EvalRun(); err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	emitted := ev.Emitted()
+	if len(emitted) != 2 {
+		t.Fatalf("expected 2 emissions, got %d: %v", len(emitted), emitted)
+	}
+
+	if emitted[0].Name != "alert" {
+		t.Errorf("emission[0]: expected output alert, got %s", emitted[0].Name)
+	}
+	if emitted[0].Value != registry.String("breakout") {
+		t.Errorf("emission[0]: expected \"breakout\", got %v", emitted[0].Value)
+	}
+
+	if emitted[1].Name != "sig" {
+		t.Errorf("emission[1]: expected output sig, got %s", emitted[1].Name)
+	}
+	rec, ok := emitted[1].Value.(registry.Record)
+	if !ok {
+		t.Fatalf("emission[1]: expected registry.Record, got %T", emitted[1].Value)
+	}
+	if rec.TypeID().String() != "output.sig" {
+		t.Errorf("emission[1]: expected type output.sig, got %s", rec.TypeID())
+	}
+	if rec.Fields["dir"] != registry.String("up") {
+		t.Errorf("emission[1]: expected dir \"up\", got %v", rec.Fields["dir"])
+	}
+	if rec.Fields["price"] != registry.Float(1.2) {
+		t.Errorf("emission[1]: expected price 1.2, got %v", rec.Fields["price"])
+	}
+
+	// emissions must not accumulate across runs
+	if _, err := ev.EvalRun(); err != nil {
+		t.Fatalf("second eval error: %v", err)
+	}
+	if got := len(ev.Emitted()); got != 2 {
+		t.Errorf("expected 2 emissions after second run, got %d", got)
+	}
+}
+
 func TestEvaluator_StdOps(t *testing.T) {
 	tests := []struct {
 		name string

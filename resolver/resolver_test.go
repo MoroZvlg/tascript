@@ -603,3 +603,134 @@ func addInvalidAssignTarget(tok token.Token) *diag.InvalidAssignTarget {
 func addNotAssignable(tok token.Token, kind string) *diag.NotAssignable {
 	return &diag.NotAssignable{Phase: diag.PhaseCheck, Token: tok, Kind: kind}
 }
+
+func addInvalidEmitTarget(tok token.Token) *diag.InvalidEmitTarget {
+	return &diag.InvalidEmitTarget{Phase: diag.PhaseCheck, Token: tok}
+}
+
+func TestResolver_ResolveEmit(t *testing.T) {
+	src := `output alert: String
+output sig: {dir: String, price: Float}
+output level: Float
+function Run() {
+emit(alert, "hi")
+emit(sig, dir="up", price=1.2)
+emit(sig, "down", 0.5)
+emit(level, 1)
+}`
+	expected := []string{
+		`emit(alert:String, value="hi")`,
+		`emit(sig:output.sig, dir="up",price=1.2)`,
+		`emit(sig:output.sig, dir="down",price=0.5)`,
+		`emit(level:Float, value=(coerce:Float, 1))`,
+	}
+
+	l := lexer.New(src)
+	p := parser.New(l)
+	prog := p.Parse()
+	if len(p.Diagnostics()) > 0 {
+		for _, d := range p.Diagnostics() {
+			t.Log(d)
+		}
+		t.Fatalf("expected 0 parser errors, got %d", len(p.Diagnostics()))
+	}
+
+	reg := registry.DefaultRegistry()
+	resolv := resolver.New(prog, reg)
+	resolvedProg := resolv.Resolve()
+
+	if len(resolv.Diagnostics()) > 0 {
+		for _, d := range resolv.Diagnostics() {
+			t.Log(d)
+		}
+		t.Fatalf("expected 0 resolver errors, got %d", len(resolv.Diagnostics()))
+	}
+
+	stmts := resolvedProg.RunFn.Body.Stmts
+	if len(stmts) != len(expected) {
+		t.Fatalf("expected %d statements, got %d", len(expected), len(stmts))
+	}
+	for i, want := range expected {
+		if got := dumpStmt(t, stmts[i]); got != want {
+			t.Errorf("stmt[%d]: expected %s, got %s", i, want, got)
+		}
+	}
+}
+
+func TestResolver_ResolveEmitErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"emit to const",
+			"const K = 1\nfunction Run() {\nemit(^K, 1)\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInvalidEmitTarget(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "K"}),
+				}
+			},
+		},
+		{
+			"emit to input",
+			"input p: Float\nfunction Run() {\nemit(^p, 1.0)\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInvalidEmitTarget(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "p"}),
+				}
+			},
+		},
+		{
+			"emit to unknown identifier",
+			"function Run() {\nemit(^foo, 1)\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "foo"}),
+				}
+			},
+		},
+		{
+			"emit without args",
+			"function Run() {\nemit^()\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInvalidEmitTarget(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}),
+				}
+			},
+		},
+		{
+			"emit to non-ident target",
+			"function Run() {\nemit^(1.5)\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInvalidEmitTarget(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}),
+				}
+			},
+		},
+		{
+			"emit value type missmatch",
+			"output alert: String\nfunction Run() {\nemit^(alert, 3)\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addTypeMissmatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, registry.StringID, registry.IntegerID),
+				}
+			},
+		},
+		{
+			"emit missing field",
+			"output sig: {dir: String, price: Float}\nfunction Run() {\nemit^(sig, dir=\"up\")\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addArgsNumberMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, 2, 1),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input, tt.buildDiags)
+		})
+	}
+}

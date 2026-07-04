@@ -11,6 +11,9 @@ type Evaluator struct {
 	prog     *resolved.Program
 	registry *registry.Registry
 	env      *Env
+	// TODO: temporary emission sink — collects emitted values until real
+	// output channels to the host are wired (Engine/host API rework).
+	emitted []registry.NamedValue
 }
 
 func New(prog *resolved.Program, reg *registry.Registry) *Evaluator {
@@ -25,7 +28,15 @@ func (e *Evaluator) EvalInit() (registry.Value, error) {
 	return nil, nil
 }
 
+// Emitted returns the values emitted by the last EvalRun, in emission order.
+// TODO: temporary API, see the emitted field.
+func (e *Evaluator) Emitted() []registry.NamedValue {
+	return e.emitted
+}
+
 func (e *Evaluator) EvalRun() (registry.Value, error) {
+	e.emitted = nil
+
 	for _, decl := range e.prog.Consts {
 		err := e.evalConst(decl, e.env)
 		if err != nil {
@@ -69,6 +80,8 @@ func (e *Evaluator) evalStmt(stmt resolved.Statement, env *Env) (registry.Value,
 		return e.evalBlock(n, NewEnclosedEnv(env))
 	case *resolved.IfStmt:
 		return e.evalIf(n, env)
+	case *resolved.EmitStmt:
+		return e.evalEmit(n, env)
 	default:
 		return nil, fmt.Errorf("unsupported statement %T", stmt)
 	}
@@ -87,6 +100,32 @@ func (e *Evaluator) evalIf(stmt *resolved.IfStmt, env *Env) (registry.Value, err
 	if stmt.Else != nil {
 		return e.evalStmt(stmt.Else, env)
 	}
+	return nil, nil
+}
+
+func (e *Evaluator) evalEmit(stmt *resolved.EmitStmt, env *Env) (registry.Value, error) {
+	def, _ := e.registry.LookupTypeDef(stmt.T)
+
+	var value registry.Value
+	if len(def.Fields) == 0 {
+		scalar, err := e.evalExpr(stmt.Args[0].Value, env)
+		if err != nil {
+			return nil, err
+		}
+		value = scalar
+	} else {
+		fields := make(map[string]registry.Value, len(stmt.Args))
+		for _, arg := range stmt.Args {
+			fieldValue, err := e.evalExpr(arg.Value, env)
+			if err != nil {
+				return nil, err
+			}
+			fields[arg.Name] = fieldValue
+		}
+		value = registry.Record{T: stmt.T, Fields: fields}
+	}
+
+	e.emitted = append(e.emitted, registry.NamedValue{Name: stmt.Output, Value: value})
 	return nil, nil
 }
 

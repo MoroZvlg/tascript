@@ -340,6 +340,29 @@ func (as *AssignNameStmt) Type() registry.TypeID {
 
 func (as *AssignNameStmt) statementNode() {}
 
+type EmitStmt struct {
+	Token  token.Token
+	Output string
+	Args   []*CallArgExpr
+	T      registry.TypeID
+}
+
+func (es *EmitStmt) String() string {
+	var out bytes.Buffer
+	out.WriteString("emit(")
+	out.WriteString(es.Output)
+	for _, arg := range es.Args {
+		out.WriteString(", ")
+		out.WriteString(arg.Name)
+		out.WriteString("=")
+		out.WriteString(arg.Value.String())
+	}
+	out.WriteString(")")
+	return out.String()
+}
+
+func (es *EmitStmt) statementNode() {}
+
 type ExprStmt struct {
 	Token token.Token
 	Expr  Expression

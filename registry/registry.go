@@ -149,6 +149,23 @@ func (r *Registry) LookupTypeDef(id TypeID) (TypeDef, bool) {
 	return def, exists
 }
 
+// EmitRule is the call signature for emitting a value of the given output type:
+// a single "value" param for named types, one param per field for structural ones.
+func (r *Registry) EmitRule(outputType TypeID) CallRule {
+	def, _ := r.LookupTypeDef(outputType)
+	if len(def.Fields) == 0 {
+		return CallRule{
+			Args:     []ParamRule{{Type: outputType, Name: "value"}},
+			EvalType: outputType,
+		}
+	}
+	params := make([]ParamRule, 0, len(def.Fields))
+	for _, field := range def.Fields {
+		params = append(params, ParamRule{Type: field.Type, Name: field.Name})
+	}
+	return CallRule{Args: params, EvalType: outputType}
+}
+
 // TODO: Make check in every Register as we did in RegisterType
 
 func (r *Registry) RegisterCoercion(from, to TypeID, rule CoerceRule) error {

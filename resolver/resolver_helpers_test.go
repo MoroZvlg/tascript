@@ -73,6 +73,8 @@ func dumpStmt(t *testing.T, resolvedStmt resolved.Statement) string {
 			out.WriteString(dumpStmt(t, stmt.Else))
 		}
 		return out.String()
+	case *resolved.EmitStmt:
+		return fmt.Sprintf("emit(%s:%s, %s)", stmt.Output, stmt.T, dumpArgs(t, stmt.Args))
 	case *resolved.BadStmt:
 		return "<bad statement>"
 	default:

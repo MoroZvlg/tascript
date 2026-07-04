@@ -171,6 +171,15 @@ func (uv UndefinedVar) Error() string {
 	return fmt.Sprintf("%s [UNDEFINED_VAR] %s: unknown variable %s", uv.Phase, uv.Token.Pos.String(), uv.Token.String())
 }
 
+type InvalidEmitTarget struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (ie InvalidEmitTarget) Error() string {
+	return fmt.Sprintf("%s [INVALID_EMIT_TARGET] %s: emit target must be a declared output", ie.Phase, ie.Token.Pos.String())
+}
+
 type NotAssignable struct {
 	Phase Phase
 	Token token.Token // the target identifier

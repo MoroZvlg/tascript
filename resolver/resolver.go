@@ -69,6 +69,9 @@ func (r *Resolver) resolveBlock(astBlock *ast.BlockStmt, env *Env) *resolved.Blo
 func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Statement {
 	switch astStmtTyped := astStmt.(type) {
 	case *ast.ExprStmt:
+		if call, ok := astStmtTyped.Expr.(*ast.CallExpr); ok && isEmitCall(call) {
+			return r.resolveEmit(call, env)
+		}
 		return &resolved.ExprStmt{
 			Token: astStmtTyped.Token,
 			Expr:  r.resolveExpr(astStmtTyped.Expr, env),
@@ -123,6 +126,43 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 		return &resolved.BadStmt{Token: token.Token{Pos: astStmtTyped.From}}
 	default:
 		return &resolved.BadStmt{} // unreachable: all stmt types are handled above
+	}
+}
+
+func isEmitCall(call *ast.CallExpr) bool {
+	callee, ok := call.Callee.(*ast.IdentExpr)
+	return ok && callee.String() == "emit"
+}
+
+func (r *Resolver) resolveEmit(call *ast.CallExpr, env *Env) resolved.Statement {
+	if len(call.Args) == 0 {
+		r.addInvalidEmitTarget(call.Token)
+		return &resolved.BadStmt{Token: call.Token}
+	}
+	target, ok := call.Args[0].(*ast.IdentExpr)
+	if !ok {
+		r.addInvalidEmitTarget(call.Token)
+		return &resolved.BadStmt{Token: call.Token}
+	}
+	binding, exists := env.Get(Symbol(target.String()))
+	if !exists {
+		r.addUndefinedIdent(target.Token)
+		return &resolved.BadStmt{Token: target.Token}
+	}
+	if binding.Kind != KindOutput {
+		r.addInvalidEmitTarget(target.Token)
+		return &resolved.BadStmt{Token: target.Token}
+	}
+
+	args, valid := r.resolveArgs(call.Token, call.Args[1:], call.Kwargs, r.reg.EmitRule(binding.T), env)
+	if !valid {
+		return &resolved.BadStmt{Token: call.Token}
+	}
+	return &resolved.EmitStmt{
+		Token:  call.Token,
+		Output: target.String(),
+		Args:   args,
+		T:      binding.T,
 	}
 }
 
@@ -474,6 +514,13 @@ func (r *Resolver) addUndefinedVar(opToken token.Token) {
 
 func (r *Resolver) addInvalidAssignTarget(opToken token.Token) {
 	r.errs = append(r.errs, &diag.InvalidAssignTarget{
+		Phase: diag.PhaseCheck,
+		Token: opToken,
+	})
+}
+
+func (r *Resolver) addInvalidEmitTarget(opToken token.Token) {
+	r.errs = append(r.errs, &diag.InvalidEmitTarget{
 		Phase: diag.PhaseCheck,
 		Token: opToken,
 	})
