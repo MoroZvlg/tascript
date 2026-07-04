@@ -89,6 +89,10 @@ func DefaultRegistry() *Registry {
 		Coerces:      make(map[CoerceKey]CoerceRule),
 	}
 
+	for _, builtin := range []TypeID{IntegerID, FloatID, StringID, BoolID} {
+		reg.Types[builtin] = TypeDef{Shape: ScalarShape}
+	}
+
 	RegisterStdMath(reg)
 	RegisterMathModule(reg)
 
@@ -109,6 +113,40 @@ func (r *Registry) RegisterType(customType string) (TypeID, error) {
 	}
 	r.Types[id] = TypeDef{}
 	return id, nil
+}
+
+// RegisterScriptType registers structural type synthesized by the resolver from an inline `{field: Type}` declaration
+func (r *Registry) RegisterScriptType(name string, fields []FieldDef) (TypeID, error) {
+	id := TypeID{id: name}
+	if _, exists := r.Types[id]; exists {
+		return TypeID{}, fmt.Errorf("script type %s not registered. ID taken", name)
+	}
+	r.Types[id] = TypeDef{Fields: fields}
+
+	for _, field := range fields {
+		fieldName := field.Name
+		r.RegisterMemberAccess(id, fieldName, MemberAccessRule{
+			EvalType: field.Type,
+			EvalFn: func(receiver Value) Value {
+				return receiver.(Record).Fields[fieldName]
+			},
+		})
+	}
+	return id, nil
+}
+
+func (r *Registry) LookupType(name string) (TypeID, bool) {
+	id := TypeID{id: name}
+	_, exists := r.Types[id]
+	if !exists {
+		return TypeID{}, false
+	}
+	return id, true
+}
+
+func (r *Registry) LookupTypeDef(id TypeID) (TypeDef, bool) {
+	def, exists := r.Types[id]
+	return def, exists
 }
 
 // TODO: Make check in every Register as we did in RegisterType

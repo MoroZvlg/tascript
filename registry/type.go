@@ -12,7 +12,7 @@ var IntegerID = TypeID{id: "Integer"}
 var FloatID = TypeID{id: "Float"}
 var StringID = TypeID{id: "String"}
 var BoolID = TypeID{id: "Bool"}
-var UnknownTypeID = TypeID{id: "Unknown"} // as default value. Is it ok?
+var UnknownTypeID = TypeID{id: "Unknown"}
 
 type TypeShape string
 
@@ -22,7 +22,13 @@ const (
 )
 
 type TypeDef struct {
-	Shape TypeShape
+	Shape  TypeShape
+	Fields []FieldDef // set for structural (script-declared) types, empty otherwise
+}
+
+type FieldDef struct {
+	Name string
+	Type TypeID
 }
 
 type NamedValue struct {
@@ -32,7 +38,6 @@ type NamedValue struct {
 
 type Value interface {
 	TypeID() TypeID
-	//TypeShape() TypeShape
 }
 
 type Integer int
@@ -41,19 +46,11 @@ func (i Integer) TypeID() TypeID {
 	return IntegerID
 }
 
-//func (i Integer) TypeShape() TypeShape {
-//	return ScalarShape
-//}
-
 type Float float64
 
 func (f Float) TypeID() TypeID {
 	return FloatID
 }
-
-//func (f Float) TypeShape() TypeShape {
-//	return ScalarShape
-//}
 
 type String string
 
@@ -61,19 +58,11 @@ func (s String) TypeID() TypeID {
 	return StringID
 }
 
-//func (s String) TypeShape() TypeShape {
-//	return ScalarShape
-//}
-
 type Bool bool
 
 func (b Bool) TypeID() TypeID {
 	return BoolID
 }
-
-//func (b Bool) TypeShape() TypeShape {
-//	return ScalarShape
-//}
 
 type PlainModule struct {
 	typeID TypeID
@@ -81,4 +70,15 @@ type PlainModule struct {
 
 func (pm *PlainModule) TypeID() TypeID {
 	return pm.typeID
+}
+
+// Record is the runtime representation of a structural type (inline `{field: Type}` declared on an input/output).
+// TODO: double think how it will be wired with host... Not clear right now
+type Record struct {
+	T      TypeID
+	Fields map[string]Value
+}
+
+func (r Record) TypeID() TypeID {
+	return r.T
 }

@@ -34,6 +34,8 @@ func (r *Resolver) Resolve() *resolved.Program {
 	topLevelEnv := EnvFromRegistry(r.reg)
 
 	r.resolvedProg.Consts = r.resolveConst(r.prog.Consts, topLevelEnv)
+	r.resolvedProg.Inputs = r.resolveInputs(r.prog.Inputs, topLevelEnv)
+	r.resolvedProg.Outputs = r.resolveOutputs(r.prog.Outputs, topLevelEnv)
 
 	r.resolvedProg.RunFn = r.resolveFunc(r.prog.RunFn, NewEnclosedEnv(topLevelEnv))
 
@@ -107,6 +109,96 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 
 	default:
 		return nil // TODO: raise error?
+	}
+}
+
+func (r *Resolver) resolveInputs(inputs []*ast.InputDecl, env *Env) []*resolved.InputDecl {
+	resolvedInputs := make([]*resolved.InputDecl, 0, len(inputs))
+	for _, in := range inputs {
+		sym := Symbol(in.Identifier.String())
+		if _, exists := env.Get(sym); exists {
+			r.addDuplicateDeclaration(in.Token, in.Identifier.Token)
+			continue
+		}
+		typeID, ok := r.resolveTypeDecl(in.Type, "input", in.Identifier.String())
+		if !ok {
+			continue
+		}
+		env.Set(sym, typeID)
+		resolvedInputs = append(resolvedInputs, &resolved.InputDecl{
+			Token: in.Token,
+			Name:  in.Identifier.String(),
+			T:     typeID,
+		})
+	}
+	return resolvedInputs
+}
+
+func (r *Resolver) resolveOutputs(outputs []*ast.OutputDecl, env *Env) []*resolved.OutputDecl {
+	resolvedOutputs := make([]*resolved.OutputDecl, 0, len(outputs))
+	for _, out := range outputs {
+		sym := Symbol(out.Identifier.String())
+		if _, exists := env.Get(sym); exists {
+			r.addDuplicateDeclaration(out.Token, out.Identifier.Token)
+			continue
+		}
+		typeID, ok := r.resolveTypeDecl(out.Type, "output", out.Identifier.String())
+		if !ok {
+			continue
+		}
+		// TODO: outputs in the env are a deliberate lie — they resolve as
+		// readable/assignable values but have no value at eval time, so
+		// `let x = alert` resolves cleanly and dies at runtime. Fix when the
+		// env gets binding kinds (var/const/input/output/module).
+		env.Set(sym, typeID)
+		resolvedOutputs = append(resolvedOutputs, &resolved.OutputDecl{
+			Token: out.Token,
+			Name:  out.Identifier.String(),
+			T:     typeID,
+		})
+	}
+	return resolvedOutputs
+}
+
+func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName string) (registry.TypeID, bool) {
+	switch typed := typeDecl.(type) {
+	case *ast.IdentExpr:
+		typeID, exists := r.reg.LookupType(typed.String())
+		if !exists {
+			r.addUndefinedType(typed.Token)
+			return registry.UnknownTypeID, false
+		}
+		return typeID, true
+	case *ast.TypeExpr:
+		fields := make([]registry.FieldDef, 0, len(typed.Fields))
+		seen := make(map[string]bool)
+		ok := true
+		for _, field := range typed.Fields {
+			if seen[field.Name.String()] {
+				r.addDuplicateDeclaration(typed.Token, field.Name.Token)
+				ok = false
+				continue
+			}
+			seen[field.Name.String()] = true
+			fieldType, exists := r.reg.LookupType(field.Type.String())
+			if !exists {
+				r.addUndefinedType(field.Type.Token)
+				ok = false
+				continue
+			}
+			fields = append(fields, registry.FieldDef{Name: field.Name.String(), Type: fieldType})
+		}
+		if !ok {
+			return registry.UnknownTypeID, false
+		}
+		typeID, err := r.reg.RegisterScriptType(namespace+"."+declName, fields)
+		if err != nil {
+			// unreachable: duplicate decl names are caught by the env check first
+			return registry.UnknownTypeID, false
+		}
+		return typeID, true
+	default:
+		return registry.UnknownTypeID, false
 	}
 }
 
@@ -348,6 +440,13 @@ func (r *Resolver) addUndefinedVar(opToken token.Token) {
 
 func (r *Resolver) addInvalidAssignTarget(opToken token.Token) {
 	r.errs = append(r.errs, &diag.InvalidAssignTarget{
+		Phase: diag.PhaseCheck,
+		Token: opToken,
+	})
+}
+
+func (r *Resolver) addUndefinedType(opToken token.Token) {
+	r.errs = append(r.errs, &diag.UndefinedType{
 		Phase: diag.PhaseCheck,
 		Token: opToken,
 	})

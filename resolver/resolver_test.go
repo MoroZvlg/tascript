@@ -63,6 +63,142 @@ func TestResolver_ResolveConstSimple(t *testing.T) {
 	}
 }
 
+func TestResolver_ResolveInputsOutputs(t *testing.T) {
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{"input threshold: Float", "input threshold:Float"},
+		{"input btc: {price: Float, vol: Integer}", "input btc:input.btc"},
+		{"output alert: String", "output alert:String"},
+		{"output sig: {dir: String, price: Float}", "output sig:output.sig"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input + runSuffix)
+			p := parser.New(l)
+			prog := p.Parse()
+			if len(p.Diagnostics()) > 0 {
+				for _, d := range p.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
+			}
+
+			reg := registry.DefaultRegistry()
+			resolv := resolver.New(prog, reg)
+			resolvedProg := resolv.Resolve()
+
+			if len(resolv.Diagnostics()) > 0 {
+				for _, d := range resolv.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(resolv.Diagnostics()))
+			}
+
+			var dumpedRes string
+			switch {
+			case len(resolvedProg.Inputs) == 1:
+				dumpedRes = resolvedProg.Inputs[0].String()
+			case len(resolvedProg.Outputs) == 1:
+				dumpedRes = resolvedProg.Outputs[0].String()
+			default:
+				t.Fatal("expected exactly one input or output decl")
+			}
+			if tt.output != dumpedRes {
+				t.Errorf("expected %s, got %s", tt.output, dumpedRes)
+			}
+		})
+	}
+}
+
+func TestResolver_ResolveInputOutputErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"struct input field access resolves",
+			"input btc: {price: Float}\nfunction Run() {\nlet x = btc.price\nx + 1.5\n}",
+			func(ps []token.Pos) []diag.Diagnostic { return nil },
+		},
+		{
+			"undefined input type",
+			"input btc: ^Foo" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Foo"}),
+				}
+			},
+		},
+		{
+			"undefined field type",
+			"input btc: {price: ^Foo}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Foo"}),
+				}
+			},
+		},
+		{
+			"duplicate input",
+			"input btc: Float\n^input ^btc: Integer" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.INPUT, Pos: ps[0], Literal: "input"},
+						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "btc"},
+					),
+				}
+			},
+		},
+		{
+			"output colliding with input",
+			"input foo: Float\n^output ^foo: String" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.OUTPUT, Pos: ps[0], Literal: "output"},
+						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "foo"},
+					),
+				}
+			},
+		},
+		{
+			"input colliding with const",
+			"const FOO = 1\n^input ^FOO: Float" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.INPUT, Pos: ps[0], Literal: "input"},
+						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "FOO"},
+					),
+				}
+			},
+		},
+		{
+			"duplicate field in inline type",
+			"input btc: ^{price: Float, ^price: Integer}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.LBRACE, Pos: ps[0], Literal: "{"},
+						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "price"},
+					),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input, tt.buildDiags)
+		})
+	}
+}
+
 func TestResolver_ResolveConstErrors(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -306,6 +442,10 @@ func addTypeMissmatch(tok token.Token, expected, got registry.TypeID) *diag.Type
 
 func addUndefinedVar(tok token.Token) *diag.UndefinedVar {
 	return &diag.UndefinedVar{Phase: diag.PhaseCheck, Token: tok}
+}
+
+func addUndefinedType(tok token.Token) *diag.UndefinedType {
+	return &diag.UndefinedType{Phase: diag.PhaseCheck, Token: tok}
 }
 
 func addInvalidAssignTarget(tok token.Token) *diag.InvalidAssignTarget {

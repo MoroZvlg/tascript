@@ -115,7 +115,7 @@ func (ud UnexpectedTopDecl) Error() string {
 
 type DuplicateDeclaration struct {
 	Phase        Phase
-	KeywordToken token.Token // keyword token
+	KeywordToken token.Token
 	IdentToken   token.Token
 }
 
@@ -178,6 +178,15 @@ type InvalidAssignTarget struct {
 
 func (ia InvalidAssignTarget) Error() string {
 	return fmt.Sprintf("%s [INVALID_ASSIGN_TARGET] %s: expression is not assignable", ia.Phase, ia.Token.Pos.String())
+}
+
+type UndefinedType struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (ut UndefinedType) Error() string {
+	return fmt.Sprintf("%s [UNDEFINED_TYPE] %s: unknown type %s", ut.Phase, ut.Token.Pos.String(), ut.Token.String())
 }
 
 type UndefinedAttribute struct {

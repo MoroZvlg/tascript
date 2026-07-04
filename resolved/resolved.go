@@ -419,9 +419,39 @@ func (bs *BadStmt) String() string { return "<bad statement>" }
 func (bs *BadStmt) statementNode() {}
 
 type Program struct {
-	Consts []*ConstDecl
-	InitFn *Function
-	RunFn  *Function
+	Consts  []*ConstDecl
+	Inputs  []*InputDecl
+	Outputs []*OutputDecl
+	InitFn  *Function
+	RunFn   *Function
+}
+
+type InputDecl struct {
+	Token token.Token
+	Name  string
+	T     registry.TypeID
+}
+
+func (id *InputDecl) Type() registry.TypeID {
+	return id.T
+}
+
+func (id *InputDecl) String() string {
+	return "input " + id.Name + ":" + id.T.String()
+}
+
+type OutputDecl struct {
+	Token token.Token
+	Name  string
+	T     registry.TypeID
+}
+
+func (od *OutputDecl) Type() registry.TypeID {
+	return od.T
+}
+
+func (od *OutputDecl) String() string {
+	return "output " + od.Name + ":" + od.T.String()
 }
 
 type Function struct {
