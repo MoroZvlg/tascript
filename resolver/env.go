@@ -2,39 +2,57 @@ package resolver
 
 import "github.com/MoroZvlg/tascript/registry"
 
+type BindingKind string
+
+const (
+	KindLet    BindingKind = "let"
+	KindConst  BindingKind = "const"
+	KindInput  BindingKind = "input"
+	KindOutput BindingKind = "output"
+	KindModule BindingKind = "module"
+)
+
+type Binding struct {
+	T    registry.TypeID
+	Kind BindingKind
+}
+
+func (b Binding) Assignable() bool {
+	return b.Kind == KindLet
+}
+
 type Env struct {
 	parent *Env
-	values map[Symbol]registry.TypeID
+	values map[Symbol]Binding
 }
 
 func (s *Env) isTopLevel() bool {
 	return s.parent == nil
 }
 
-func (s *Env) Get(key Symbol) (registry.TypeID, bool) {
-	value, ok := s.values[key]
+func (s *Env) Get(key Symbol) (Binding, bool) {
+	binding, ok := s.values[key]
 	if ok {
-		return value, true
+		return binding, true
 	}
 	if s.isTopLevel() {
-		return registry.UnknownTypeID, false
+		return Binding{T: registry.UnknownTypeID}, false
 	}
 	return s.parent.Get(key)
 }
 
-func (s *Env) Set(key Symbol, value registry.TypeID) {
-	s.values[key] = value
+func (s *Env) Set(key Symbol, binding Binding) {
+	s.values[key] = binding
 }
 
 func EnvFromRegistry(reg *registry.Registry) *Env {
-	env := &Env{values: make(map[Symbol]registry.TypeID)}
+	env := &Env{values: make(map[Symbol]Binding)}
 	for name, value := range reg.Modules {
-		typeID := value.TypeID()
-		env.Set(Symbol(name), typeID)
+		env.Set(Symbol(name), Binding{T: value.TypeID(), Kind: KindModule})
 	}
 	return env
 }
 
 func NewEnclosedEnv(scope *Env) *Env {
-	return &Env{parent: scope, values: make(map[Symbol]registry.TypeID)}
+	return &Env{parent: scope, values: make(map[Symbol]Binding)}
 }

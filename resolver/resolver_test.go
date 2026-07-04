@@ -356,6 +356,33 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			},
 		},
 		{
+			"assign to input",
+			"input p: Float\nfunction Run() {\n^p = 2.0\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotAssignable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "p"}, "input"),
+				}
+			},
+		},
+		{
+			"assign to output",
+			"output alert: String\nfunction Run() {\n^alert = \"x\"\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotAssignable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "alert"}, "output"),
+				}
+			},
+		},
+		{
+			"assign to module",
+			"function Run() {\n^math = 3\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotAssignable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, "module"),
+				}
+			},
+		},
+		{
 			"bad value reports only its own error",
 			"function Run() {\nlet x = 1\nx = ^z\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -489,4 +516,8 @@ func addUndefinedType(tok token.Token) *diag.UndefinedType {
 
 func addInvalidAssignTarget(tok token.Token) *diag.InvalidAssignTarget {
 	return &diag.InvalidAssignTarget{Phase: diag.PhaseCheck, Token: tok}
+}
+
+func addNotAssignable(tok token.Token, kind string) *diag.NotAssignable {
+	return &diag.NotAssignable{Phase: diag.PhaseCheck, Token: tok, Kind: kind}
 }

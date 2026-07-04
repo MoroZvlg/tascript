@@ -3,6 +3,37 @@
 Things we deliberately decided *not* to build yet, with enough context to pick them
 up later. None of these block the current resolver/evaluator work.
 
+## Resolver/evaluator gap tracker (actionable work queue)
+
+Unlike the rest of this doc, these are **not** deferred ideas — it's the prioritized
+inventory of what the parser already accepts but resolver/evaluator don't handle yet
+(snapshot: 2026-07-04). Priorities: P1 = silent correctness holes in what already
+"works", P2 = parser-accepted features the pipeline drops, P3 = polish/consistency.
+
+| # | Prio | Area | Missing | Impact |
+|---|------|------|---------|--------|
+| 1 | P1 | resolver | `CallExpr` with non-member callee (`foo()`, `emit(...)`) → `default:` returns `BadExpr` **without a diagnostic** | Breaks "resolution gates evaluation": zero diags, `Compile` passes, evaluator hits "not implemented expression" |
+| 2 | P1 | resolver | `IndexExpr` (`a[i]`) — no case in `resolveExpr`, falls to silent-`BadExpr` default | Same silent hole; parser has `parseIndexExpr` wired |
+| 3 | P1 | resolver | `resolveStmt` default returns `nil` (hits on `ast.IfStmt`, `ast.BadStmt`) | `nil` lands in `Stmts`, evaluator: "unsupported statement `<nil>`". Should be diag + `BadStmt` |
+| 4 | P1 | resolver | `resolveConst` bails out of the whole loop on first duplicate (`return resolvedConsts`) | Consts after the duplicate are neither resolved nor checked — one error hides the rest |
+| 5 | P1 | evaluator | `evalAssignName` uses `Get`+`Set` instead of `Env.Assign` | Shadow-binding bug the moment nested blocks (`if`) exist |
+| 6 | P2 | both | `IfStmt` — no resolve case, no eval case (`resolved.IfStmt` node already exists) | Whole feature; resolver side must also require `Bool` condition |
+| 7 | P2 | both | `&&` / `||` — parsed, but no `BinaryRule` registered | `true && false` → bogus `InvalidBinaryOperation`. Design decision pending: registry rule (eager) vs dedicated node (short-circuit) |
+| 8 | P2 | both | Inputs/Outputs — resolver side DONE (2026-07-04): decl resolution, inline-type synthesis (`RegisterScriptType`, `Record`), env binding, carried into `resolved.Program`. Remaining: runtime input binding (host API) + output delivery to the host. Known lie: outputs sit in the env as readable vars until binding kinds land (TODO in `resolveOutputs`) | Runtime half is prereq for `emit` and for actually reading inputs in Run |
+| 9 | P2 | both | `emit(...)` lowering → `EmitStmt` node; at runtime emit is a function call delivering the value to the host (no port indexing) | Depends on #8; currently dies via #1 |
+| 10 | P2 | resolver | Binding kinds — `Binding{T, Kind}` landed (2026-07-05), all env entries tagged (let/const/input/output/module); `Binding.Assignable()` (only `let`) rejects assignment to const/input/output/module with NOT_ASSIGNABLE. Remaining: reject *reading* an output (emit-only, decided 2026-07-05) — wire together with emit (#9) | `let x = alert` still resolves and dies at runtime |
+| 11 | P2 | evaluator | `EvalInit` is a stub (`return nil, nil`) even though resolver resolves `InitFn` | Init bodies silently do nothing; needs persistent-env semantics (Init writes outlive the call, unlike Run) |
+| 12 | P3 | resolver | Assignment doesn't coerce (`let x = 1.5` then `x = 1` → TypeMissmatch) | Inconsistent with args/infix which coerce Int→Float |
+| 13 | P3 | resolver | `resolveArgs`: unknown kwarg silently skipped (`continue`), positional+kwarg duplicate for same param overwrites without diag | Wrong programs resolve cleanly |
+| 14 | P3 | resolver | `CallArgExpr.Token` is the call token (existing TODO in `resolveArgs`) | Arg-level errors point at `(` instead of the arg |
+| 15 | P3 | evaluator | Runtime errors are bare `fmt.Errorf`, no position; `PhaseRuntime` diag unused | Matters once runtime can genuinely fail (div by zero, sqrt of negative) |
+| 16 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #1–#3 mechanically |
+
+Suggested order: the P1 block first (items 1–3 are the same disease — "impossible"
+default branches reachable from valid-parse programs, failing without diagnostics;
+#4 is a one-line decision). Then 7 → 6 (`if` needs booleans) and 8 → 9 (`emit` needs
+outputs), which together complete the language surface the parser already accepts.
+
 ## Slot-based variable access (perf)
 
 **Status:** deferred. Starting with name → `TypeID` env and string-keyed runtime lookup.
@@ -128,8 +159,3 @@ decide trailing commas are illegal, it must be **one** error (the trailing comma
 not a cascade: the parser currently misreads the `,` `)` sequence as a positional arg
 after kwargs and then trips again on the close paren.
 
-## Member-access receiver (near-term, not really deferred)
-
-`MemberAccessRule.EvalFn` is `func() Value` — **no receiver**. Works for `math.PI` (constant),
-but instance accessors like `candle.close` need the object: `func(recv Value) Value`. Change
-before there are many accessors; the resolved node already evaluates the receiver as a child.

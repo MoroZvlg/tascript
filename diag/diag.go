@@ -171,6 +171,16 @@ func (uv UndefinedVar) Error() string {
 	return fmt.Sprintf("%s [UNDEFINED_VAR] %s: unknown variable %s", uv.Phase, uv.Token.Pos.String(), uv.Token.String())
 }
 
+type NotAssignable struct {
+	Phase Phase
+	Token token.Token // the target identifier
+	Kind  string      // binding kind of the target: const, input, output, module
+}
+
+func (na NotAssignable) Error() string {
+	return fmt.Sprintf("%s [NOT_ASSIGNABLE] %s: cannot assign to %s %s", na.Phase, na.Token.Pos.String(), na.Kind, na.Token.String())
+}
+
 type InvalidAssignTarget struct {
 	Phase Phase
 	Token token.Token

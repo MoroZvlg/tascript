@@ -72,7 +72,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 	case *ast.LetStmt:
 		name := astStmtTyped.Name.String()
 		exprVal := r.resolveExpr(astStmtTyped.Value, env)
-		env.Set(Symbol(name), exprVal.Type())
+		env.Set(Symbol(name), Binding{T: exprVal.Type(), Kind: KindLet})
 		return &resolved.LetStmt{
 			Token: astStmtTyped.Token,
 			Name:  name,
@@ -83,16 +83,20 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 		value := r.resolveExpr(astStmtTyped.Value, env)
 		switch target := astStmtTyped.Target.(type) {
 		case *ast.IdentExpr:
-			storedType, exists := env.Get(Symbol(target.String()))
+			binding, exists := env.Get(Symbol(target.String()))
 			if !exists {
 				r.addUndefinedVar(target.Token)
+				return &resolved.BadStmt{Token: target.Token}
+			}
+			if !binding.Assignable() {
+				r.addNotAssignable(target.Token, binding.Kind)
 				return &resolved.BadStmt{Token: target.Token}
 			}
 			if resolved.IsBadExpr(value) {
 				return &resolved.BadStmt{Token: astStmtTyped.Token}
 			}
-			if storedType != value.Type() {
-				r.addTypeMissmatch(astStmtTyped.Token, storedType, value.Type())
+			if binding.T != value.Type() {
+				r.addTypeMissmatch(astStmtTyped.Token, binding.T, value.Type())
 				return &resolved.BadStmt{Token: astStmtTyped.Token}
 			}
 
@@ -100,7 +104,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 				Token:  astStmtTyped.Token,
 				Target: target.String(),
 				Value:  value,
-				T:      storedType,
+				T:      binding.T,
 			}
 		default:
 			r.addInvalidAssignTarget(astStmtTyped.Token)
@@ -124,7 +128,7 @@ func (r *Resolver) resolveInputs(inputs []*ast.InputDecl, env *Env) []*resolved.
 		if !ok {
 			continue
 		}
-		env.Set(sym, typeID)
+		env.Set(sym, Binding{T: typeID, Kind: KindInput})
 		resolvedInputs = append(resolvedInputs, &resolved.InputDecl{
 			Token: in.Token,
 			Name:  in.Identifier.String(),
@@ -146,11 +150,9 @@ func (r *Resolver) resolveOutputs(outputs []*ast.OutputDecl, env *Env) []*resolv
 		if !ok {
 			continue
 		}
-		// TODO: outputs in the env are a deliberate lie — they resolve as
-		// readable/assignable values but have no value at eval time, so
-		// `let x = alert` resolves cleanly and dies at runtime. Fix when the
-		// env gets binding kinds (var/const/input/output/module).
-		env.Set(sym, typeID)
+		// TODO: outputs are emit-only by design, but reading one (`let x = alert`)
+		// still resolves cleanly and dies at runtime. Add a KindOutput read check when emit lands.
+		env.Set(sym, Binding{T: typeID, Kind: KindOutput})
 		resolvedOutputs = append(resolvedOutputs, &resolved.OutputDecl{
 			Token: out.Token,
 			Name:  out.Identifier.String(),
@@ -211,7 +213,7 @@ func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.C
 			return resolvedConsts
 		}
 		constValue := r.resolveExpr(c.Value, env)
-		env.Set(sym, constValue.Type())
+		env.Set(sym, Binding{T: constValue.Type(), Kind: KindConst})
 		resolvedConsts = append(resolvedConsts, &resolved.ConstDecl{
 			Token: c.Token,
 			Name:  &resolved.IdentExpr{Token: c.Identifier.Token, T: constValue.Type()},
@@ -233,12 +235,12 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 	case *ast.BooleanExpr:
 		return &resolved.BooleanExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.BoolID}
 	case *ast.IdentExpr:
-		t, exists := env.Get(Symbol(typedExpr.String()))
+		binding, exists := env.Get(Symbol(typedExpr.String()))
 		if !exists {
 			r.addUndefinedIdent(typedExpr.Token)
 			return &resolved.BadExpr{Token: typedExpr.Token}
 		}
-		return &resolved.IdentExpr{Token: typedExpr.Token, T: t}
+		return &resolved.IdentExpr{Token: typedExpr.Token, T: binding.T}
 	case *ast.InfixExpr:
 		errsBefore := len(r.errs)
 		left := r.resolveExpr(typedExpr.Left, env)
@@ -442,6 +444,14 @@ func (r *Resolver) addInvalidAssignTarget(opToken token.Token) {
 	r.errs = append(r.errs, &diag.InvalidAssignTarget{
 		Phase: diag.PhaseCheck,
 		Token: opToken,
+	})
+}
+
+func (r *Resolver) addNotAssignable(opToken token.Token, kind BindingKind) {
+	r.errs = append(r.errs, &diag.NotAssignable{
+		Phase: diag.PhaseCheck,
+		Token: opToken,
+		Kind:  string(kind),
 	})
 }
 
