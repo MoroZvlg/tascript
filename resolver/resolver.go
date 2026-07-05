@@ -280,7 +280,7 @@ func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.C
 		sym := Symbol(c.Identifier.String())
 		if _, exists := env.Get(sym); exists {
 			r.addDuplicateDeclaration(c.Token, c.Identifier.Token) // How to add existing
-			return resolvedConsts
+			continue
 		}
 		constValue := r.resolveExpr(c.Value, env)
 		env.Set(sym, Binding{T: constValue.Type(), Kind: KindConst})

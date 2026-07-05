@@ -282,6 +282,19 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 			},
 		},
 		{
+			"duplicate does not hide later const errors",
+			"const FOO = 3\n^const ^FOO = 4\nconst C = ^bar",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.CONST, Pos: ps[0], Literal: "const"},
+						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "FOO"},
+					),
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[2], Literal: "bar"}),
+				}
+			},
+		},
+		{
 			"int + string",
 			`const FOO = 1 ^+ "foo"`,
 			func(ps []token.Pos) []diag.Diagnostic {

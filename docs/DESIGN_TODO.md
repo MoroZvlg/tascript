@@ -19,14 +19,14 @@ Already shipped and no longer tracked here: `if` (resolve + eval), binding kinds
 (inline-type synthesis, `Record`, env binding), `emit` end-to-end (statement-position
 `emit(target, ...)` → `resolved.EmitStmt` → evaluator with the temporary `Emitted()` sink),
 output-read check (outputs are emit-only: `let x = alert` → OUTPUT_NOT_READABLE),
-panic recover at the `EvalRun` boundary (stopgap: `5 % 0` no longer crashes the host;
-real failure protocol is #10).
+panic recover at the `EvalRun`/`EvalInit` boundary (stopgap: `5 % 0` no longer crashes
+the host; real failure protocol is #10), duplicate-const recovery (`resolveConst`
+continues past a duplicate instead of aborting the loop).
 
 | # | Prio | Area | Missing | Details |
 |---|------|------|---------|---------|
 | 2 | P1 | resolver | Bare `CallExpr` (`foo()`) → silent `BadExpr`, no diagnostic | Breaks "resolution gates evaluation" — verified: compiles clean, dies at eval with `not implemented expression *resolved.BadExpr` (internal type name leaks to the user). Two sub-cases: (a) callee ident is `emit` → precise diag "emit is a statement and cannot be used as a value" (statement-position emit is intercepted upstream in `resolveStmt`, so reaching `resolveExpr` with an emit call *is* expression position, e.g. `let x = emit(...)`); (b) any other bare call → "unknown function"-style diag (no `LookupFunc` table exists; don't build one until bare functions are a real feature). Related decision to record: `emit` is matched by callee name, so `let emit = 3` does not shadow it — keyword-by-convention |
 | 3 | P1 | resolver | `IndexExpr` (`a[i]`) — no case in `resolveExpr`, falls to silent-`BadExpr` default | Verified: same eval-time death as #2. **Nothing is indexable today**: registry has no index-rule table (`VectorShape` declared but unused), so the fix is diag-always, not a feature. Plan: resolve `Left` and `Index` first (their errors surface), then `NOT_INDEXABLE` diag (`Integer is not indexable`) with the infix-style dedup guard (only add if no new errs) + `BadExpr`. When built-in indexed state lands: add `LookupIndex(receiverType, indexType)` to the registry and this exact path becomes the real impl — lookup success builds the already-existing `resolved.IndexExpr`, lookup failure keeps the same diag. Do NOT add an empty registry table before then |
-| 4 | P1 | resolver | `resolveConst` bails out of the whole loop on first duplicate (`return resolvedConsts` instead of `continue`) | One-line fix. Verified: `const A = 1` / `const A = 2` / `const C = undefined_name` reports only the duplicate — C is neither resolved nor checked, its error hidden |
 | 5 | P1 | resolver | `resolveTypeDecl` silently swallows the `RegisterScriptType` error (resolver.go:266-270, `// unreachable` comment) | Reachable on registry reuse: a second `Compile()` against the same registry drops the input/output decl with **no diag**, then every use reports a misleading `UNDEFINED_IDENT` (verified: `emit(sig, …)` → "unknown identifier sig", zero hint at the cause). Even as a defensive branch it must append a diagnostic — silently dropping declarations violates the project's own "fail loudly" principle. Full fix (purge-on-reuse) stays in #13; the diag is a 3-liner now |
 | 6 | P2 | all | `state.*` — the spec's entire persistence story (§3.1/§4.3) is absent | **Biggest missing part**; every spec example depends on it (cooldowns, debouncing). `state.cooldown = 0` parses (member-target assign) and dies in the resolver with a generic INVALID_ASSIGN_TARGET; no env entry, no runtime store, no STATE_UNSET diag. Was missing from this tracker despite matching its premise. Needs a design slot: a persistent store with Init/Run lifetime — interacts with #9 (Init semantics) and #13 (host API), and is part of the realistic end-to-end fixture |
 | 7 | P2 | evaluator | Runtime input binding stopgap — scripts *declaring* inputs resolve but die at eval ("unknown identifier") because no values ever reach the env | Sketch agreed: `EvalRun(inputs map[string]registry.Value)` — for each `prog.Inputs`: missing → error, `value.TypeID() != decl.T` → error, else bind into the **per-run** env (not top-level; fresh values per bar). Same "temporary until host API" contract as `Emitted()`. Note: changes `EvalRun`'s signature → touches `evalSrc` test helper. These runtime checks are legitimately eval's job (host values arrive at run time; resolver can't vouch for them) |
@@ -52,8 +52,8 @@ real failure protocol is #10).
 Suggested order: #7 first (finishes the
 input/output arc; makes a realistic script — struct input, condition, emit — runnable
 end-to-end for the first time, which is also the fixture #13 should be designed around).
-Then the P1 batch #2–#5 (same disease: silent holes reachable from valid parses, failing
-without diagnostics). Then #8, then #9. #6 (state) needs its own design pass and should
+Then the P1 batch #2/#3/#5 (same disease: silent holes reachable from valid parses,
+failing without diagnostics). Then #8, then #9. #6 (state) needs its own design pass and should
 land before #13 is shaped; #10 must be settled before the talive/registry surface grows;
 #14 before any external tooling consumes diagnostics. #13 last, informed by the stopgaps
 being used in anger.
