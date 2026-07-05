@@ -24,17 +24,30 @@ func New(prog *resolved.Program, reg *registry.Registry) *Evaluator {
 	}
 }
 
-func (e *Evaluator) EvalInit() (registry.Value, error) {
-	return nil, nil
-}
-
 // Emitted returns the values emitted by the last EvalRun, in emission order.
 // TODO: temporary API, see the emitted field.
 func (e *Evaluator) Emitted() []registry.NamedValue {
 	return e.emitted
 }
 
-func (e *Evaluator) EvalRun() (registry.Value, error) {
+func (e *Evaluator) EvalInit() (result registry.Value, err error) {
+	// until failure protocol lands: EvalFns must not crash the host.
+	defer func() {
+		if r := recover(); r != nil {
+			result, err = nil, fmt.Errorf("runtime panic: %v", r)
+		}
+	}()
+	return nil, nil
+}
+
+func (e *Evaluator) EvalRun() (result registry.Value, err error) {
+	// until failure protocol lands: EvalFns must not crash the host.
+	defer func() {
+		if r := recover(); r != nil {
+			result, err = nil, fmt.Errorf("runtime panic: %v", r)
+		}
+	}()
+
 	e.emitted = nil
 
 	for _, decl := range e.prog.Consts {

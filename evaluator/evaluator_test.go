@@ -235,6 +235,26 @@ func TestEvaluator_IfStmt(t *testing.T) {
 	}
 }
 
+func TestEvaluator_PanicRecoveredAsError(t *testing.T) {
+	src := "function Run() {\n5 % 0\n}"
+	p := parser.New(lexer.New(src))
+	prog := p.Parse()
+	if len(p.Diagnostics()) > 0 {
+		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
+	}
+	reg := registry.DefaultRegistry()
+	resolv := resolver.New(prog, reg)
+	resolvedProg := resolv.Resolve()
+	if len(resolv.Diagnostics()) > 0 {
+		t.Fatalf("resolver diagnostics: %v", resolv.Diagnostics())
+	}
+
+	got, err := evaluator.New(resolvedProg, reg).EvalRun()
+	if err == nil {
+		t.Fatalf("expected runtime error, got value %v", got)
+	}
+}
+
 func TestEvaluator_Consts(t *testing.T) {
 	tests := []struct {
 		name string
