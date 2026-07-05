@@ -85,6 +85,14 @@ func (p *Parser) addUnexpectedTopDecl(pos token.Pos) {
 	})
 }
 
+func (p *Parser) addTopDeclInBody(tok token.Token) {
+	p.errors = append(p.errors, &diag.TopDeclInBody{
+		Phase:   diag.PhaseParse,
+		Pos:     tok.Pos,
+		Keyword: tok.Type,
+	})
+}
+
 func (p *Parser) addDuplicateDecl(kwToken, identToken token.Token) {
 	p.errors = append(p.errors, &diag.DuplicateDeclaration{
 		Phase:        diag.PhaseParse,

@@ -8,12 +8,13 @@ import (
 )
 
 type Program struct {
-	Consts  []*ConstDecl
-	Inputs  []*InputDecl
-	Outputs []*OutputDecl
-	InitFn  *FunctionDecl
-	RunFn   *FunctionDecl
-	Valid   bool
+	Consts      []*ConstDecl
+	Inputs      []*InputDecl
+	Outputs     []*OutputDecl
+	StateFields []*StateFieldDecl
+	InitFn      *FunctionDecl
+	RunFn       *FunctionDecl
+	Valid       bool
 }
 
 type Node interface {
@@ -125,6 +126,37 @@ func (cd *ConstDecl) String() string {
 }
 
 func (cd *ConstDecl) declarationNode() {}
+
+type StateFieldDecl struct {
+	Token      token.Token
+	Identifier *IdentExpr
+	Type       TypeDecl
+	Value      Expression
+}
+
+func (sfd *StateFieldDecl) String() string {
+	var out bytes.Buffer
+	out.WriteString(sfd.Token.Literal)
+	out.WriteString(" ")
+	if sfd.Identifier == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(sfd.Identifier.String())
+	}
+	out.WriteString(": ")
+	if sfd.Type == nil {
+		out.WriteString("<missing type>")
+	} else {
+		out.WriteString(sfd.Type.String())
+	}
+	if sfd.Value != nil {
+		out.WriteString(" = ")
+		out.WriteString(sfd.Value.String())
+	}
+	return out.String()
+}
+
+func (sfd *StateFieldDecl) declarationNode() {}
 
 // FunctionDecl
 // - function Init() {}

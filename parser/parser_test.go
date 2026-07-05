@@ -660,6 +660,173 @@ func TestParser_ParseOutputRecovery(t *testing.T) {
 	}
 }
 
+func TestParser_ParseStateFieldSimple(t *testing.T) {
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{"state cooldown: Integer = 0", "state cooldown: Integer = 0"},
+		{"state last_signal: Time", "state last_signal: Time"},
+		{"state threshold: Float = 1.5 + 2.0", "state threshold: Float = (1.5 + 2)"},
+		{"state cd: Duration = 30 * time.MINUTE", "state cd: Duration = (30 * time.MINUTE)"},
+		{"state active: Bool = false", "state active: Bool = false"},
+		{"\nstate cooldown: Integer = 0\n", "state cooldown: Integer = 0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input + runSuffix)
+			p := parser.New(l)
+			prog := p.Parse()
+			if len(p.Diagnostics()) > 0 {
+				for _, d := range p.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
+			}
+
+			if len(prog.StateFields) != 1 {
+				t.Fatalf("expected 1 state field, got %d", len(prog.StateFields))
+			}
+
+			if tt.output != prog.StateFields[0].String() {
+				t.Errorf("expected %s, got %s", tt.output, prog.StateFields[0].String())
+			}
+
+			if !prog.Valid {
+				t.Errorf("expected prog be valid, got false")
+			}
+		})
+	}
+}
+
+func TestParser_StateField(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"correct with initializer",
+			"state cooldown: Integer = 0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"correct without initializer",
+			"state last_signal: Time",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"missing ident",
+			"state ^: Integer",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.COLON),
+				}
+			},
+		},
+		{
+			"missing colon",
+			"state cooldown ^Integer = 0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.COLON, token.IDENT),
+				}
+			},
+		},
+		{
+			"missing type",
+			"state cooldown: ^= 0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					expectedTypeOrCustomType(ps[0]),
+				}
+			},
+		},
+		{
+			"expr as type",
+			"state cooldown: ^(1 + 3)",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					expectedTypeOrCustomType(ps[0]),
+				}
+			},
+		},
+		{
+			// schema types are not supported in state decls (scalar entries only)
+			"schema as type",
+			"state pair: ^{a: Float}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					expectedTypeOrCustomType(ps[0]),
+				}
+			},
+		},
+		{
+			// runSuffix puts a NEWLINE right after the dangling `=`
+			"missing initializer expression",
+			"state cooldown: Integer = ^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					exprExpectedErr(ps[0], token.NEWLINE),
+				}
+			},
+		},
+		{
+			"keyword as name",
+			"state ^const: Integer = 0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.CONST),
+				}
+			},
+		},
+		{
+			// assignment to a state field is decl-position syntax error at the top level
+			"top-level state assignment",
+			"state^.cooldown = 0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.DOT),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input+runSuffix, tt.buildDiags)
+		})
+	}
+}
+
+func TestParser_ParseStateFieldRecovery(t *testing.T) {
+	src := "state a: {}\nstate b: Integer = 0\nstate c: Float" + runSuffix
+	l := lexer.New(src)
+	p := parser.New(l)
+	prog := p.Parse()
+
+	got := p.Diagnostics()
+	if len(got) != 1 {
+		for i, d := range got {
+			t.Logf("got[%d] %+v", i, d)
+		}
+		t.Fatalf("expected 1 error, got %d", len(got))
+	}
+
+	if prog.Valid {
+		t.Errorf("expected prog be invalid, got true")
+	}
+
+	if len(prog.StateFields) != 2 {
+		t.Fatalf("expected 2 state fields parsed after recovery, got %d", len(prog.StateFields))
+	}
+}
+
 func TestParser_ParseFunc(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -852,6 +1019,8 @@ func TestParser_ParseFuncBlockSimple(t *testing.T) {
 		// member-target assignment
 		{"state.cooldown = 0", "state.cooldown = 0"},
 		{"state.cooldown = math.max(0, state.cooldown - 1)", "state.cooldown = math.max(0, (state.cooldown - 1))"},
+		{"state.cooldown = state.cooldown - 1", "state.cooldown = (state.cooldown - 1)"},
+		{"let x = state.cooldown", "let x = state.cooldown"},
 		// empty else block still renders (gated on the else token, not the slice)
 		{"if (a) {} else {}", "if (a) {} else {}"},
 		// index (history) access
@@ -1086,6 +1255,53 @@ func TestParser_ParseFuncBody(t *testing.T) {
 				}
 			},
 		},
+		{
+			// state is a keyword, so it can't be a let binding name
+			"state as let name",
+			"let ^state = 5",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.IDENT, token.STATE),
+				}
+			},
+		},
+		{
+			// a state decl belongs at the top level only
+			"state decl in body",
+			"^state cooldown: Integer = 0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					topDeclInBodyErr(ps[0], token.STATE),
+				}
+			},
+		},
+		{
+			"const decl in body",
+			"^const FOO = 1",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					topDeclInBodyErr(ps[0], token.CONST),
+				}
+			},
+		},
+		{
+			"input decl in body",
+			"^input btc: CandleSeries",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					topDeclInBodyErr(ps[0], token.INPUT),
+				}
+			},
+		},
+		{
+			"output decl in body",
+			"^output alerts: Integer",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					topDeclInBodyErr(ps[0], token.OUTPUT),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1126,6 +1342,10 @@ func forbiddenFuncErr(pos token.Pos) *diag.ForbiddenFunc {
 
 func missingRunErr(pos token.Pos) *diag.MissingRunFunc {
 	return &diag.MissingRunFunc{Phase: diag.PhaseParse, Pos: pos}
+}
+
+func topDeclInBodyErr(pos token.Pos, keyword token.TokenType) *diag.TopDeclInBody {
+	return &diag.TopDeclInBody{Phase: diag.PhaseParse, Pos: pos, Keyword: keyword}
 }
 
 func unexpectedTopDeclErr(pos token.Pos) *diag.UnexpectedTopDecl {

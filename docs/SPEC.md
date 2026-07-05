@@ -89,9 +89,11 @@ deviations:
   There is no `var`, and `const` is not valid inside function bodies.
 - **Top-level constants use `const`.** `const` is a declaration keyword only at
   the top level. It is not valid inside function bodies.
-- **Persistent state is namespaced.** Values that must survive across candles
-  live on a special `state` object: `state.cooldown = 20`, `state["my key"]`.
-  Both dot and bracket access are supported, matching JS conventions.
+- **Persistent state is declared and namespaced.** Values that must survive
+  across candles are declared at the top level (`state cooldown: Integer = 0`)
+  and accessed via dot on the reserved `state` object: `state.cooldown = 20`.
+  Dot access only — bracket access (`state["my key"]`) is not supported; every
+  state entry is a statically-known, statically-typed name.
 - **History reference.** `series[n]` reads the value `n` candles ago;
   `series[0]` (or just `series`) is the current candle.
 
@@ -116,12 +118,23 @@ Every tascript program is composed of:
    `output name: Type` or `output name: { ... }` declares that the program can
    emit to a runtime-wired output port.
 
-4. **An optional `function Init() { ... }`.** When present, it runs **exactly
-   once** before the first candle is processed. It is intended for initialising
-   `state.*` fields. If omitted, the runtime behaves as if an empty `Init`
-   existed.
+4. **Zero or more state declarations.** A top-level declaration of the form
+   `state name: Type` or `state name: Type = <const-expr>` declares a typed
+   persistent entry, read and written as `state.name` from inside `Init()` and
+   `Run()`. The optional initializer is restricted to the same expression
+   domain as a `const` right-hand side (literals, declared constants, module
+   calls — no inputs, outputs, or other state entries) and is evaluated once
+   at program load, after constants. An entry with no initializer **must** be
+   assigned inside `Init()`; the analyser rejects the program otherwise. See
+   section 4.3 for full semantics.
 
-5. **A required `function Run() { ... }`.** Runs **once per candle**, in
+5. **An optional `function Init() { ... }`.** When present, it runs **exactly
+   once** before the first candle is processed. It is intended for seeding
+   `state.*` entries whose initial value depends on input data and therefore
+   cannot be a declaration initializer. If omitted, the runtime behaves as if
+   an empty `Init` existed.
+
+6. **A required `function Run() { ... }`.** Runs **once per candle**, in
    order. This is where indicators are read, conditions evaluated, and
    `emit(...)` calls produced.
 
@@ -144,9 +157,7 @@ output alerts: {
   eth_rsi: Number
 }
 
-function Init() {
-  state.cooldown = 0
-}
+state cooldown: Integer = 0
 
 function Run() {
   state.cooldown = math.max(0, state.cooldown - 1)
@@ -397,6 +408,8 @@ output alerts: {
   price: Number
 }
 
+state last_signal: Time   // no const initializer possible — seeded in Init
+
 function Init() {
   state.last_signal = btc.timestamps[0] - time.DAY   // bootstrap to "yesterday"
 }
@@ -642,14 +655,34 @@ tascript exposes two complementary forms of memory across candles:
    on. History buffers are managed by the runtime; the program does not
    allocate them.
 
-2. **User-declared persistent state.** A program writes persistent values to
-   the namespaced `state` object (e.g. `state.cooldown = 20`). All `state.*`
-   fields survive between candle executions. Initial values should be
-   established in `Init()` when persistent state is needed. If `Init()` is
-   omitted, `state.*` starts empty. Reading a `state.*` field that has never
-   been assigned is a runtime error (no silent zero / null defaults); this
-   forces every persistent field to be intentionally bootstrapped and prevents
-   typo-driven foot-guns.
+2. **User-declared persistent state.** A program declares each persistent
+   entry at the top level with a static type and reads/writes it through the
+   reserved `state` object:
+
+   ```js
+   state cooldown: Integer = 0      // const initializer — no Init needed
+   state last_signal: Time          // no initializer — must be assigned in Init()
+   ```
+
+   All `state.*` entries survive between candle executions; assignment and
+   reads are legal anywhere inside `Init()` and `Run()`, with no history —
+   an entry is a plain persistent variable, not a series.
+
+   Static rules, all enforced at analysis time (no runtime state errors):
+   - Access to an undeclared entry — read or write — is rejected
+     (`STATE_UNDECLARED`); typos die before the program runs.
+   - The initializer must be a constant-domain expression (same domain as a
+     `const` right-hand side: literals, declared constants, module calls —
+     inputs, outputs, and other state entries are not in scope) and must
+     match the declared type (`Integer → Float` coercion applies).
+   - An entry with no initializer must be assigned inside `Init()`, otherwise
+     the program is rejected (`STATE_UNINITIALIZED`). There are no silent
+     zero / null defaults.
+   - Entry types are scalar in this revision — a record type
+     (`state pair: {a: Float}`) is rejected at analysis time.
+
+   Initializers are evaluated once at program load, after top-level constants
+   and before `Init()` runs; `Init()` may overwrite any entry.
 
 `let` bindings inside a function body are scoped to that single invocation and
 do not persist.
@@ -901,9 +934,8 @@ Every error a tascript program can produce belongs to one of two phases:
   inside a function, `emit(...)` used outside `Run()`, `==` between
   mismatched types when statically detectable.
 - **Runtime** — produced during execution of `Init()` or `Run()`. Examples:
-  read of an unassigned `state.*` field, history index out of range,
-  cross-type comparison the analyser could not statically rule out,
-  zero-period indicator from a runtime expression.
+  history index out of range, cross-type comparison the analyser could not
+  statically rule out, zero-period indicator from a runtime expression.
 
 ### 6.2 Every error carries
 
@@ -935,7 +967,8 @@ message strings. The initial set, expanded as the implementation lands:
 | `TYPE_MISMATCH`         | parse / runtime | Operator or function applied to operands of incompatible types. |
 | `BOOL_REQUIRED`         | parse / runtime | Non-`Bool` used in `if`, `&&`, `\|\|`, `!`. |
 | `RESERVED_REASSIGN`     | parse | Attempt to assign to a reserved identifier or namespace. |
-| `STATE_UNSET`           | runtime | Read of a `state.*` field never assigned. |
+| `STATE_UNDECLARED`      | parse | Read or write of a `state.*` entry with no top-level `state` declaration. |
+| `STATE_UNINITIALIZED`   | parse | A `state` entry has neither a declaration initializer nor an assignment in `Init()`. |
 | `HISTORY_OUT_OF_RANGE`  | runtime | `series[n]` where insufficient history. |
 | `INPUT_NOT_WIRED`       | launch | A declared input port has no source block configured. |
 | `OUTPUT_NOT_WIRED`      | launch | A declared output port has no destination block configured. |
@@ -944,7 +977,8 @@ message strings. The initial set, expanded as the implementation lands:
 | `EMIT_OUTSIDE_RUN`      | parse | `emit(...)` appears outside `function Run()`. |
 | `EMIT_PAYLOAD`          | parse / runtime | Emitted value or kwargs do not match the output declaration. |
 | `INDICATOR_PARAM`       | parse / runtime | Indicator parameter constraint violated (e.g. non-integer period). |
-| `TOP_LEVEL_FORM`        | parse | A construct used at the top level that is not permitted there (e.g. `state.*`, `if`). |
+| `TOP_LEVEL_FORM`        | parse | A construct used at the top level that is not permitted there (e.g. a `state.*` assignment, `if`). |
+| `TOP_DECL_IN_BODY`      | parse | A top-level declaration (`const`, `input`, `output`, `state`) used inside a function body. |
 | `MISSING_REQUIRED_FN`   | parse | Program does not declare `function Run()`. |
 | `EMIT_RESERVED_KWARG`   | parse | User passed a reserved kwarg name to `emit(...)` (e.g. `ts=`). |
 
@@ -1007,9 +1041,7 @@ output alerts: {
   rsi: Number
 }
 
-function Init() {
-  state.cooldown = 0
-}
+state cooldown: Integer = 0
 
 function Run() {
   state.cooldown = math.max(0, state.cooldown - 1)
@@ -1075,6 +1107,8 @@ output alerts: {
   volume: Number
 }
 
+state last_alert: Time
+
 function Init() {
   state.last_alert = btc.timestamps[0] - time.DAY
 }
@@ -1111,9 +1145,7 @@ output alerts: {
   price: Number
 }
 
-function Init() {
-  state.cooldown = 0
-}
+state cooldown: Integer = 0
 
 function Run() {
   state.cooldown = math.max(0, state.cooldown - 1)
@@ -1154,6 +1186,8 @@ output alerts: {
   eth_change: Number,
   divergence: Number
 }
+
+state last_alert: Time
 
 function Init() {
   state.last_alert = btc.timestamps[0] - time.HOUR

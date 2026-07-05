@@ -110,7 +110,17 @@ type UnexpectedTopDecl struct {
 }
 
 func (ud UnexpectedTopDecl) Error() string {
-	return fmt.Sprintf("%s [UNEXPECTED_TOP_DECL] %s: only const, input, output, Init and Run functions allowed at top level", ud.Phase, ud.Pos.String())
+	return fmt.Sprintf("%s [UNEXPECTED_TOP_DECL] %s: only const, input, output, state, Init and Run functions allowed at top level", ud.Phase, ud.Pos.String())
+}
+
+type TopDeclInBody struct {
+	Phase   Phase
+	Pos     token.Pos
+	Keyword token.TokenType
+}
+
+func (td TopDeclInBody) Error() string {
+	return fmt.Sprintf("%s [TOP_DECL_IN_BODY] %s: %s declaration is only allowed at the top level", td.Phase, td.Pos.String(), td.Keyword)
 }
 
 type DuplicateDeclaration struct {

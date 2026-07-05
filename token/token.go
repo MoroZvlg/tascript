@@ -44,6 +44,7 @@ const (
 	CONST    TokenType = "const"
 	INPUT    TokenType = "input"
 	OUTPUT   TokenType = "output"
+	STATE    TokenType = "state"
 	FUNCTION TokenType = "function"
 	IF       TokenType = "if"
 	ELSE     TokenType = "else"
@@ -75,6 +76,7 @@ var keywordsMap = map[string]TokenType{
 	"const":    CONST,
 	"input":    INPUT,
 	"output":   OUTPUT,
+	"state":    STATE,
 	"function": FUNCTION,
 	"if":       IF,
 	"else":     ELSE,

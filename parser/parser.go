@@ -31,6 +31,7 @@ func New(l *lexer.Lexer) *Parser {
 
 	p.prefixFns = map[token.TokenType]func() ast.Expression{
 		token.IDENT:   p.parseIdentExpr,
+		token.STATE:   p.parseIdentExpr,
 		token.INTEGER: p.parseIntegerExpr,
 		token.FLOAT:   p.parseFloatExpr,
 		token.STRING:  p.parseStringExpr,
@@ -90,6 +91,11 @@ func (p *Parser) Parse() *ast.Program {
 			decl := p.parseOutputDecl()
 			if len(p.errors) == errsBefore {
 				prog.Outputs = append(prog.Outputs, decl)
+			}
+		case token.STATE:
+			decl := p.parseStateFieldDecl()
+			if len(p.errors) == errsBefore {
+				prog.StateFields = append(prog.StateFields, decl)
 			}
 		case token.FUNCTION:
 			decl := p.parseFunctionDecl()
@@ -199,6 +205,47 @@ func (p *Parser) parseOutputDecl() *ast.OutputDecl {
 	default:
 		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
 	}
+	return decl
+}
+
+func (p *Parser) parseStateFieldDecl() *ast.StateFieldDecl {
+	decl := &ast.StateFieldDecl{Token: p.currentToken}
+
+	p.nextToken()
+
+	if p.currTokenIs(token.IDENT) {
+		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
+		p.nextToken()
+	} else {
+		p.addUnexpectedToken(p.currentToken, token.IDENT)
+	}
+
+	if p.currTokenIs(token.COLON) {
+		p.nextToken()
+	} else {
+		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
+		if decl.Identifier != nil {
+			p.addUnexpectedToken(p.currentToken, token.COLON)
+		}
+		return decl
+	}
+
+	switch p.currentToken.Type {
+	case token.IDENT:
+		decl.Type = &ast.IdentExpr{Token: p.currentToken}
+	// NOTE: subject of future improvements
+	//case token.LBRACE:
+	//	decl.Type = p.parseInlineTypeExpr()
+	default:
+		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
+	}
+
+	if p.peekTokenIs(token.ASSIGN) {
+		p.nextToken()
+		p.nextToken()
+		decl.Value = p.parseExpression(LowestPrec)
+	}
+
 	return decl
 }
 
