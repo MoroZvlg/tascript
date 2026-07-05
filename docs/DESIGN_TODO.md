@@ -7,32 +7,36 @@ up later. None of these block the current resolver/evaluator work.
 
 Unlike the rest of this doc, these are **not** deferred ideas — it's the prioritized
 inventory of what the parser already accepts but resolver/evaluator don't handle yet
-(snapshot: 2026-07-04). Priorities: P1 = silent correctness holes in what already
-"works", P2 = parser-accepted features the pipeline drops, P3 = polish/consistency.
+(snapshot: 2026-07-05; done items are removed, not struck through). Priorities:
+P1 = silent correctness holes in what already "works", P2 = parser-accepted features
+the pipeline drops, P3 = polish/consistency.
 
-| # | Prio | Area | Missing | Impact |
-|---|------|------|---------|--------|
-| 1 | P1 | resolver | `CallExpr` with non-member callee (`foo()`, `emit(...)`) → `default:` returns `BadExpr` **without a diagnostic** | Breaks "resolution gates evaluation": zero diags, `Compile` passes, evaluator hits "not implemented expression" |
-| 2 | P1 | resolver | `IndexExpr` (`a[i]`) — no case in `resolveExpr`, falls to silent-`BadExpr` default | Same silent hole; parser has `parseIndexExpr` wired |
-| 3 | P1 | resolver | `resolveStmt` default returns `nil` (hits on `ast.IfStmt`, `ast.BadStmt`) | `nil` lands in `Stmts`, evaluator: "unsupported statement `<nil>`". Should be diag + `BadStmt` |
-| 4 | P1 | resolver | `resolveConst` bails out of the whole loop on first duplicate (`return resolvedConsts`) | Consts after the duplicate are neither resolved nor checked — one error hides the rest |
-| 5 | P1 | evaluator | `evalAssignName` uses `Get`+`Set` instead of `Env.Assign` | Shadow-binding bug the moment nested blocks (`if`) exist |
-| 6 | P2 | both | `IfStmt` — no resolve case, no eval case (`resolved.IfStmt` node already exists) | Whole feature; resolver side must also require `Bool` condition |
-| 7 | P2 | both | `&&` / `||` — parsed, but no `BinaryRule` registered | `true && false` → bogus `InvalidBinaryOperation`. Design decision pending: registry rule (eager) vs dedicated node (short-circuit) |
-| 8 | P2 | both | Inputs/Outputs — resolver side DONE (2026-07-04): decl resolution, inline-type synthesis (`RegisterScriptType`, `Record`), env binding, carried into `resolved.Program`. Remaining: runtime input binding (host API) + output delivery to the host. Known lie: outputs sit in the env as readable vars until binding kinds land (TODO in `resolveOutputs`) | Runtime half is prereq for `emit` and for actually reading inputs in Run |
-| 9 | P2 | both | `emit(...)` — resolver side DONE (2026-07-05): statement-position `emit(target, ...)` lowers to `resolved.EmitStmt{Output, Args, T}`; target must be `KindOutput` (INVALID_EMIT_TARGET otherwise); args checked via `resolveArgs` against a rule synthesized from the output type (scalar → one `value` param, structural → one param per field, coercion works). Evaluator side landed too (2026-07-05) with a **temporary sink**: emissions collect into `Evaluator.emitted`, read via `Emitted()`, reset per run — replace with real output channels to the host during the Engine/host API rework (TODO in evaluator.go). Known gaps: `emit` in expression position (`let x = emit(...)`) falls into #1's silent hole; `emit` is matched by name, so a `let emit = ...` binding doesn't shadow it | A resolved program using emit runs into "unsupported statement" at eval until the runtime half lands |
-| 10 | P2 | resolver | Binding kinds — `Binding{T, Kind}` landed (2026-07-05), all env entries tagged (let/const/input/output/module); `Binding.Assignable()` (only `let`) rejects assignment to const/input/output/module with NOT_ASSIGNABLE. Remaining: reject *reading* an output (emit-only, decided 2026-07-05) — wire together with emit (#9) | `let x = alert` still resolves and dies at runtime |
-| 11 | P2 | evaluator | `EvalInit` is a stub (`return nil, nil`) even though resolver resolves `InitFn` | Init bodies silently do nothing; needs persistent-env semantics (Init writes outlive the call, unlike Run) |
-| 12 | P3 | resolver | Assignment doesn't coerce (`let x = 1.5` then `x = 1` → TypeMissmatch) | Inconsistent with args/infix which coerce Int→Float |
-| 13 | P3 | resolver | `resolveArgs`: unknown kwarg silently skipped (`continue`), positional+kwarg duplicate for same param overwrites without diag | Wrong programs resolve cleanly |
-| 14 | P3 | resolver | `CallArgExpr.Token` is the call token (existing TODO in `resolveArgs`) | Arg-level errors point at `(` instead of the arg |
-| 15 | P3 | evaluator | Runtime errors are bare `fmt.Errorf`, no position; `PhaseRuntime` diag unused | Matters once runtime can genuinely fail (div by zero, sqrt of negative) |
-| 16 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #1–#3 mechanically |
+Already shipped and no longer tracked here: `if` (resolve + eval), binding kinds
+(`Binding{T, Kind}`, `Assignable()`, NOT_ASSIGNABLE), input/output decl resolution
+(inline-type synthesis, `Record`, env binding), `emit` end-to-end (statement-position
+`emit(target, ...)` → `resolved.EmitStmt` → evaluator with the temporary `Emitted()` sink),
+output-read check (outputs are emit-only: `let x = alert` → OUTPUT_NOT_READABLE).
 
-Suggested order: the P1 block first (items 1–3 are the same disease — "impossible"
-default branches reachable from valid-parse programs, failing without diagnostics;
-#4 is a one-line decision). Then 7 → 6 (`if` needs booleans) and 8 → 9 (`emit` needs
-outputs), which together complete the language surface the parser already accepts.
+| # | Prio | Area | Missing | Details |
+|---|------|------|---------|---------|
+| 1 | P1 | resolver | Bare `CallExpr` (`foo()`) → silent `BadExpr`, no diagnostic | Breaks "resolution gates evaluation". Two sub-cases: (a) callee ident is `emit` → precise diag "emit is a statement and cannot be used as a value" (statement-position emit is intercepted upstream in `resolveStmt`, so reaching `resolveExpr` with an emit call *is* expression position, e.g. `let x = emit(...)`); (b) any other bare call → "unknown function"-style diag (no `LookupFunc` table exists; don't build one until bare functions are a real feature). Related decision to record: `emit` is matched by callee name, so `let emit = 3` does not shadow it — keyword-by-convention |
+| 2 | P1 | resolver | `IndexExpr` (`a[i]`) — no case in `resolveExpr`, falls to silent-`BadExpr` default | **Nothing is indexable today**: registry has no index-rule table (`VectorShape` declared but unused), so the fix is diag-always, not a feature. Plan (2026-07-05): resolve `Left` and `Index` first (their errors surface), then `NOT_INDEXABLE` diag (`Integer is not indexable`) with the infix-style dedup guard (only add if no new errs) + `BadExpr`. Testable now via the negative path: `let x = 1` then `x^[0]` must produce a diag instead of passing Compile and dying at eval. When built-in indexed state lands: add `LookupIndex(receiverType, indexType)` to the registry and this exact path becomes the real impl — lookup success builds the already-existing `resolved.IndexExpr`, lookup failure keeps the same diag. Do NOT add an empty registry table before then |
+| 3 | P1 | resolver | `resolveConst` bails out of the whole loop on first duplicate (`return resolvedConsts` instead of `continue`) | One-line fix; consts after the duplicate are neither resolved nor checked — one error hides the rest |
+| 4 | P2 | evaluator | Runtime input binding stopgap — scripts *declaring* inputs resolve but die at eval ("unknown identifier") because no values ever reach the env | Sketch agreed: `EvalRun(inputs map[string]registry.Value)` — for each `prog.Inputs`: missing → error, `value.TypeID() != decl.T` → error, else bind into the **per-run** env (not top-level; fresh values per bar). Same "temporary until host API" contract as `Emitted()`. Note: changes `EvalRun`'s signature → touches `evalSrc` test helper. These runtime checks are legitimately eval's job (host values arrive at run time; resolver can't vouch for them) |
+| 5 | P2 | both | `&&` / `||` — parsed, but no `BinaryRule` registered | `true && false` → bogus `InvalidBinaryOperation`. Design decision pending: registry rule (eager, zero new machinery) vs dedicated resolved node (short-circuit semantics). Last real parser-accepted feature with no pipeline support; scripts with `if` will trip over this first |
+| 6 | P2 | evaluator | `EvalInit` is a stub (`return nil, nil`) even though resolver resolves `InitFn` | Init bodies silently do nothing; needs persistent-env semantics (Init writes outlive the call, unlike Run) |
+| 7 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the `EvalRun(inputs)` stopgap from #4 | Includes registry purge-on-reuse: recompiling against the same registry makes `RegisterScriptType` fail and `resolveTypeDecl` silently swallows it (comment in registry.go). Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" section below |
+| 8 | P3 | resolver | Assignment doesn't coerce (`let x = 1.5` then `x = 1` → TypeMissmatch) | Inconsistent with args/infix which coerce Int→Float |
+| 9 | P3 | resolver | `resolveArgs`: unknown kwarg silently skipped (`continue`), positional+kwarg duplicate for same param overwrites without diag | Wrong programs resolve cleanly. Also: for emit, the count diag says "expected 2 args but got 1" counting only value args, though the user typed the target too — fix wording together with #10 |
+| 10 | P3 | resolver | `CallArgExpr.Token` is the call token (existing TODO in `resolveArgs`) | Arg-level errors point at `(` instead of the arg |
+| 11 | P3 | evaluator | Runtime errors are bare `fmt.Errorf`, no position; `PhaseRuntime` diag unused | Matters once runtime can genuinely fail (div by zero, sqrt of negative) |
+| 12 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #1–#2 mechanically |
+
+Suggested order: #4 first (finishes the input/output arc; makes a realistic script —
+struct input, condition, emit — runnable end-to-end for the first time, which is also the
+fixture #7 should be designed around). Then the P1 batch 1–3 (same disease: "impossible"
+default branches reachable from valid-parse programs, failing without diagnostics).
+Then 5, then 6. #7 last, informed by the stopgaps being used in anger.
 
 ## Slot-based variable access (perf)
 

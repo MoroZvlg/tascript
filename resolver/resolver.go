@@ -222,8 +222,6 @@ func (r *Resolver) resolveOutputs(outputs []*ast.OutputDecl, env *Env) []*resolv
 		if !ok {
 			continue
 		}
-		// TODO: outputs are emit-only by design, but reading one (`let x = alert`)
-		// still resolves cleanly and dies at runtime. Add a KindOutput read check when emit lands.
 		env.Set(sym, Binding{T: typeID, Kind: KindOutput})
 		resolvedOutputs = append(resolvedOutputs, &resolved.OutputDecl{
 			Token: out.Token,
@@ -310,6 +308,10 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		binding, exists := env.Get(Symbol(typedExpr.String()))
 		if !exists {
 			r.addUndefinedIdent(typedExpr.Token)
+			return &resolved.BadExpr{Token: typedExpr.Token}
+		}
+		if binding.Kind == KindOutput {
+			r.addOutputNotReadable(typedExpr.Token)
 			return &resolved.BadExpr{Token: typedExpr.Token}
 		}
 		return &resolved.IdentExpr{Token: typedExpr.Token, T: binding.T}
@@ -514,6 +516,13 @@ func (r *Resolver) addUndefinedVar(opToken token.Token) {
 
 func (r *Resolver) addInvalidAssignTarget(opToken token.Token) {
 	r.errs = append(r.errs, &diag.InvalidAssignTarget{
+		Phase: diag.PhaseCheck,
+		Token: opToken,
+	})
+}
+
+func (r *Resolver) addOutputNotReadable(opToken token.Token) {
+	r.errs = append(r.errs, &diag.OutputNotReadable{
 		Phase: diag.PhaseCheck,
 		Token: opToken,
 	})

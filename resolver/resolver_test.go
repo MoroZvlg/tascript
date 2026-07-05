@@ -179,6 +179,24 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 			},
 		},
 		{
+			"read output",
+			"output alert: String\nfunction Run() {\nlet x = ^alert\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addOutputNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "alert"}),
+				}
+			},
+		},
+		{
+			"output in expression reports only the read error",
+			"output alert: String\nfunction Run() {\n^alert + \"x\"\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addOutputNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "alert"}),
+				}
+			},
+		},
+		{
 			"duplicate field in inline type",
 			"input btc: ^{price: Float, ^price: Integer}" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -606,6 +624,10 @@ func addNotAssignable(tok token.Token, kind string) *diag.NotAssignable {
 
 func addInvalidEmitTarget(tok token.Token) *diag.InvalidEmitTarget {
 	return &diag.InvalidEmitTarget{Phase: diag.PhaseCheck, Token: tok}
+}
+
+func addOutputNotReadable(tok token.Token) *diag.OutputNotReadable {
+	return &diag.OutputNotReadable{Phase: diag.PhaseCheck, Token: tok}
 }
 
 func TestResolver_ResolveEmit(t *testing.T) {

@@ -171,6 +171,15 @@ func (uv UndefinedVar) Error() string {
 	return fmt.Sprintf("%s [UNDEFINED_VAR] %s: unknown variable %s", uv.Phase, uv.Token.Pos.String(), uv.Token.String())
 }
 
+type OutputNotReadable struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (or OutputNotReadable) Error() string {
+	return fmt.Sprintf("%s [OUTPUT_NOT_READABLE] %s: output %s is emit-only and cannot be read", or.Phase, or.Token.Pos.String(), or.Token.String())
+}
+
 type InvalidEmitTarget struct {
 	Phase Phase
 	Token token.Token
