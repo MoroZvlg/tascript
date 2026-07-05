@@ -19,9 +19,15 @@ type Resolver struct {
 }
 
 func New(prog *ast.Program, reg *registry.Registry) *Resolver {
+	resolvedProg := &resolved.Program{
+		// NOTE: we need empty
+		State: &resolved.State{
+			Fields: make([]*resolved.StateField, 0),
+		},
+	}
 	return &Resolver{
 		prog:         prog,
-		resolvedProg: &resolved.Program{},
+		resolvedProg: resolvedProg,
 		reg:          reg,
 	}
 }
@@ -34,14 +40,19 @@ func (r *Resolver) Resolve() *resolved.Program {
 	topLevelEnv := EnvFromRegistry(r.reg)
 
 	r.resolvedProg.Consts = r.resolveConst(r.prog.Consts, topLevelEnv)
+	r.resolveState(r.prog.StateFields, topLevelEnv)
+
+	// NOTE: decl resolve order IS the scoping rule: consts and state initializers resolve before inputs/outputs
+	// enter the env, so referencing dynamic data in them will fail.
 	r.resolvedProg.Inputs = r.resolveInputs(r.prog.Inputs, topLevelEnv)
 	r.resolvedProg.Outputs = r.resolveOutputs(r.prog.Outputs, topLevelEnv)
-
-	r.resolvedProg.RunFn = r.resolveFunc(r.prog.RunFn, NewEnclosedEnv(topLevelEnv))
 
 	if r.prog.InitFn != nil {
 		r.resolvedProg.InitFn = r.resolveFunc(r.prog.InitFn, NewEnclosedEnv(topLevelEnv))
 	}
+	r.checkStateInitialized()
+
+	r.resolvedProg.RunFn = r.resolveFunc(r.prog.RunFn, NewEnclosedEnv(topLevelEnv))
 
 	if len(r.errs) > 0 {
 		return r.resolvedProg
@@ -113,6 +124,49 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 				Value:  value,
 				T:      binding.T,
 			}
+		case *ast.MemberAccessExpr:
+			identExpr, ok := target.Object.(*ast.IdentExpr)
+			if !ok {
+				r.addInvalidAssignTarget(astStmtTyped.Token)
+				return &resolved.BadStmt{Token: astStmtTyped.Token}
+			}
+
+			if identExpr.Token.Type != token.STATE {
+				r.addInvalidAssignTarget(astStmtTyped.Token)
+				return &resolved.BadStmt{Token: astStmtTyped.Token}
+			}
+
+			fieldName := target.Method.String()
+			var fieldDecl *resolved.StateField
+			for _, field := range r.resolvedProg.State.Fields {
+				if field.Name == fieldName {
+					fieldDecl = field
+					break
+				}
+			}
+
+			if fieldDecl == nil {
+				r.addStateUndeclared(target.Method.Token)
+				return &resolved.BadStmt{Token: astStmtTyped.Token}
+			}
+
+			if fieldDecl.T != value.Type() {
+				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), fieldDecl.T)
+				if !coerceExists {
+					r.addTypeMissmatch(astStmtTyped.Token, fieldDecl.T, value.Type())
+					return &resolved.BadStmt{Token: astStmtTyped.Token}
+				}
+				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
+			}
+
+			fieldDecl.Initialized = true
+			return &resolved.AssignStateStmt{
+				Token:  astStmtTyped.Token,
+				Target: fieldDecl,
+				Value:  value,
+				T:      fieldDecl.T,
+			}
+
 		default:
 			r.addInvalidAssignTarget(astStmtTyped.Token)
 			return &resolved.BadStmt{Token: astStmtTyped.Token}
@@ -294,6 +348,63 @@ func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.C
 	return resolvedConsts
 }
 
+func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
+	fields := make([]*resolved.StateField, 0, len(fieldEntries))
+	seen := make(map[string]bool, len(fieldEntries))
+	for _, fieldEntry := range fieldEntries {
+		name := fieldEntry.Identifier.String()
+		if seen[name] {
+			r.addDuplicateDeclaration(fieldEntry.Token, fieldEntry.Identifier.Token)
+			continue
+		}
+		seen[name] = true
+
+		typeID, exists := r.reg.LookupType(fieldEntry.Type.String())
+		if !exists {
+			typeToken := fieldEntry.Token
+			if typeIdent, ok := fieldEntry.Type.(*ast.IdentExpr); ok {
+				typeToken = typeIdent.Token
+			}
+			r.addUndefinedType(typeToken)
+			continue
+		}
+		field := &resolved.StateField{
+			Token: fieldEntry.Identifier.Token,
+			Name:  name,
+			T:     typeID,
+		}
+		if fieldEntry.Value != nil {
+			initValue := r.resolveExpr(fieldEntry.Value, env)
+			if resolved.IsBadExpr(initValue) {
+				continue // already reported
+			}
+			if initValue.Type() != typeID {
+				coerceRule, coerceExists := r.reg.LookupCoerce(initValue.Type(), typeID)
+				if !coerceExists {
+					r.addTypeMissmatch(fieldEntry.Identifier.Token, typeID, initValue.Type())
+					continue
+				}
+				initValue = &resolved.CoerceExpr{Inner: initValue, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
+			}
+			field.InitValue = initValue
+			field.Initialized = true
+		}
+		// NOTE: do not add fields to State here. In such case it next state decl may reference prev state decl
+		fields = append(fields, field)
+	}
+	r.resolvedProg.State.Fields = fields
+}
+
+// checkStateInitialized MUST run after Init() is resolved and BEFORE Run() is:  assign-resolution flips Initialized,
+// so at check time the flag reflects decl initializers plus exactly Init's assignments.
+func (r *Resolver) checkStateInitialized() {
+	for _, field := range r.resolvedProg.State.Fields {
+		if !field.Initialized {
+			r.addStateUninitialized(field.Token)
+		}
+	}
+}
+
 func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expression {
 	switch typedExpr := expr.(type) {
 	case *ast.IntegerExpr:
@@ -341,6 +452,30 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 
 	case *ast.MemberAccessExpr:
 		errsBefore := len(r.errs)
+		identExpr, isIdent := typedExpr.Object.(*ast.IdentExpr)
+		if isIdent && identExpr.Token.Type == token.STATE {
+			fieldName := typedExpr.Method.String()
+			var fieldDecl *resolved.StateField
+
+			for _, field := range r.resolvedProg.State.Fields {
+				if field.Name == fieldName {
+					fieldDecl = field
+					break
+				}
+			}
+
+			if fieldDecl == nil {
+				r.addStateUndeclared(typedExpr.Method.Token)
+				return &resolved.BadExpr{Token: typedExpr.Token}
+			}
+
+			return &resolved.StateAccessExpr{
+				Token:  typedExpr.Token,
+				Method: fieldName,
+				T:      fieldDecl.T,
+			}
+		}
+
 		resolvedExpr := r.resolveExpr(typedExpr.Object, env)
 		rule, exists := r.reg.LookupMemberAccess(resolvedExpr.Type(), typedExpr.Method.String())
 		if !exists {
@@ -587,5 +722,19 @@ func (r *Resolver) addTypeMissmatch(opToken token.Token, expected, got registry.
 		Token:    opToken,
 		Expected: expected,
 		Got:      got,
+	})
+}
+
+func (r *Resolver) addStateUndeclared(fieldToken token.Token) {
+	r.errs = append(r.errs, &diag.StateUndeclared{
+		Phase: diag.PhaseCheck,
+		Token: fieldToken,
+	})
+}
+
+func (r *Resolver) addStateUninitialized(fieldToken token.Token) {
+	r.errs = append(r.errs, &diag.StateUninitialized{
+		Phase: diag.PhaseCheck,
+		Token: fieldToken,
 	})
 }

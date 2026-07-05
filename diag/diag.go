@@ -113,6 +113,24 @@ func (ud UnexpectedTopDecl) Error() string {
 	return fmt.Sprintf("%s [UNEXPECTED_TOP_DECL] %s: only const, input, output, state, Init and Run functions allowed at top level", ud.Phase, ud.Pos.String())
 }
 
+type StateUndeclared struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (su StateUndeclared) Error() string {
+	return fmt.Sprintf("%s [STATE_UNDECLARED] %s: state field %s is not declared", su.Phase, su.Token.Pos.String(), su.Token.Literal)
+}
+
+type StateUninitialized struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (su StateUninitialized) Error() string {
+	return fmt.Sprintf("%s [STATE_UNINITIALIZED] %s: state field %s has no initializer and is never assigned in Init()", su.Phase, su.Token.Pos.String(), su.Token.Literal)
+}
+
 type TopDeclInBody struct {
 	Phase   Phase
 	Pos     token.Pos

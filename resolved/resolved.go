@@ -166,8 +166,6 @@ func (pe *PrefixExpr) Type() registry.TypeID {
 type MemberAccessExpr struct {
 	Token  token.Token
 	Object Expression
-	// TODO: i rewrote it to string, is it looks correct? method do not returns any type/evalFn/etc.
-	// It's just a name of the attribute. TypeID showed by MemberAccess itself
 	Method string
 	T      registry.TypeID
 	EvalFn func(registry.Value) registry.Value
@@ -185,6 +183,26 @@ func (ma *MemberAccessExpr) expressionNode() {}
 
 func (ma *MemberAccessExpr) Type() registry.TypeID {
 	return ma.T
+}
+
+type StateAccessExpr struct {
+	Token  token.Token
+	Method string
+	T      registry.TypeID
+}
+
+func (sa *StateAccessExpr) String() string {
+	var out bytes.Buffer
+	out.WriteString("state")
+	out.WriteString(sa.Token.Literal)
+	out.WriteString(sa.Method)
+	return out.String()
+}
+
+func (sa *StateAccessExpr) expressionNode() {}
+
+func (sa *StateAccessExpr) Type() registry.TypeID {
+	return sa.T
 }
 
 type IndexExpr struct {
@@ -340,6 +358,32 @@ func (as *AssignNameStmt) Type() registry.TypeID {
 
 func (as *AssignNameStmt) statementNode() {}
 
+type AssignStateStmt struct {
+	Token  token.Token
+	Target *StateField
+	Value  Expression
+	T      registry.TypeID
+}
+
+func (as *AssignStateStmt) String() string {
+	var out bytes.Buffer
+	out.WriteString("state.")
+	out.WriteString(as.Target.Name)
+	out.WriteString(" = ")
+	if as.Value == nil {
+		out.WriteString("<missing expression>")
+	} else {
+		out.WriteString(as.Value.String())
+	}
+	return out.String()
+}
+
+func (as *AssignStateStmt) Type() registry.TypeID {
+	return as.T
+}
+
+func (as *AssignStateStmt) statementNode() {}
+
 type EmitStmt struct {
 	Token  token.Token
 	Output string
@@ -445,8 +489,46 @@ type Program struct {
 	Consts  []*ConstDecl
 	Inputs  []*InputDecl
 	Outputs []*OutputDecl
+	State   *State
 	InitFn  *Function
 	RunFn   *Function
+}
+
+type State struct {
+	Fields []*StateField
+}
+
+func (s *State) String() string {
+	var out bytes.Buffer
+	out.WriteString("State{")
+	for i, field := range s.Fields {
+		out.WriteString(field.String())
+		if i < len(s.Fields)-1 {
+			out.WriteString(",")
+		}
+	}
+	out.WriteString("}")
+	return out.String()
+}
+
+type StateField struct {
+	Token       token.Token
+	Name        string
+	T           registry.TypeID
+	InitValue   Expression
+	Initialized bool
+}
+
+func (sf *StateField) String() string {
+	var out bytes.Buffer
+	out.WriteString(sf.Name)
+	out.WriteString(": ")
+	out.WriteString(sf.T.String())
+	if sf.InitValue != nil {
+		out.WriteString(" = ")
+		out.WriteString(sf.InitValue.String())
+	}
+	return out.String()
 }
 
 type InputDecl struct {
