@@ -745,8 +745,6 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			},
 		},
 		{
-			// points at the field ident: expressions don't expose their token yet
-			// (see "Lighter position info" in DESIGN_TODO — same gap as the if-condition TODO)
 			"initializer type mismatch",
 			"state ^x: Integer = true" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -822,14 +820,52 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			},
 		},
 		{
-			"seeded in nested Init block",
-			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n}\n}" + runSuffix,
+			"seeded only under if",
+			"state ^x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n}\n}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addStateUninitialized(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
+				}
+			},
+		},
+		{
+			"seeded at top level then conditionally overwritten",
+			"state x: Integer\nfunction Init() {\nstate.x = 1\nif (true) {\nstate.x = 2\n}\n}" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
 		{
-			// points at `=`, same as ident-target assign mismatch (stmt token)
+			"lone if first, top-level seed after",
+			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 2\n}\nstate.x = 1\n}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"seeded in both if/else branches",
+			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n} else {\nstate.x = 2\n}\n}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"seeded in only one if/else branch",
+			"state ^x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n} else {\nlet y = 2\n}\n}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addStateUninitialized(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
+				}
+			},
+		},
+		{
+			"seeded through else-if chain",
+			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n} else if (false) {\nstate.x = 2\n} else {\nstate.x = 3\n}\n}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
 			"assign type mismatch in Run",
 			"state x: Integer = 0\nfunction Run() {\nstate.x ^= true\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -839,7 +875,6 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			},
 		},
 		{
-			// Integer assign into a Float field coerces, same as initializers
 			"assign coercion in Run",
 			"state f: Float = 0.0\nfunction Run() {\nstate.f = 1\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -854,7 +889,6 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			},
 		},
 		{
-			// bare `state` is not a value
 			"bare state as value",
 			"state c: Integer = 5\nfunction Run() {\nlet x = ^state\n}",
 			func(ps []token.Pos) []diag.Diagnostic {

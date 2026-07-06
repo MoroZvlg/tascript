@@ -159,7 +159,6 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
 			}
 
-			fieldDecl.Initialized = true
 			return &resolved.AssignStateStmt{
 				Token:  astStmtTyped.Token,
 				Target: fieldDecl,
@@ -387,7 +386,6 @@ func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
 				initValue = &resolved.CoerceExpr{Inner: initValue, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
 			}
 			field.InitValue = initValue
-			field.Initialized = true
 		}
 		// NOTE: do not add fields to State here. In such case it next state decl may reference prev state decl
 		fields = append(fields, field)
@@ -395,14 +393,45 @@ func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
 	r.resolvedProg.State.Fields = fields
 }
 
-// checkStateInitialized MUST run after Init() is resolved and BEFORE Run() is:  assign-resolution flips Initialized,
-// so at check time the flag reflects decl initializers plus exactly Init's assignments.
+// checkStateInitialized: every state field MUST have a declaration initializer
+// or be definitely assigned in Init() in every execution path.
 func (r *Resolver) checkStateInitialized() {
+	assigned := make(map[*resolved.StateField]bool)
+	if r.resolvedProg.InitFn != nil {
+		assigned = definitelyAssignedState(r.resolvedProg.InitFn.Body)
+	}
 	for _, field := range r.resolvedProg.State.Fields {
-		if !field.Initialized {
+		if field.InitValue == nil && !assigned[field] {
 			r.addStateUninitialized(field.Token)
 		}
 	}
+}
+
+// definitelyAssignedState returns the state fields assigned on every execution path through stmt.
+// Deliberately conservative: a statement kind without a rule here(including any future stmts) — contributes nothing.
+func definitelyAssignedState(stmt resolved.Statement) map[*resolved.StateField]bool {
+	assigned := make(map[*resolved.StateField]bool)
+	switch typedStmt := stmt.(type) {
+	case *resolved.AssignStateStmt:
+		assigned[typedStmt.Target] = true
+	case *resolved.BlockStmt:
+		for _, inner := range typedStmt.Stmts {
+			for field, _ := range definitelyAssignedState(inner) {
+				assigned[field] = true
+			}
+		}
+	case *resolved.IfStmt:
+		if typedStmt.Else == nil {
+			break // no else: the branch may not run, nothing is definite
+		}
+		inElse := definitelyAssignedState(typedStmt.Else)                      // else branch
+		for field, _ := range definitelyAssignedState(typedStmt.Consequence) { // if branch
+			if _, exists := inElse[field]; exists {
+				assigned[field] = true
+			}
+		}
+	}
+	return assigned
 }
 
 func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expression {

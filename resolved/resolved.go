@@ -512,11 +512,10 @@ func (s *State) String() string {
 }
 
 type StateField struct {
-	Token       token.Token
-	Name        string
-	T           registry.TypeID
-	InitValue   Expression
-	Initialized bool
+	Token     token.Token
+	Name      string
+	T         registry.TypeID
+	InitValue Expression // decl initializer only; evaluated at load phase
 }
 
 func (sf *StateField) String() string {

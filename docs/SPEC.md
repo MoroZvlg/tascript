@@ -125,8 +125,9 @@ Every tascript program is composed of:
    domain as a `const` right-hand side (literals, declared constants, module
    calls — no inputs, outputs, or other state entries) and is evaluated once
    at program load, after constants. An entry with no initializer **must** be
-   assigned inside `Init()`; the analyser rejects the program otherwise. See
-   section 4.3 for full semantics.
+   definitely assigned — assigned on every execution path — inside `Init()`;
+   the analyser rejects the program otherwise. See section 4.3 for full
+   semantics.
 
 5. **An optional `function Init() { ... }`.** When present, it runs **exactly
    once** before the first candle is processed. It is intended for seeding
@@ -684,6 +685,22 @@ tascript exposes two complementary forms of memory across candles:
    Initializers are evaluated once at program load, after top-level constants
    and before `Init()` runs; `Init()` may overwrite any entry.
 
+   The seeding requirement is **definite assignment**: an entry without a
+   declaration initializer must be assigned on *every* execution path through
+   `Init()`. An assignment under a lone `if` does not count (the branch may
+   not run); an `if`/`else` where **both** branches assign does. To seed
+   conditionally, write the default first and overwrite it:
+
+   ```js
+   state.mode = 0            // definite
+   if (volatile) { state.mode = 1 }
+   ```
+
+   The analysis is deliberately conservative — constructs it has no rule for
+   (including any future loops) contribute nothing — so it can over-report
+   `STATE_UNINITIALIZED` but never miss a genuinely unseeded path. Reading
+   unset state at runtime is therefore impossible in a program that compiles.
+
 `let` bindings inside a function body are scoped to that single invocation and
 do not persist.
 
@@ -968,7 +985,7 @@ message strings. The initial set, expanded as the implementation lands:
 | `BOOL_REQUIRED`         | parse / runtime | Non-`Bool` used in `if`, `&&`, `\|\|`, `!`. |
 | `RESERVED_REASSIGN`     | parse | Attempt to assign to a reserved identifier or namespace. |
 | `STATE_UNDECLARED`      | parse | Read or write of a `state.*` entry with no top-level `state` declaration. |
-| `STATE_UNINITIALIZED`   | parse | A `state` entry has neither a declaration initializer nor an assignment in `Init()`. |
+| `STATE_UNINITIALIZED`   | parse | A `state` entry has no declaration initializer and is not definitely assigned (on every path) in `Init()`. |
 | `HISTORY_OUT_OF_RANGE`  | runtime | `series[n]` where insufficient history. |
 | `INPUT_NOT_WIRED`       | launch | A declared input port has no source block configured. |
 | `OUTPUT_NOT_WIRED`      | launch | A declared output port has no destination block configured. |
