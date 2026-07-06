@@ -11,6 +11,7 @@ type Evaluator struct {
 	prog     *resolved.Program
 	registry *registry.Registry
 	env      *Env
+	states   map[string]registry.Value
 	// TODO: temporary emission sink — collects emitted values until real
 	// output channels to the host are wired (Engine/host API rework).
 	emitted []registry.NamedValue
@@ -21,6 +22,7 @@ func New(prog *resolved.Program, reg *registry.Registry) *Evaluator {
 		prog:     prog,
 		registry: reg,
 		env:      EnvFromRegistry(reg),
+		states:   make(map[string]registry.Value),
 	}
 }
 
@@ -30,6 +32,7 @@ func (e *Evaluator) Emitted() []registry.NamedValue {
 	return e.emitted
 }
 
+// EvalInit is the load phase and must be called once before the first EvalRun
 func (e *Evaluator) EvalInit() (result registry.Value, err error) {
 	// until failure protocol lands: EvalFns must not crash the host.
 	defer func() {
@@ -37,6 +40,27 @@ func (e *Evaluator) EvalInit() (result registry.Value, err error) {
 			result, err = nil, fmt.Errorf("runtime panic: %v", r)
 		}
 	}()
+
+	for _, decl := range e.prog.Consts {
+		if err := e.evalConst(decl, e.env); err != nil {
+			return nil, err
+		}
+	}
+
+	for _, field := range e.prog.State.Fields {
+		if field.InitValue == nil {
+			continue // will be seeded in Init()
+		}
+		value, err := e.evalExpr(field.InitValue, e.env)
+		if err != nil {
+			return nil, err
+		}
+		e.states[field.Name] = value
+	}
+
+	if e.prog.InitFn != nil {
+		return e.evalBlock(e.prog.InitFn.Body, NewEnclosedEnv(e.env))
+	}
 	return nil, nil
 }
 
@@ -49,13 +73,6 @@ func (e *Evaluator) EvalRun() (result registry.Value, err error) {
 	}()
 
 	e.emitted = nil
-
-	for _, decl := range e.prog.Consts {
-		err := e.evalConst(decl, e.env)
-		if err != nil {
-			return nil, err
-		}
-	}
 
 	return e.evalBlock(e.prog.RunFn.Body, NewEnclosedEnv(e.env))
 }
@@ -95,9 +112,20 @@ func (e *Evaluator) evalStmt(stmt resolved.Statement, env *Env) (registry.Value,
 		return e.evalIf(n, env)
 	case *resolved.EmitStmt:
 		return e.evalEmit(n, env)
+	case *resolved.AssignStateStmt:
+		return e.evalAssignState(n, env)
 	default:
 		return nil, fmt.Errorf("unsupported statement %T", stmt)
 	}
+}
+
+func (e *Evaluator) evalAssignState(stmt *resolved.AssignStateStmt, env *Env) (registry.Value, error) {
+	value, err := e.evalExpr(stmt.Value, env)
+	if err != nil {
+		return nil, err
+	}
+	e.states[stmt.Target.Name] = value
+	return value, nil
 }
 
 func (e *Evaluator) evalIf(stmt *resolved.IfStmt, env *Env) (registry.Value, error) {
@@ -188,9 +216,20 @@ func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value
 		return e.evalMemberAccess(n, env)
 	case *resolved.MethodCallExpr:
 		return e.evalMethodCall(n, env)
+	case *resolved.StateAccessExpr:
+		return e.evalStateAccess(n)
 	default:
 		return nil, fmt.Errorf("not implemented expression %T", expr)
 	}
+}
+
+func (e *Evaluator) evalStateAccess(expr *resolved.StateAccessExpr) (registry.Value, error) {
+	value, ok := e.states[expr.Method]
+	if !ok {
+		// should be unreachable. Everything checked on resolve stage
+		return nil, fmt.Errorf("state field %s read before initialization", expr.Method)
+	}
+	return value, nil
 }
 
 func (e *Evaluator) evalIdent(expr *resolved.IdentExpr, env *Env) (registry.Value, error) {

@@ -25,7 +25,11 @@ func evalSrc(t *testing.T, src string) registry.Value {
 		t.Fatalf("resolver diagnostics: %v", resolv.Diagnostics())
 	}
 
-	got, err := evaluator.New(resolvedProg, reg).EvalRun()
+	ev := evaluator.New(resolvedProg, reg)
+	if _, err := ev.EvalInit(); err != nil {
+		t.Fatalf("init error: %v", err)
+	}
+	got, err := ev.EvalRun()
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
@@ -280,5 +284,61 @@ func TestEvaluator_Consts(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEvaluator_State(t *testing.T) {
+	src := `output out: Integer
+state cooldown: Integer = 3
+state seeded: Integer
+
+function Init() {
+state.seeded = 10
+}
+
+function Run() {
+state.cooldown = state.cooldown - 1
+emit(out, state.cooldown + state.seeded)
+1
+}`
+	p := parser.New(lexer.New(src))
+	prog := p.Parse()
+	if len(p.Diagnostics()) > 0 {
+		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
+	}
+	reg := registry.DefaultRegistry()
+	resolv := resolver.New(prog, reg)
+	resolvedProg := resolv.Resolve()
+	if len(resolv.Diagnostics()) > 0 {
+		t.Fatalf("resolver diagnostics: %v", resolv.Diagnostics())
+	}
+
+	ev := evaluator.New(resolvedProg, reg)
+	if _, err := ev.EvalInit(); err != nil {
+		t.Fatalf("init error: %v", err)
+	}
+
+	// bar 1: cooldown 3 -> 2, emits 2 + 10
+	if _, err := ev.EvalRun(); err != nil {
+		t.Fatalf("first eval error: %v", err)
+	}
+	emitted := ev.Emitted()
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 emission, got %d: %v", len(emitted), emitted)
+	}
+	if emitted[0].Value != registry.Integer(12) {
+		t.Errorf("first run: expected 12, got %v", emitted[0].Value)
+	}
+
+	// bar 2: cooldown persists, 2 -> 1, emits 1 + 10
+	if _, err := ev.EvalRun(); err != nil {
+		t.Fatalf("second eval error: %v", err)
+	}
+	emitted = ev.Emitted()
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 emission on second run, got %d", len(emitted))
+	}
+	if emitted[0].Value != registry.Integer(11) {
+		t.Errorf("second run: expected 11, got %v", emitted[0].Value)
 	}
 }
