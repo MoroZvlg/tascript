@@ -122,7 +122,7 @@ type InfixExpr struct {
 	Left   Expression
 	Right  Expression
 	T      registry.TypeID
-	EvalFn func(left, right registry.Value) registry.Value
+	EvalFn func(left, right registry.Value) (registry.Value, error)
 }
 
 func (ie *InfixExpr) String() string {
@@ -146,7 +146,7 @@ func (ie *InfixExpr) Type() registry.TypeID {
 type PrefixExpr struct {
 	Token  token.Token
 	Right  Expression
-	EvalFn func(right registry.Value) registry.Value
+	EvalFn func(right registry.Value) (registry.Value, error)
 	T      registry.TypeID
 }
 
@@ -168,7 +168,7 @@ type MemberAccessExpr struct {
 	Object Expression
 	Method string
 	T      registry.TypeID
-	EvalFn func(registry.Value) registry.Value
+	EvalFn func(registry.Value) (registry.Value, error)
 }
 
 func (ma *MemberAccessExpr) String() string {
@@ -233,7 +233,7 @@ type MethodCallExpr struct {
 	Method   string
 	Args     []*CallArgExpr
 	T        registry.TypeID
-	EvalFn   func(receiver registry.Value, args map[string]registry.Value) registry.Value
+	EvalFn   func(receiver registry.Value, args map[string]registry.Value) (registry.Value, error)
 }
 
 type CallArgExpr struct {

@@ -1,6 +1,7 @@
 package registry_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/MoroZvlg/tascript/registry"
@@ -48,8 +49,50 @@ func TestDefaultNumericOperations(t *testing.T) {
 			if rule.EvalType != test.wantType {
 				t.Errorf("result type = %v, want %v", rule.EvalType, test.wantType)
 			}
-			if got := rule.EvalFn(test.left, test.right); got != test.want {
+			got, err := rule.EvalFn(test.left, test.right)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != test.want {
 				t.Errorf("result = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestDivisionByZeroTraps(t *testing.T) {
+	tests := []struct {
+		name     string
+		operator token.TokenType
+		left     registry.Value
+		right    registry.Value
+	}{
+		{"int div", token.SLASH, registry.Integer(7), registry.Integer(0)},
+		{"int mod", token.PERCENT, registry.Integer(7), registry.Integer(0)},
+		{"float div", token.SLASH, registry.Float(7.5), registry.Float(0)},
+		{"float mod", token.PERCENT, registry.Float(7.5), registry.Float(0)},
+		{"mixed div int/float", token.SLASH, registry.Integer(7), registry.Float(0)},
+		{"mixed div float/int", token.SLASH, registry.Float(7.5), registry.Integer(0)},
+		{"mixed mod float/int", token.PERCENT, registry.Float(7.5), registry.Integer(0)},
+	}
+
+	reg := registry.DefaultRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rule, ok := reg.LookupBinary(test.operator, test.left.TypeID(), test.right.TypeID())
+			if !ok {
+				t.Fatal("operation is not registered")
+			}
+			got, err := rule.EvalFn(test.left, test.right)
+			if err == nil {
+				t.Fatalf("expected division-by-zero error, got value %v", got)
+			}
+			var regErr registry.Error
+			if !errors.As(err, &regErr) {
+				t.Fatalf("expected registry.Error, got %T: %v", err, err)
+			}
+			if regErr.Kind != registry.DivisionByZero {
+				t.Errorf("kind = %s, want %s", regErr.Kind, registry.DivisionByZero)
 			}
 		})
 	}

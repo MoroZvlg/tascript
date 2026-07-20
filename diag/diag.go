@@ -294,3 +294,30 @@ type TypeMissmatch struct {
 func (tm TypeMissmatch) Error() string {
 	return fmt.Sprintf("%s [TYPE_MISSMATCH] %s: expected %s type got %s", tm.Phase, tm.Token.Pos.String(), tm.Expected, tm.Got)
 }
+
+// RuntimeFailure is a script trap: a runtime failure a correct interpreter hit on legal input (e.g. division by zero)
+type RuntimeFailure struct {
+	Phase   Phase
+	Pos     token.Pos
+	Kind    registry.ErrorKind
+	Message string
+	EntryFn string
+}
+
+func (rf RuntimeFailure) Error() string {
+	return fmt.Sprintf("%s [%s] %s: %s (in %s)", rf.Phase, rf.Kind, rf.Pos.String(), rf.Message, rf.EntryFn)
+}
+
+// InternalFailure is a recovered panic below an entry point:
+// either core interpreter code hitting a resolver-guaranteed-impossible state,
+// or a registered rule that panicked instead of returning an error.
+type InternalFailure struct {
+	Phase   Phase
+	EntryFn string
+	Panic   any
+	Stack   []byte
+}
+
+func (in InternalFailure) Error() string {
+	return fmt.Sprintf("%s [INTERNAL] unrecovered panic in %s: %v\n%s", in.Phase, in.EntryFn, in.Panic, in.Stack)
+}

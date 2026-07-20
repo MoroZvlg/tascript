@@ -1,9 +1,12 @@
 package evaluator_test
 
 import (
+	"errors"
 	"math"
+	"strings"
 	"testing"
 
+	"github.com/MoroZvlg/tascript/diag"
 	"github.com/MoroZvlg/tascript/evaluator"
 	"github.com/MoroZvlg/tascript/lexer"
 	"github.com/MoroZvlg/tascript/parser"
@@ -11,7 +14,9 @@ import (
 	"github.com/MoroZvlg/tascript/resolver"
 )
 
-func evalSrc(t *testing.T, src string) registry.Value {
+// compileSrc parses and resolves src into a fresh evaluator;
+// customize (may be nil) tweaks the registry before resolution, e.g. to add test modules.
+func compileSrc(t *testing.T, src string, customize func(*registry.Registry)) *evaluator.Evaluator {
 	t.Helper()
 	p := parser.New(lexer.New(src))
 	prog := p.Parse()
@@ -19,13 +24,20 @@ func evalSrc(t *testing.T, src string) registry.Value {
 		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
 	}
 	reg := registry.DefaultRegistry()
+	if customize != nil {
+		customize(reg)
+	}
 	resolv := resolver.New(prog, reg)
 	resolvedProg := resolv.Resolve()
 	if len(resolv.Diagnostics()) > 0 {
 		t.Fatalf("resolver diagnostics: %v", resolv.Diagnostics())
 	}
+	return evaluator.New(resolvedProg, reg)
+}
 
-	ev := evaluator.New(resolvedProg, reg)
+func evalSrc(t *testing.T, src string) registry.Value {
+	t.Helper()
+	ev := compileSrc(t, src, nil)
 	if _, err := ev.EvalInit(); err != nil {
 		t.Fatalf("init error: %v", err)
 	}
@@ -239,23 +251,133 @@ func TestEvaluator_IfStmt(t *testing.T) {
 	}
 }
 
-func TestEvaluator_PanicRecoveredAsError(t *testing.T) {
-	src := "function Run() {\n5 % 0\n}"
-	p := parser.New(lexer.New(src))
-	prog := p.Parse()
-	if len(p.Diagnostics()) > 0 {
-		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
-	}
-	reg := registry.DefaultRegistry()
-	resolv := resolver.New(prog, reg)
-	resolvedProg := resolv.Resolve()
-	if len(resolv.Diagnostics()) > 0 {
-		t.Fatalf("resolver diagnostics: %v", resolv.Diagnostics())
+func TestEvaluator_TrapDivisionByZero(t *testing.T) {
+	tests := []struct {
+		name string
+		expr string
+	}{
+		{"int div", "7 / 0"},
+		{"int mod", "5 % 0"},
+		{"float div", "7.5 / 0.0"},
+		{"float mod", "7.5 % 0.0"},
 	}
 
-	got, err := evaluator.New(resolvedProg, reg).EvalRun()
-	if err == nil {
-		t.Fatalf("expected runtime error, got value %v", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev := compileSrc(t, "function Run() {\n"+tt.expr+"\n}", nil)
+			_, err := ev.EvalRun()
+
+			var failure diag.RuntimeFailure
+			if !errors.As(err, &failure) {
+				t.Fatalf("expected diag.RuntimeFailure, got %T: %v", err, err)
+			}
+			if failure.Kind != registry.DivisionByZero {
+				t.Errorf("kind = %s, want %s", failure.Kind, registry.DivisionByZero)
+			}
+			if failure.Pos.Line != 2 {
+				t.Errorf("position = %s, want line 2", failure.Pos.String())
+			}
+			if failure.EntryFn != "Run" {
+				t.Errorf("entry fn = %s, want Run", failure.EntryFn)
+			}
+		})
+	}
+}
+
+// A trapped tick never happened: its state writes roll back and its emits are discarded.
+func TestEvaluator_TrapRollsBackTick(t *testing.T) {
+	src := `output out: Integer
+state n: Integer = 0
+
+function Run() {
+emit(out, state.n)
+state.n = state.n + 1
+if (state.n == 2) {
+5 % 0
+}
+emit(out, state.n)
+}`
+	ev := compileSrc(t, src, nil)
+	if _, err := ev.EvalInit(); err != nil {
+		t.Fatalf("init error: %v", err)
+	}
+
+	// tick 1 commits: n 0 -> 1, emits 0 and 1
+	if _, err := ev.EvalRun(); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+	emitted := ev.Emitted()
+	if len(emitted) != 2 || emitted[0].Value != registry.Integer(0) || emitted[1].Value != registry.Integer(1) {
+		t.Fatalf("first run: expected emissions [0 1], got %v", emitted)
+	}
+
+	// tick 2 traps mid-way: the emit before the trap must not leak
+	if _, err := ev.EvalRun(); err == nil {
+		t.Fatal("second run: expected trap")
+	}
+	if emitted := ev.Emitted(); len(emitted) != 0 {
+		t.Errorf("second run: expected no emissions after trap, got %v", emitted)
+	}
+
+	// tick 3 proves n rolled back to 1: it traps identically. Without rollback n would be 2 and this tick would commit.
+	if _, err := ev.EvalRun(); err == nil {
+		t.Error("third run: expected trap again — state write leaked from the aborted tick")
+	}
+}
+
+// A rule that panics (here a host rule violating the "return errors, don't
+// panic" contract) surfaces as InternalFailure via the recover net — never as
+// a script trap, and never crashing the host.
+func TestEvaluator_PanicReportsInternalFailure(t *testing.T) {
+	src := "function Run() {\nboom.explode(number=1.0)\n}"
+	ev := compileSrc(t, src, func(reg *registry.Registry) {
+		module, _ := reg.RegisterModule("boom")
+		reg.RegisterCall(module.TypeID(), "explode", registry.CallRule{
+			Args:     []registry.ParamRule{{Type: registry.FloatID, Name: "number"}},
+			EvalType: registry.FloatID,
+			EvalFn: func(registry.Value, map[string]registry.Value) (registry.Value, error) {
+				panic("rule contract violated")
+			},
+		})
+	})
+	_, err := ev.EvalRun()
+
+	var internal diag.InternalFailure
+	if !errors.As(err, &internal) {
+		t.Fatalf("expected diag.InternalFailure, got %T: %v", err, err)
+	}
+	if internal.EntryFn != "Run" {
+		t.Errorf("entry fn = %s, want Run", internal.EntryFn)
+	}
+	if !strings.Contains(err.Error(), "rule contract violated") {
+		t.Errorf("expected panic message in diagnostic, got: %v", err)
+	}
+}
+
+// Host-written rules may return plain errors; they trap with UnknownKind instead of being lost or panicking.
+func TestEvaluator_HostRuleErrorBecomesTrap(t *testing.T) {
+	src := "function Run() {\nhost.fail(number=1.0)\n}"
+	ev := compileSrc(t, src, func(reg *registry.Registry) {
+		module, _ := reg.RegisterModule("host")
+		reg.RegisterCall(module.TypeID(), "fail", registry.CallRule{
+			Args:     []registry.ParamRule{{Type: registry.FloatID, Name: "number"}},
+			EvalType: registry.FloatID,
+			EvalFn: func(registry.Value, map[string]registry.Value) (registry.Value, error) {
+				return nil, errors.New("host storage unavailable")
+			},
+		})
+	})
+	_, err := ev.EvalRun()
+
+	var failure diag.RuntimeFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("expected diag.RuntimeFailure, got %T: %v", err, err)
+	}
+	if failure.Kind != registry.UnknownKind {
+		t.Errorf("kind = %s, want %s", failure.Kind, registry.UnknownKind)
+	}
+	if failure.Message != "host storage unavailable" {
+		t.Errorf("message = %q, want the host error text", failure.Message)
 	}
 }
 

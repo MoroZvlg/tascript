@@ -94,41 +94,47 @@ func RegisterStdMath(reg *Registry) {
 	})
 }
 
-func evalStringConcat(left, right Value) Value {
-	return left.(String) + right.(String)
+func evalStringConcat(left, right Value) (Value, error) {
+	return left.(String) + right.(String), nil
 }
 
-func evalNumericNegate(operand Value) Value {
+func evalNumericNegate(operand Value) (Value, error) {
 	switch operand := operand.(type) {
 	case Integer:
-		return -operand
+		return -operand, nil
 	case Float:
-		return -operand
+		return -operand, nil
 	default:
 		panic("operand is not numeric")
 	}
 }
 
-func evalBoolNot(operand Value) Value {
-	return Bool(!operand.(Bool))
+func evalBoolNot(operand Value) (Value, error) {
+	return !operand.(Bool), nil
 }
 
-func makeNumericBinary(operator token.TokenType) func(left, right Value) Value {
-	return func(left, right Value) Value {
+func makeNumericBinary(operator token.TokenType) func(left, right Value) (Value, error) {
+	return func(left, right Value) (Value, error) {
 		leftInt, leftIsInt := left.(Integer)
 		rightInt, rightIsInt := right.(Integer)
 		if leftIsInt && rightIsInt {
 			switch operator {
 			case token.PLUS:
-				return leftInt + rightInt
+				return leftInt + rightInt, nil
 			case token.MINUS:
-				return leftInt - rightInt
+				return leftInt - rightInt, nil
 			case token.ASTERISK:
-				return leftInt * rightInt
+				return leftInt * rightInt, nil
 			case token.SLASH:
-				return Float(leftInt) / Float(rightInt)
+				if rightInt == 0 {
+					return nil, Error{Kind: DivisionByZero, Message: "integer division by zero"}
+				}
+				return Float(leftInt) / Float(rightInt), nil
 			case token.PERCENT:
-				return leftInt % rightInt
+				if rightInt == 0 {
+					return nil, Error{Kind: DivisionByZero, Message: "integer modulo by zero"}
+				}
+				return leftInt % rightInt, nil
 			}
 		}
 
@@ -136,29 +142,35 @@ func makeNumericBinary(operator token.TokenType) func(left, right Value) Value {
 		rightFloat := asFloat(right)
 		switch operator {
 		case token.PLUS:
-			return Float(leftFloat + rightFloat)
+			return Float(leftFloat + rightFloat), nil
 		case token.MINUS:
-			return Float(leftFloat - rightFloat)
+			return Float(leftFloat - rightFloat), nil
 		case token.ASTERISK:
-			return Float(leftFloat * rightFloat)
+			return Float(leftFloat * rightFloat), nil
 		case token.SLASH:
-			return Float(leftFloat / rightFloat)
+			if rightFloat == 0 {
+				return nil, Error{Kind: DivisionByZero, Message: "division by zero"}
+			}
+			return Float(leftFloat / rightFloat), nil
 		case token.PERCENT:
-			return Float(math.Mod(leftFloat, rightFloat))
+			if rightFloat == 0 {
+				return nil, Error{Kind: DivisionByZero, Message: "modulo by zero"}
+			}
+			return Float(math.Mod(leftFloat, rightFloat)), nil
 		default:
 			panic("unsupported numeric operator: " + operator)
 		}
 	}
 }
 
-func makeNumericCompare(operator token.TokenType) func(left, right Value) Value {
-	return func(left, right Value) Value {
+func makeNumericCompare(operator token.TokenType) func(left, right Value) (Value, error) {
+	return func(left, right Value) (Value, error) {
 		leftInt, leftIsInt := left.(Integer)
 		rightInt, rightIsInt := right.(Integer)
 		if leftIsInt && rightIsInt {
-			return evalCompare(operator, leftInt, rightInt)
+			return evalCompare(operator, leftInt, rightInt), nil
 		}
-		return evalCompare(operator, asFloat(left), asFloat(right))
+		return evalCompare(operator, asFloat(left), asFloat(right)), nil
 	}
 }
 
@@ -181,12 +193,12 @@ func evalCompare[T cmp.Ordered](operator token.TokenType, left, right T) Bool {
 	}
 }
 
-func evalScalarEq(left, right Value) Value {
-	return Bool(left == right)
+func evalScalarEq(left, right Value) (Value, error) {
+	return Bool(left == right), nil
 }
 
-func evalScalarNeq(left, right Value) Value {
-	return Bool(left != right)
+func evalScalarNeq(left, right Value) (Value, error) {
+	return Bool(left != right), nil
 }
 
 func asFloat(value Value) float64 {

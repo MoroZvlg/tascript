@@ -26,8 +26,8 @@ func RegisterMathModule(reg *Registry) {
 func registerMathConst(reg *Registry, mathModule TypeID, name string, value float64) {
 	reg.RegisterMemberAccess(mathModule, name, MemberAccessRule{
 		EvalType: FloatID,
-		EvalFn: func(_ Value) Value {
-			return Float(value)
+		EvalFn: func(_ Value) (Value, error) {
+			return Float(value), nil
 		},
 	})
 }
@@ -43,8 +43,8 @@ func registerUnaryMathFunc(reg *Registry, mathModule TypeID, name string, fn fun
 			},
 		},
 		EvalType: FloatID,
-		EvalFn: func(_ Value, args map[string]Value) Value {
-			return Float(fn(float64(args["number"].(Float))))
+		EvalFn: func(_ Value, args map[string]Value) (Value, error) {
+			return Float(fn(float64(args["number"].(Float)))), nil
 		},
 	})
 }
@@ -66,10 +66,10 @@ func registerBinaryMathFunc(reg *Registry, mathModule TypeID, name, leftName, ri
 			},
 		},
 		EvalType: FloatID,
-		EvalFn: func(_ Value, args map[string]Value) Value {
+		EvalFn: func(_ Value, args map[string]Value) (Value, error) {
 			left := float64(args[leftName].(Float))
 			right := float64(args[rightName].(Float))
-			return Float(fn(left, right))
+			return Float(fn(left, right)), nil
 		},
 	})
 }

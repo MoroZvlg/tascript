@@ -7,23 +7,23 @@ import (
 )
 
 type BinaryRule struct {
-	EvalFn   func(left, right Value) Value
+	EvalFn   func(left, right Value) (Value, error)
 	EvalType TypeID
 }
 
 type UnaryRule struct {
-	EvalFn   func(right Value) Value
+	EvalFn   func(right Value) (Value, error)
 	EvalType TypeID
 }
 
 type MemberAccessRule struct {
-	EvalFn   func(receiver Value) Value
+	EvalFn   func(receiver Value) (Value, error)
 	EvalType TypeID
 }
 
 type CallRule struct {
 	Args     []ParamRule
-	EvalFn   func(receiver Value, args map[string]Value) Value
+	EvalFn   func(receiver Value, args map[string]Value) (Value, error)
 	EvalType TypeID
 }
 
@@ -127,8 +127,8 @@ func (r *Registry) RegisterScriptType(name string, fields []FieldDef) (TypeID, e
 		fieldName := field.Name
 		r.RegisterMemberAccess(id, fieldName, MemberAccessRule{
 			EvalType: field.Type,
-			EvalFn: func(receiver Value) Value {
-				return receiver.(Record).Fields[fieldName]
+			EvalFn: func(receiver Value) (Value, error) {
+				return receiver.(Record).Fields[fieldName], nil
 			},
 		})
 	}

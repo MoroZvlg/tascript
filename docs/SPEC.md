@@ -307,6 +307,8 @@ A `Time` value represents a point in time. Sources:
 
 - `Candle.ts` — the timestamp of a single candle
 - `CandleSeries.timestamps[n]` — the timestamp `n` candles ago
+- `time.from_unix_ms(ms)` — an explicit fixed timestamp from epoch
+  milliseconds
 
 There is no time-zone support in v1. All component access is in UTC. If
 non-UTC behaviour is needed later, it will land as an explicit conversion
@@ -316,19 +318,29 @@ method (e.g. `t.in("America/New_York")`) without breaking the v1 API.
 
 | Property      | Type   | Notes |
 |---------------|--------|-------|
-| `.unix_ms`    | Number | total milliseconds since the Unix epoch |
-| `.year`       | Number | full year, e.g. 2026 |
-| `.month`      | Number | 1 through 12 |
-| `.day`        | Number | day of month, 1 through 31 |
-| `.weekday`    | Number | 0 through 6, **0 = Sunday** (JS convention) |
-| `.hour`       | Number | 0 through 23 |
-| `.minute`     | Number | 0 through 59 |
-| `.second`     | Number | 0 through 59 |
-| `.millisecond`| Number | 0 through 999 |
+| `.unix_ms`    | Integer | total milliseconds since the Unix epoch |
+| `.year`       | Integer | full year, e.g. 2026 |
+| `.month`      | Integer | 1 through 12 |
+| `.day`        | Integer | day of month, 1 through 31 |
+| `.weekday`    | Integer | 0 through 6, **0 = Sunday** (JS convention) |
+| `.hour`       | Integer | 0 through 23 |
+| `.minute`     | Integer | 0 through 59 |
+| `.second`     | Integer | 0 through 59 |
+| `.millisecond`| Integer | 0 through 999 |
 
-**No `Time` literal syntax in v1.** Times are obtained from candles. If
-"epoch zero" or a fixed anchor is needed, derive arithmetically from a
-candle timestamp.
+**Methods (UTC):**
+
+| Method | Type | Notes |
+|--------|------|-------|
+| `.truncate(bucket: Duration)` | `Time` | Floors the timestamp to the start of the fixed UTC bucket, e.g. `t.truncate(time.DAY)`. `bucket` must be positive, no larger than `time.DAY`, and must evenly divide `time.DAY`; zero, negative, larger, or non-dividing buckets are runtime errors. Flooring means mathematical floor toward negative infinity, not Go-style truncation toward zero. |
+
+Valid truncate buckets include `90 * time.MINUTE`, `4 * time.HOUR`,
+`6 * time.HOUR`, and `time.DAY`. `7 * time.HOUR` is invalid because
+`time.DAY` is not evenly divisible by seven hours; otherwise bucket boundaries
+would drift across UTC midnights.
+
+**No dedicated `Time` literal syntax in v1.** Fixed anchors are created
+explicitly with `time.from_unix_ms(ms)`.
 
 #### `Duration`
 
@@ -348,23 +360,47 @@ namespace identifier alongside `math` and `ta`):
 | `time.DAY`         | 24 × `time.HOUR` |
 | `time.WEEK`        | 7 × `time.DAY` |
 
+**Weekday constants also live in `time.*`:**
+
+| Constant | Value |
+|----------|-------|
+| `time.SUNDAY`    | 0 |
+| `time.MONDAY`    | 1 |
+| `time.TUESDAY`   | 2 |
+| `time.WEDNESDAY` | 3 |
+| `time.THURSDAY`  | 4 |
+| `time.FRIDAY`    | 5 |
+| `time.SATURDAY`  | 6 |
+
 No `time.MONTH` or `time.YEAR` — those are calendar-dependent, not fixed
 durations. A future `t.advance_months(n)` style method may cover that case if
 real programs need it.
 
-The `time` namespace will also host future time-related helpers (e.g.
-`time.parse("2025-01-01T00:00:00Z")` once a `Time` literal source is needed).
+Although `time.WEEK` is a valid duration, `t.truncate(time.WEEK)` is not v1.
+Epoch-modulo week truncation would anchor weeks to Thursday 00:00 UTC because
+1970-01-01 was a Thursday. Week/session bucketing needs an explicit anchor
+policy and is deferred.
+
+The `time` namespace also hosts pure time-related helpers:
+
+| Helper | Type | Notes |
+|--------|------|-------|
+| `time.from_unix_ms(ms)` | `Time` | Creates a fixed timestamp from Unix epoch milliseconds. |
+
+Future parsing helpers such as `time.parse("2025-01-01T00:00:00Z")` are
+deferred until the runtime error protocol is explicit.
 
 **Properties:**
 
 | Property      | Type   | Notes |
 |---------------|--------|-------|
-| `.unix_ms`    | Number | total milliseconds |
+| `.milliseconds` | Integer | total milliseconds |
 | `.seconds`    | Number | total seconds (may be fractional) |
 | `.minutes`    | Number | total minutes |
 | `.hours`      | Number | total hours |
 | `.days`       | Number | total days |
 | `.weeks`      | Number | total weeks |
+| `.abs`        | Duration | absolute duration |
 
 #### Operator semantics
 
@@ -391,12 +427,31 @@ The `time` namespace will also host future time-related helpers (e.g.
 | `Duration / Number`         | `Duration`  |
 | `Duration / Duration`       | `Number` (ratio) |
 | `Duration < Duration` etc.  | `Bool`      |
+| `Duration == Duration`, `!=` | `Bool`     |
 | unary `-Duration`           | `Duration` (negation legal) |
 | `Duration + Number`         | parse-time error |
 
+`Duration / Number` where the divisor is zero and `Duration / Duration` where
+the divisor is zero are runtime errors. `Number * Duration`,
+`Duration * Number`, and `Duration / Number` round the resulting milliseconds
+to the nearest integer, half away from zero.
+
+Invalid `Time.truncate(...)` buckets are runtime errors. The evaluator/registry
+runtime error protocol must support these v1 error paths directly rather than
+silently producing sentinel values.
+
+Implementation note for the current `Integer`/`Float` runtime split: duration
+arithmetic with both numeric types must be registered explicitly. Infix
+resolution uses an exact binary-rule lookup and does not apply numeric
+coercions.
+
 `Time` and `Duration` are both first-class values. They may be stored in
-`state.*`, passed in `emit(...)` kwargs (which serialise via `.unix_ms` at
-the delivery boundary), and assigned to per-call locals.
+`state.*`, passed in `emit(...)` kwargs, and assigned to per-call locals.
+At the host boundary, `Time` serialises as Unix epoch milliseconds
+(`.unix_ms`) and `Duration` serialises as signed milliseconds
+(`.milliseconds`). State persistence must preserve the declared field type so
+the next run can rehydrate `Time` and `Duration` instead of treating both as
+plain numbers.
 
 #### Example
 
@@ -1168,7 +1223,7 @@ function Run() {
   state.cooldown = math.max(0, state.cooldown - 1)
 
   weekday = btc.timestamps[0].weekday
-  on_weekday = weekday != 0 && weekday != 6
+  on_weekday = weekday != time.SUNDAY && weekday != time.SATURDAY
 
   if (on_weekday) {
     cross = ta.crossover(btc.ema(20), btc.ema(50))

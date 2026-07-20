@@ -1,10 +1,15 @@
 package evaluator
 
 import (
+	"errors"
 	"fmt"
+	"maps"
+	"runtime/debug"
 
+	"github.com/MoroZvlg/tascript/diag"
 	"github.com/MoroZvlg/tascript/registry"
 	"github.com/MoroZvlg/tascript/resolved"
+	"github.com/MoroZvlg/tascript/token"
 )
 
 type Evaluator struct {
@@ -12,6 +17,7 @@ type Evaluator struct {
 	registry *registry.Registry
 	env      *Env
 	states   map[string]registry.Value
+	currFn   string // Entry point/function name, for runtime diagnostics
 	// TODO: temporary emission sink — collects emitted values until real
 	// output channels to the host are wired (Engine/host API rework).
 	emitted []registry.NamedValue
@@ -32,12 +38,13 @@ func (e *Evaluator) Emitted() []registry.NamedValue {
 	return e.emitted
 }
 
-// EvalInit is the load phase and must be called once before the first EvalRun
+// EvalInit is the load phase and must be called once before the first EvalRun.
+// An error means the program never reached a valid initial state
 func (e *Evaluator) EvalInit() (result registry.Value, err error) {
-	// until failure protocol lands: EvalFns must not crash the host.
+	e.currFn = "Init"
 	defer func() {
 		if r := recover(); r != nil {
-			result, err = nil, fmt.Errorf("runtime panic: %v", r)
+			result, err = nil, e.internalFailure(r)
 		}
 	}()
 
@@ -64,17 +71,49 @@ func (e *Evaluator) EvalInit() (result registry.Value, err error) {
 	return nil, nil
 }
 
+// EvalRun executes one tick.
+// On error the tick is rolled back (state + emits); a later Run may still be called.
+// TODO: result is temp for debug/tests.
 func (e *Evaluator) EvalRun() (result registry.Value, err error) {
-	// until failure protocol lands: EvalFns must not crash the host.
+	e.currFn = "Run"
+	snapshot := maps.Clone(e.states)
 	defer func() {
 		if r := recover(); r != nil {
-			result, err = nil, fmt.Errorf("runtime panic: %v", r)
+			result, err = nil, e.internalFailure(r)
+		}
+		if err != nil {
+			e.states = snapshot
+			e.emitted = nil
 		}
 	}()
 
 	e.emitted = nil
 
 	return e.evalBlock(e.prog.RunFn.Body, NewEnclosedEnv(e.env))
+}
+
+func (e *Evaluator) internalFailure(panicValue any) error {
+	return diag.InternalFailure{
+		Phase:   diag.PhaseRuntime,
+		EntryFn: e.currFn,
+		Panic:   panicValue,
+		Stack:   debug.Stack(),
+	}
+}
+
+func (e *Evaluator) runtimeFailure(ruleErr error, tok token.Token) error {
+	var regErr registry.Error
+	if !errors.As(ruleErr, &regErr) {
+		// non-registry error (e.g. a host rule returned a plain error)
+		regErr = registry.Error{Kind: registry.UnknownKind, Message: ruleErr.Error()}
+	}
+	return diag.RuntimeFailure{
+		Phase:   diag.PhaseRuntime,
+		Pos:     tok.Pos,
+		Kind:    regErr.Kind,
+		Message: regErr.Message,
+		EntryFn: e.currFn,
+	}
 }
 
 func (e *Evaluator) evalConst(decl *resolved.ConstDecl, env *Env) error {
@@ -185,7 +224,8 @@ func (e *Evaluator) evalAssignName(stmt *resolved.AssignNameStmt, env *Env) (reg
 	}
 
 	if !env.Assign(stmt.Target, value) {
-		return nil, fmt.Errorf(`variable "%s" does not exist`, stmt.Target)
+		// unreachable: the resolver rejects assignments to unknown bindings
+		panic(fmt.Sprintf("variable %q does not exist", stmt.Target))
 	}
 	return value, nil
 }
@@ -226,8 +266,8 @@ func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value
 func (e *Evaluator) evalStateAccess(expr *resolved.StateAccessExpr) (registry.Value, error) {
 	value, ok := e.states[expr.Method]
 	if !ok {
-		// should be unreachable. Everything checked on resolve stage
-		return nil, fmt.Errorf("state field %s read before initialization", expr.Method)
+		// unreachable: definite-assignment analysis rejects unseeded reads
+		panic(fmt.Sprintf("state field %s read before initialization", expr.Method))
 	}
 	return value, nil
 }
@@ -235,7 +275,8 @@ func (e *Evaluator) evalStateAccess(expr *resolved.StateAccessExpr) (registry.Va
 func (e *Evaluator) evalIdent(expr *resolved.IdentExpr, env *Env) (registry.Value, error) {
 	value, ok := env.Get(expr.String())
 	if !ok {
-		return nil, fmt.Errorf("unknown identifier %q", expr.String())
+		// unreachable: the resolver rejects unknown identifiers
+		panic(fmt.Sprintf("unknown identifier %q", expr.String()))
 	}
 	return value, nil
 }
@@ -251,7 +292,11 @@ func (e *Evaluator) evalInfix(expr *resolved.InfixExpr, env *Env) (registry.Valu
 		return nil, err
 	}
 
-	return expr.EvalFn(left, right), nil
+	value, err := expr.EvalFn(left, right)
+	if err != nil {
+		return nil, e.runtimeFailure(err, expr.Token)
+	}
+	return value, nil
 }
 
 func (e *Evaluator) evalPrefix(expr *resolved.PrefixExpr, env *Env) (registry.Value, error) {
@@ -260,7 +305,11 @@ func (e *Evaluator) evalPrefix(expr *resolved.PrefixExpr, env *Env) (registry.Va
 		return nil, err
 	}
 
-	return expr.EvalFn(right), nil
+	value, err := expr.EvalFn(right)
+	if err != nil {
+		return nil, e.runtimeFailure(err, expr.Token)
+	}
+	return value, nil
 }
 
 func (e *Evaluator) evalMemberAccess(expr *resolved.MemberAccessExpr, env *Env) (registry.Value, error) {
@@ -269,7 +318,11 @@ func (e *Evaluator) evalMemberAccess(expr *resolved.MemberAccessExpr, env *Env) 
 		return nil, err
 	}
 
-	return expr.EvalFn(object), nil
+	value, err := expr.EvalFn(object)
+	if err != nil {
+		return nil, e.runtimeFailure(err, expr.Token)
+	}
+	return value, nil
 }
 
 func (e *Evaluator) evalMethodCall(expr *resolved.MethodCallExpr, env *Env) (registry.Value, error) {
@@ -287,5 +340,9 @@ func (e *Evaluator) evalMethodCall(expr *resolved.MethodCallExpr, env *Env) (reg
 		args[arg.Name] = value
 	}
 
-	return expr.EvalFn(resolvedRec, args), nil
+	value, err := expr.EvalFn(resolvedRec, args)
+	if err != nil {
+		return nil, e.runtimeFailure(err, expr.Token)
+	}
+	return value, nil
 }

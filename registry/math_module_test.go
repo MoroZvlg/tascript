@@ -28,7 +28,11 @@ func TestMathModuleConstants(t *testing.T) {
 			if rule.EvalType != registry.FloatID {
 				t.Fatalf("type = %v, want %v", rule.EvalType, registry.FloatID)
 			}
-			if got := rule.EvalFn(mathModule); got != tt.want {
+			got, err := rule.EvalFn(mathModule)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
 				t.Fatalf("value = %v, want %v", got, tt.want)
 			}
 		})
@@ -69,7 +73,10 @@ func TestMathModuleFunctions(t *testing.T) {
 			if rule.EvalType != registry.FloatID {
 				t.Fatalf("type = %v, want %v", rule.EvalType, registry.FloatID)
 			}
-			got := rule.EvalFn(mathModule, tt.args)
+			got, err := rule.EvalFn(mathModule, tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if got != tt.want {
 				t.Fatalf("value = %v, want %v", got, tt.want)
 			}

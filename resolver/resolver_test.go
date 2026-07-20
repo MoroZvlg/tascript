@@ -950,8 +950,8 @@ func registerResolverTestModule(reg *registry.Registry) {
 			{Type: registry.FloatID, Name: "right"},
 		},
 		EvalType: registry.FloatID,
-		EvalFn: func(registry.Value, map[string]registry.Value) registry.Value {
-			return registry.Float(0)
+		EvalFn: func(registry.Value, map[string]registry.Value) (registry.Value, error) {
+			return registry.Float(0), nil
 		},
 	})
 }
