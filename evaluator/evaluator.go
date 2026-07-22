@@ -244,6 +244,8 @@ func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value
 		return e.evalIdent(n, env)
 	case *resolved.InfixExpr:
 		return e.evalInfix(n, env)
+	case *resolved.LogicalExpr:
+		return e.evalLogical(n, env)
 	case *resolved.PrefixExpr:
 		return e.evalPrefix(n, env)
 	case *resolved.CoerceExpr:
@@ -297,6 +299,38 @@ func (e *Evaluator) evalInfix(expr *resolved.InfixExpr, env *Env) (registry.Valu
 		return nil, e.runtimeFailure(err, expr.Token)
 	}
 	return value, nil
+}
+
+func (e *Evaluator) evalLogical(expr *resolved.LogicalExpr, env *Env) (registry.Value, error) {
+	left, err := e.evalExpr(expr.Left, env)
+	if err != nil {
+		return nil, err
+	}
+	leftBool, ok := left.(registry.Bool)
+	if !ok {
+		panic("logical operand is not Bool: resolver failed to guard boolean position")
+	}
+
+	switch expr.Token.Type {
+	case token.AND:
+		if !leftBool {
+			return registry.Bool(false), nil
+		}
+	case token.OR:
+		if leftBool {
+			return registry.Bool(true), nil
+		}
+	}
+
+	right, err := e.evalExpr(expr.Right, env)
+	if err != nil {
+		return nil, err
+	}
+	rightBool, ok := right.(registry.Bool)
+	if !ok {
+		panic("logical operand is not Bool: resolver failed to guard boolean position")
+	}
+	return rightBool, nil
 }
 
 func (e *Evaluator) evalPrefix(expr *resolved.PrefixExpr, env *Env) (registry.Value, error) {

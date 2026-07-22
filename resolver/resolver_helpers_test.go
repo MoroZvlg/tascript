@@ -34,6 +34,8 @@ func dump(t *testing.T, resolvedExpr resolved.Expression) string {
 		return fmt.Sprintf("%s:%s", expr, expr.Type())
 	case *resolved.InfixExpr:
 		return fmt.Sprintf("(infix:%s, %s, %s, %s)", expr.Type(), expr.Token.Literal, dump(t, expr.Left), dump(t, expr.Right))
+	case *resolved.LogicalExpr:
+		return fmt.Sprintf("(logical:%s, %s, %s, %s)", expr.Type(), expr.Token.Literal, dump(t, expr.Left), dump(t, expr.Right))
 	case *resolved.PrefixExpr:
 		return fmt.Sprintf("(prefix:%s, %s, %s)", expr.Type(), expr.Token.Literal, dump(t, expr.Right))
 	case *resolved.CoerceExpr:

@@ -29,6 +29,8 @@ func TestResolver_ResolveConstSimple(t *testing.T) {
 		{"const FOO = -(5.3 + 3)", "const FOO:Float = (prefix:Float, -, (infix:Float, +, 5.3, 3))"},
 		{"const FOO = 7 % 3 * 2", "const FOO:Integer = (infix:Integer, *, (infix:Integer, %, 7, 3), 2)"},
 		{"const FOO = true == 5 > 2", "const FOO:Bool = (infix:Bool, ==, true, (infix:Bool, >, 5, 2))"},
+		{"const FOO = true && false", "const FOO:Bool = (logical:Bool, &&, true, false)"},
+		{"const FOO = 1 > 0 && 2 < 3 || false", "const FOO:Bool = (logical:Bool, ||, (logical:Bool, &&, (infix:Bool, >, 1, 0), (infix:Bool, <, 2, 3)), false)"},
 		{"const FOO = math.PI", "const FOO:Float = (member_access:Float, math:math, PI)"},
 		{"const FOO = math.sqrt(3*3)", "const FOO:Float = (method_call:Float, math:math, sqrt, number=(coerce:Float, (infix:Integer, *, 3, 3)))"},
 	}
@@ -508,6 +510,33 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
+				}
+			},
+		},
+		{
+			"&& left operand must be bool",
+			"function Run() {\n1 ^&& true\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addTypeMissmatch(token.Token{Type: token.AND, Pos: ps[0], Literal: "&&"}, registry.BoolID, registry.IntegerID),
+				}
+			},
+		},
+		{
+			"|| right operand must be bool",
+			"function Run() {\ntrue ^|| 2\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addTypeMissmatch(token.Token{Type: token.OR, Pos: ps[0], Literal: "||"}, registry.BoolID, registry.IntegerID),
+				}
+			},
+		},
+		{
+			"bad logical operand reports only its own error",
+			"function Run() {\n^missing && true\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "missing"}),
 				}
 			},
 		},

@@ -143,6 +143,30 @@ func (ie *InfixExpr) Type() registry.TypeID {
 	return ie.T
 }
 
+type LogicalExpr struct {
+	Token token.Token
+	Left  Expression
+	Right Expression
+}
+
+func (le *LogicalExpr) String() string {
+	var out bytes.Buffer
+	out.WriteString("(")
+	out.WriteString(le.Left.String())
+	out.WriteString(" ")
+	out.WriteString(le.Token.Literal)
+	out.WriteString(" ")
+	out.WriteString(le.Right.String())
+	out.WriteString(")")
+	return out.String()
+}
+
+func (le *LogicalExpr) expressionNode() {}
+
+func (le *LogicalExpr) Type() registry.TypeID {
+	return registry.BoolID
+}
+
 type PrefixExpr struct {
 	Token  token.Token
 	Right  Expression

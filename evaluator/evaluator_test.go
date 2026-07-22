@@ -218,6 +218,36 @@ func TestEvaluator_Comparisons(t *testing.T) {
 	}
 }
 
+func TestEvaluator_Logical(t *testing.T) {
+	tests := []struct {
+		name string
+		expr string
+		want registry.Value
+	}{
+		{"and both true", `true && true`, registry.Bool(true)},
+		{"and short-circuits false", `false && true`, registry.Bool(false)},
+		{"and right false", `true && false`, registry.Bool(false)},
+		{"or both false", `false || false`, registry.Bool(false)},
+		{"or short-circuits true", `true || false`, registry.Bool(true)},
+		{"or right true", `false || true`, registry.Bool(true)},
+		{"chained and", `true && true && false`, registry.Bool(false)},
+		{"mixed precedence", `1 > 0 && 2 > 3`, registry.Bool(false)},
+		{"or binds looser than and", `false && true || true`, registry.Bool(true)},
+		{"grouping overrides precedence", `false && (true || true)`, registry.Bool(false)},
+		{"and skips trapping rhs", `false && (1 / 0 > 0)`, registry.Bool(false)},
+		{"or skips trapping rhs", `true || (1 / 0 > 0)`, registry.Bool(true)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalRunBody(t, tt.expr)
+			if got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEvaluator_Statements(t *testing.T) {
 	tests := []struct {
 		name string

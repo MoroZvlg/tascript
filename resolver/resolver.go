@@ -241,6 +241,15 @@ func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Stateme
 	}
 }
 
+func (r *Resolver) resolveLogical(expr *ast.InfixExpr, left, right resolved.Expression) resolved.Expression {
+	for _, operand := range []resolved.Expression{left, right} {
+		if !resolved.IsBadExpr(operand) && operand.Type() != registry.BoolID {
+			r.addTypeMissmatch(expr.Token, registry.BoolID, operand.Type())
+		}
+	}
+	return &resolved.LogicalExpr{Token: expr.Token, Left: left, Right: right}
+}
+
 func (r *Resolver) resolveInputs(inputs []*ast.InputDecl, env *Env) []*resolved.InputDecl {
 	resolvedInputs := make([]*resolved.InputDecl, 0, len(inputs))
 	for _, in := range inputs {
@@ -459,6 +468,9 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		errsBefore := len(r.errs)
 		left := r.resolveExpr(typedExpr.Left, env)
 		right := r.resolveExpr(typedExpr.Right, env)
+		if typedExpr.Token.Type == token.AND || typedExpr.Token.Type == token.OR {
+			return r.resolveLogical(typedExpr, left, right)
+		}
 		binaryRule, exists := r.reg.LookupBinary(typedExpr.Token.Type, left.Type(), right.Type())
 		if !exists {
 			if len(r.errs) == errsBefore {
