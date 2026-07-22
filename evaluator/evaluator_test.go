@@ -2,7 +2,6 @@ package evaluator_test
 
 import (
 	"errors"
-	"math"
 	"strings"
 	"testing"
 
@@ -14,6 +13,23 @@ import (
 	"github.com/MoroZvlg/tascript/resolver"
 )
 
+func testRegistry() *registry.Registry {
+	reg := registry.DefaultRegistry()
+	module, _ := reg.RegisterModule("t")
+	reg.RegisterMemberAccess(module.TypeID(), "answer", registry.MemberAccessRule{
+		EvalType: registry.IntegerID,
+		EvalFn:   func(registry.Value) (registry.Value, error) { return registry.Integer(42), nil },
+	})
+	reg.RegisterCall(module.TypeID(), "double", registry.CallRule{
+		Args:     []registry.ParamRule{{Type: registry.FloatID, Name: "n"}},
+		EvalType: registry.FloatID,
+		EvalFn: func(_ registry.Value, args map[string]registry.Value) (registry.Value, error) {
+			return args["n"].(registry.Float) * 2, nil
+		},
+	})
+	return reg
+}
+
 // compileSrc parses and resolves src into a fresh evaluator;
 // customize (may be nil) tweaks the registry before resolution, e.g. to add test modules.
 func compileSrc(t *testing.T, src string, customize func(*registry.Registry)) *evaluator.Evaluator {
@@ -23,7 +39,7 @@ func compileSrc(t *testing.T, src string, customize func(*registry.Registry)) *e
 	if len(p.Diagnostics()) > 0 {
 		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
 	}
-	reg := registry.DefaultRegistry()
+	reg := testRegistry()
 	if customize != nil {
 		customize(reg)
 	}
@@ -128,8 +144,8 @@ func TestEvaluator_StdOps(t *testing.T) {
 		{"float negation", `-2.5`, registry.Float(-2.5)},
 		{"bool not", `!true`, registry.Bool(false)},
 		{"double negation", `--5`, registry.Integer(5)},
-		{"member access", `math.PI`, registry.Float(math.Pi)},
-		{"method call", `math.sqrt(9)`, registry.Float(3)},
+		{"member access", `t.answer`, registry.Integer(42)},
+		{"method call", `t.double(1.5)`, registry.Float(3)},
 	}
 
 	for _, tt := range tests {
@@ -211,7 +227,7 @@ func TestEvaluator_Statements(t *testing.T) {
 		{"let then read", "let x = 2\nx * 3", registry.Integer(6)},
 		{"assign overwrites", "let x = 1\nx = x + 41\nx", registry.Integer(42)},
 		{"two lets", "let a = 2\nlet b = 3\na * b", registry.Integer(6)},
-		{"let from expression", "let x = math.sqrt(4) + 1\nx", registry.Float(3)},
+		{"let from expression", "let x = t.double(1.0) + 1\nx", registry.Float(3)},
 		{"let value is coerced", "let x = 1\nx + 0.5", registry.Float(1.5)},
 	}
 

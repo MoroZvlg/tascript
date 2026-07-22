@@ -436,9 +436,9 @@ the divisor is zero are runtime errors. `Number * Duration`,
 `Duration * Number`, and `Duration / Number` round the resulting milliseconds
 to the nearest integer, half away from zero.
 
-Invalid `Time.truncate(...)` buckets are runtime errors. The evaluator/registry
-runtime error protocol must support these v1 error paths directly rather than
-silently producing sentinel values.
+Invalid `Time.truncate(...)` buckets are runtime errors. These follow the
+runtime failure protocol (§ 6.5): the trap aborts and rolls back the current
+tick rather than producing a sentinel value.
 
 Implementation note for the current `Integer`/`Float` runtime split: duration
 arithmetic with both numeric types must be registered explicitly. Infix
@@ -1007,7 +1007,8 @@ Every error a tascript program can produce belongs to one of two phases:
   mismatched types when statically detectable.
 - **Runtime** — produced during execution of `Init()` or `Run()`. Examples:
   history index out of range, cross-type comparison the analyser could not
-  statically rule out, zero-period indicator from a runtime expression.
+  statically rule out, zero-period indicator from a runtime expression. How
+  runtime failures abort and roll back a tick is specified in § 6.5.
 
 ### 6.2 Every error carries
 
@@ -1055,6 +1056,57 @@ message strings. The initial set, expanded as the implementation lands:
 | `EMIT_RESERVED_KWARG`   | parse | User passed a reserved kwarg name to `emit(...)` (e.g. `ts=`). |
 
 Future categories are additive; existing codes never change meaning.
+
+### 6.5 Runtime failure protocol
+
+Runtime errors (§ 6.1) come in two kinds, distinguished by whether the
+**program** or the **interpreter** is at fault.
+
+#### Script traps
+
+A script trap is a failure a correct interpreter hits on otherwise legal
+input — division by zero, an invalid `Time.truncate(...)` bucket, and, as they
+land, history index out of range, indicator parameter violations, and emit
+payload mismatches. A trap carries a stable machine-readable **kind**, a source
+position, the entry function (`Init` or `Run`), and a human-readable message:
+
+| Kind | When |
+|------|------|
+| `DIVISION_BY_ZERO` | `/` or `%` with a zero divisor — integer, float, or `Duration`. |
+| `INVALID_ARGUMENT` | A rule rejected a well-typed argument (e.g. a `Time.truncate` bucket that is non-positive, larger than `time.DAY`, or does not evenly divide it). |
+| `OUT_OF_RANGE`     | Index outside the valid range (history `series[n]`, tuple `t[i]`). Reserved — history and tuples are not yet in v1. |
+| `UNASSIGNED_STATE` | Read of a `state.*` field that reached `Run()` unset. Unreachable in a program that passes definite-assignment analysis (§ 4.3); retained as a fail-loud backstop. |
+| `UNKNOWN`          | A host-registered rule returned a non-registry error; wrapped verbatim. |
+
+These kinds are the identifier carried on a runtime trap; the broader category
+table in § 6.4 is being reconciled with them as features land.
+
+**Tick transactionality.** A script trap aborts the current invocation
+atomically:
+
+- A trapped `Run()` tick is **rolled back** — `state.*` reverts to its pre-tick
+  snapshot and that tick's emit buffer is discarded. The aborted tick is
+  observationally as if it never ran. The host decides whether to continue with
+  later ticks or halt.
+- A trapped `Init()` means the program never reached a valid initial state; no
+  partial state is retained and no `Run()` follows.
+
+Rollback is unconditional in v1 because every effect a program can produce
+(`state` writes, `emit`) is internal and reversible. Host functions with
+irreversible external effects are out of scope for v1; staged-effect semantics
+will be defined when they land, so rollback stays meaningful.
+
+#### Internal failures
+
+An internal failure is a recovered panic below the two public entry points
+(`EvalInit`, `EvalRun`): either core interpreter code reaching a state the
+resolver was supposed to make impossible, or a registered rule that panicked
+instead of returning an error. It surfaces with kind `INTERNAL`, the entry
+function, and a captured stack trace, but **no source position** — it signals an
+interpreter or host-rule bug, not a fault in the analysed program, and is the
+one exception to § 6.2's "every error carries a source location". Recovering at
+the boundary rather than letting the process die follows the `encoding/json`
+precedent: a bad rule must not crash the host.
 
 ## 7. Resource Limits
 

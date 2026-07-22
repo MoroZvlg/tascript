@@ -8,6 +8,7 @@ import (
 	"github.com/MoroZvlg/tascript/parser"
 	"github.com/MoroZvlg/tascript/registry"
 	"github.com/MoroZvlg/tascript/resolver"
+	"github.com/MoroZvlg/tascript/stdlib"
 	"github.com/MoroZvlg/tascript/token"
 )
 
@@ -24,6 +25,8 @@ func NewEngine(src string) (*Engine, []diag.Diagnostic) {
 	}
 
 	reg := registry.DefaultRegistry()
+
+	stdlib.Register(reg)
 
 	return &Engine{
 		prog: prog,
@@ -44,7 +47,8 @@ func (e *Engine) Compile() (*Executable, []diag.Diagnostic) {
 }
 
 func (e *Engine) RegisterType(customType string) (registry.TypeID, error) {
-	return e.reg.RegisterType(customType)
+	id := registry.NewTypeID(customType)
+	return id, e.reg.RegisterType(id, registry.ScalarShape)
 }
 
 func (e *Engine) RegisterBinary(tok token.TokenType, left, right registry.TypeID, rule registry.BinaryRule) error {

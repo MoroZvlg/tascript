@@ -94,7 +94,6 @@ func DefaultRegistry() *Registry {
 	}
 
 	RegisterStdMath(reg)
-	RegisterMathModule(reg)
 
 	reg.RegisterCoercion(IntegerID, FloatID, CoerceRule{
 		EvalType: FloatID,
@@ -106,13 +105,12 @@ func DefaultRegistry() *Registry {
 	return reg
 }
 
-func (r *Registry) RegisterType(customType string) (TypeID, error) {
-	id := TypeID{id: customType}
+func (r *Registry) RegisterType(id TypeID, shape TypeShape) error {
 	if _, exists := r.Types[id]; exists {
-		return TypeID{}, fmt.Errorf("custom type %s not registered. ID taken", customType)
+		return fmt.Errorf("type %s not registered. ID taken", id)
 	}
-	r.Types[id] = TypeDef{}
-	return id, nil
+	r.Types[id] = TypeDef{Shape: shape}
+	return nil
 }
 
 // RegisterScriptType registers structural type synthesized by the resolver from an inline `{field: Type}` declaration
@@ -181,8 +179,8 @@ func (r *Registry) LookupCoerce(from, to TypeID) (CoerceRule, bool) {
 }
 
 func (r *Registry) RegisterModule(name string) (Value, error) {
-	moduleType, err := r.RegisterType(name)
-	if err != nil {
+	moduleType := NewTypeID(name)
+	if err := r.RegisterType(moduleType, ModuleShape); err != nil {
 		return nil, err
 	}
 	moduleValue := &PlainModule{typeID: moduleType}

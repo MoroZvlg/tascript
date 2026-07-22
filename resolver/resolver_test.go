@@ -8,6 +8,7 @@ import (
 	"github.com/MoroZvlg/tascript/parser"
 	"github.com/MoroZvlg/tascript/registry"
 	"github.com/MoroZvlg/tascript/resolver"
+	"github.com/MoroZvlg/tascript/stdlib"
 	"github.com/MoroZvlg/tascript/token"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -45,6 +46,8 @@ func TestResolver_ResolveConstSimple(t *testing.T) {
 			}
 
 			reg := registry.DefaultRegistry()
+
+			stdlib.Register(reg)
 			resolv := resolver.New(prog, reg)
 
 			resolvedProg := resolv.Resolve()
@@ -87,6 +90,8 @@ func TestResolver_ResolveInputsOutputs(t *testing.T) {
 			}
 
 			reg := registry.DefaultRegistry()
+
+			stdlib.Register(reg)
 			resolv := resolver.New(prog, reg)
 			resolvedProg := resolv.Resolve()
 
@@ -240,6 +245,8 @@ x
 	}
 
 	reg := registry.DefaultRegistry()
+
+	stdlib.Register(reg)
 	resolv := resolver.New(prog, reg)
 	resolvedProg := resolv.Resolve()
 
@@ -541,6 +548,8 @@ emit(level, 1)
 	}
 
 	reg := registry.DefaultRegistry()
+
+	stdlib.Register(reg)
 	resolv := resolver.New(prog, reg)
 	resolvedProg := resolv.Resolve()
 
@@ -689,6 +698,8 @@ func TestResolver_ResolveStateSimple(t *testing.T) {
 			}
 
 			reg := registry.DefaultRegistry()
+
+			stdlib.Register(reg)
 			resolv := resolver.New(prog, reg)
 			resolvedProg := resolv.Resolve()
 			if len(resolv.Diagnostics()) > 0 {
@@ -923,6 +934,7 @@ func runDiagCasesWithRegistry(t *testing.T, input string, buildDiags func([]toke
 	p := parser.New(l)
 	prog := p.Parse()
 	reg := registry.DefaultRegistry()
+	stdlib.Register(reg)
 	if setupRegistry != nil {
 		setupRegistry(reg)
 	}

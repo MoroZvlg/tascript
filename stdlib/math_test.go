@@ -1,14 +1,16 @@
-package registry_test
+package stdlib_test
 
 import (
 	"math"
 	"testing"
 
 	"github.com/MoroZvlg/tascript/registry"
+	"github.com/MoroZvlg/tascript/stdlib"
 )
 
 func TestMathModuleConstants(t *testing.T) {
 	reg := registry.DefaultRegistry()
+	stdlib.Register(reg)
 	mathModule := reg.Modules["math"]
 
 	tests := []struct {
@@ -41,6 +43,7 @@ func TestMathModuleConstants(t *testing.T) {
 
 func TestMathModuleFunctions(t *testing.T) {
 	reg := registry.DefaultRegistry()
+	stdlib.Register(reg)
 	mathModule := reg.Modules["math"]
 
 	tests := []struct {

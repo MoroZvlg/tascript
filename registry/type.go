@@ -4,21 +4,26 @@ type TypeID struct {
 	id string
 }
 
+func NewTypeID(name string) TypeID {
+	return TypeID{id: name}
+}
+
 func (tid TypeID) String() string {
 	return tid.id
 }
 
-var IntegerID = TypeID{id: "Integer"}
-var FloatID = TypeID{id: "Float"}
-var StringID = TypeID{id: "String"}
-var BoolID = TypeID{id: "Bool"}
-var UnknownTypeID = TypeID{id: "Unknown"}
+var IntegerID = NewTypeID("Integer")
+var FloatID = NewTypeID("Float")
+var StringID = NewTypeID("String")
+var BoolID = NewTypeID("Bool")
+var UnknownTypeID = NewTypeID("Unknown")
 
 type TypeShape string
 
 const (
 	ScalarShape TypeShape = "SCALAR"
 	VectorShape TypeShape = "VECTOR"
+	ModuleShape TypeShape = "MODULE"
 )
 
 type TypeDef struct {
