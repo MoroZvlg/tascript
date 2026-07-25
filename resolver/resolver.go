@@ -111,8 +111,12 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 				return &resolved.BadStmt{Token: astStmtTyped.Token}
 			}
 			if binding.T != value.Type() {
-				r.addTypeMissmatch(astStmtTyped.Token, binding.T, value.Type())
-				return &resolved.BadStmt{Token: astStmtTyped.Token}
+				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), binding.T)
+				if !coerceExists {
+					r.addTypeMissmatch(astStmtTyped.Token, binding.T, value.Type())
+					return &resolved.BadStmt{Token: astStmtTyped.Token}
+				}
+				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
 			}
 
 			return &resolved.AssignNameStmt{

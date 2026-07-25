@@ -419,6 +419,11 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			},
 		},
 		{
+			"assign coerces int to float",
+			"function Run() {\nlet x = 1.5\nx = 1\n}",
+			func(ps []token.Pos) []diag.Diagnostic { return nil },
+		},
+		{
 			"assign to non-ident target",
 			"function Run() {\nmath.PI ^= 3\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
