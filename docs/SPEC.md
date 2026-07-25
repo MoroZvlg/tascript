@@ -740,6 +740,9 @@ their specs):
 | `EMIT_OUTSIDE_RUN` | parse | `emit(...)` outside `function Run()`. |
 | `EMIT_PAYLOAD` | parse / runtime | Emitted value/kwargs do not match the output declaration. |
 | `EMIT_RESERVED_KWARG` | parse | Reserved kwarg name passed to `emit(...)`. |
+| `EMIT_NOT_EXPRESSION` | parse | `emit(...)` used in expression position — it is a statement. |
+| `UNDEFINED_FUNC` | parse | A bare call `foo(...)`; only module methods are callable. |
+| `NOT_CALLABLE` | parse | Call on an expression that is not a callable form. |
 | `TOP_LEVEL_FORM` | parse | A construct not permitted at the top level (e.g. a `state.*` assignment, `if`). |
 | `TOP_DECL_IN_BODY` | parse | A top-level declaration used inside a function body. |
 | `MISSING_REQUIRED_FN` | parse | Program does not declare `function Run()`. |

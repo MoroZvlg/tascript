@@ -558,7 +558,16 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 				}
 			}
 			return &resolved.BadExpr{Token: typedExpr.Token}
+		case *ast.IdentExpr:
+			if isEmitCall(typedExpr) {
+				// if we got here - emit was used inside Expression. otherwise it will be parsed by separate case branch
+				r.addEmitNotExpression(callee.Token)
+			} else {
+				r.addUndefinedFunc(callee.Token)
+			}
+			return &resolved.BadExpr{Token: typedExpr.Token}
 		default:
+			r.addNotCallable(typedExpr.Token)
 			return &resolved.BadExpr{Token: typedExpr.Token}
 		}
 
@@ -737,6 +746,27 @@ func (r *Resolver) addUndefinedMethod(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedMethod{
 		Phase:  diag.PhaseCheck,
 		Method: opToken,
+	})
+}
+
+func (r *Resolver) addUndefinedFunc(calleeToken token.Token) {
+	r.errs = append(r.errs, &diag.UndefinedFunc{
+		Phase: diag.PhaseCheck,
+		Token: calleeToken,
+	})
+}
+
+func (r *Resolver) addNotCallable(callToken token.Token) {
+	r.errs = append(r.errs, &diag.NotCallable{
+		Phase: diag.PhaseCheck,
+		Pos:   callToken.Pos,
+	})
+}
+
+func (r *Resolver) addEmitNotExpression(calleeToken token.Token) {
+	r.errs = append(r.errs, &diag.EmitNotExpression{
+		Phase: diag.PhaseCheck,
+		Token: calleeToken,
 	})
 }
 

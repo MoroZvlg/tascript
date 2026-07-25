@@ -122,11 +122,20 @@ int→float coerce edge tried first; binds fresh into the per-run env; threaded 
 `Executable.Run(inputs)` + test helpers pass `nil`; `TestEvaluator_InputBinding` pins all six
 paths. Design record + adversarial safety sweep in "Input wiring — design decision" below; the
 frame is the per-event activation for the domain-blind core; still the throwaway-map stopgap
-until the slot `[]Value` frame + host API #13).
+until the slot `[]Value` frame + host API #13), **bare `CallExpr` diagnostics**
+(was #2, 2026-07-25: the `*ast.CallExpr` default branch in `resolveExpr` no longer returns a
+silent `BadExpr`. Three sub-cases, all still `BadExpr` after reporting: `emit(...)` in
+expression position → `EMIT_NOT_EXPRESSION` (statement-position emit is intercepted upstream in
+`resolveStmt`, so reaching `resolveExpr` with an emit call *is* expression position);
+ident callee → `UNDEFINED_FUNC` "unknown function foo" — reported even when the name *is* bound,
+since nothing in the value namespace is callable and no `LookupFunc` table exists (don't build
+one until bare functions are a real feature); any other callee (`(1 + 2)()`) → `NOT_CALLABLE`.
+Args are deliberately not resolved — the call can never be valid, and the call diag is the
+actionable one. Recorded decision: `emit` is matched by callee name, so `let emit = 3` does not
+shadow it — keyword-by-convention).
 
 | # | Prio | Area | Missing | Details |
 |---|------|------|---------|---------|
-| 2 | P1 | resolver | Bare `CallExpr` (`foo()`) → silent `BadExpr`, no diagnostic | Breaks "resolution gates evaluation" — verified: compiles clean, dies at eval with `not implemented expression *resolved.BadExpr` (internal type name leaks to the user). Two sub-cases: (a) callee ident is `emit` → precise diag "emit is a statement and cannot be used as a value" (statement-position emit is intercepted upstream in `resolveStmt`, so reaching `resolveExpr` with an emit call *is* expression position, e.g. `let x = emit(...)`); (b) any other bare call → "unknown function"-style diag (no `LookupFunc` table exists; don't build one until bare functions are a real feature). Related decision to record: `emit` is matched by callee name, so `let emit = 3` does not shadow it — keyword-by-convention |
 | 3 | P1 | resolver | `IndexExpr` (`a[i]`) — no case in `resolveExpr`, falls to silent-`BadExpr` default | Verified: same eval-time death as #2. **Nothing is indexable today**: registry has no index-rule table (`VectorShape` declared but unused), so the fix is diag-always, not a feature. Plan: resolve `Left` and `Index` first (their errors surface), then `NOT_INDEXABLE` diag (`Integer is not indexable`) with the infix-style dedup guard (only add if no new errs) + `BadExpr`. Note (2026-07-05): state is NOT the future index client anymore — the locked state design (#6) has no `[n]` access; series history (spec §4.3 item 1) is the client that will eventually justify `LookupIndex(receiverType, indexType)` (lookup success builds the already-existing `resolved.IndexExpr`, failure keeps the same diag). Until then this stays diag-always; do NOT add an empty registry table before then |
 | 5 | P1 | resolver | `resolveTypeDecl` silently swallows the `RegisterScriptType` error (resolver.go:319-323, comment now reads `// unreachable: duplicate decl names are caught by the env check first`) | Still open (2026-07-22). Reachable on registry reuse: a second `Compile()` against the same registry drops the input/output decl with **no diag**, then every use reports a misleading `UNDEFINED_IDENT` (verified: `emit(sig, …)` → "unknown identifier sig", zero hint at the cause). Even as a defensive branch it must append a diagnostic — silently dropping declarations violates the project's own "fail loudly" principle. Full fix (purge-on-reuse) stays in #13; the diag is a 3-liner now |
 | 11 | P2 | resolver | No reserved-name / shadowing rules | All verified accepted-without-diag: `let math = 5` shadows the module inside a function (spec: RESERVED_REASSIGN); `let m = math` then `m.sqrt(9.0)` — modules are first-class, aliasable values (spec §5.4: passive syntactic prefixes, not values — a bare module ident in value position should diag); `const Init = 5` coexists with `function Init()` — function names never enter the top-level env (spec §3.3: one namespace). Decision needed alongside: same-scope `let x` redeclaration currently silently rebinds, even with a new type (JS errors on it; spec silent) |
@@ -145,9 +154,9 @@ until the slot `[]Value` frame + host API #13).
 | 24 | P3 | lexer | Raw newlines are legal inside string literals (`readString`) | Verified: `"line1<LF>line2"` lexes as one STRING. Consequence: an *unterminated* string swallows the file to the next quote — one confusing far-away error, recovery wrecked for everything between. Spec is silent on multi-line strings. Recommend: newline in string → `unterminated string` at the opening quote, terminate the token at line end (standard single-line recovery) |
 | 25 | P3 | parser | Spec §7 resource limits: only nesting depth (64) exists | The parse-error cap (spec: 100) is a few lines and bounds worst-case memory — the parser currently collects unbounded diagnostics. String-length, identifier-length, source-size, kwarg-count caps can wait |
 
-Suggested order (re-sequenced 2026-07-25 — #6/#7/#8/#9/#10 now shipped):
-**P1 hole-plugging batch #2/#3/#5 next** (same disease: silent `BadExpr` holes reachable from
-valid parses, failing without diagnostics). Then #14 before any external tooling consumes
+Suggested order (re-sequenced 2026-07-25 — #2/#6/#7/#8/#9/#10 now shipped):
+**P1 hole-plugging batch: #3/#5 remain** (same disease as #2: silent `BadExpr` holes reachable
+from valid parses, failing without diagnostics). Then #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
 stable. #13 (Engine/host API rework, absorbing item D) last, informed by the `Emitted()` +
 `EvalRun(frame)` stopgaps being used in anger. The strategic milestone beyond the core is the

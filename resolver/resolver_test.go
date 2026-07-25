@@ -540,6 +540,51 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 				}
 			},
 		},
+		{
+			"bare call is not a function",
+			"function Run() {\nlet x = ^foo()\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedFunc(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "foo"}),
+				}
+			},
+		},
+		{
+			"bare call on a bound variable is still not a function",
+			"function Run() {\nlet x = 1\nlet y = ^x()\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedFunc(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
+				}
+			},
+		},
+		{
+			"bare call in statement position",
+			"function Run() {\n^foo()\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedFunc(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "foo"}),
+				}
+			},
+		},
+		{
+			"emit in expression position",
+			"output alert: String\nfunction Run() {\nlet x = ^emit(alert, \"hi\")\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addEmitNotExpression(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "emit"}),
+				}
+			},
+		},
+		{
+			"call on a non-ident callee",
+			"function Run() {\nlet x = (1 + 2)^()\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotCallable(ps[0]),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1039,6 +1084,18 @@ func addUndefinedAttribute(member token.Token) *diag.UndefinedAttribute {
 
 func addUndefinedMethod(method token.Token) *diag.UndefinedMethod {
 	return &diag.UndefinedMethod{Phase: diag.PhaseCheck, Method: method}
+}
+
+func addUndefinedFunc(tok token.Token) *diag.UndefinedFunc {
+	return &diag.UndefinedFunc{Phase: diag.PhaseCheck, Token: tok}
+}
+
+func addNotCallable(pos token.Pos) *diag.NotCallable {
+	return &diag.NotCallable{Phase: diag.PhaseCheck, Pos: pos}
+}
+
+func addEmitNotExpression(tok token.Token) *diag.EmitNotExpression {
+	return &diag.EmitNotExpression{Phase: diag.PhaseCheck, Token: tok}
 }
 
 func addArgsNumberMismatch(tok token.Token, expected, got int) *diag.ArgsNumberMissmatch {

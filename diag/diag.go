@@ -263,6 +263,33 @@ func (um UndefinedMethod) Error() string {
 	return fmt.Sprintf("%s [UNDEFINED_MEETHOD] %s: unknown method %s", um.Phase, um.Method.Pos.String(), um.Method.String())
 }
 
+type UndefinedFunc struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (uf UndefinedFunc) Error() string {
+	return fmt.Sprintf("%s [UNDEFINED_FUNC] %s: unknown function %s", uf.Phase, uf.Token.Pos.String(), uf.Token.Literal)
+}
+
+type NotCallable struct {
+	Phase Phase
+	Pos   token.Pos
+}
+
+func (nc NotCallable) Error() string {
+	return fmt.Sprintf("%s [NOT_CALLABLE] %s: expression is not callable", nc.Phase, nc.Pos.String())
+}
+
+type EmitNotExpression struct {
+	Phase Phase
+	Token token.Token
+}
+
+func (en EmitNotExpression) Error() string {
+	return fmt.Sprintf("%s [EMIT_NOT_EXPRESSION] %s: emit is a statement and cannot be used as a value", en.Phase, en.Token.Pos.String())
+}
+
 type ArgsNumberMissmatch struct {
 	Phase    Phase
 	Token    token.Token
