@@ -46,11 +46,11 @@ Inputs and outputs are both declared in the script, but wired to real blocks out
 DSL:
 
 ```js
-input metric: Number
+input metric: Float
 
 output alerts: {
   level: String,
-  value: Number
+  value: Float
 }
 output logs: String
 ```
@@ -138,11 +138,11 @@ Canonical program shape:
 ```js
 const THRESHOLD = 100
 
-input metric: Number
+input metric: Float
 
 output alerts: {
   level: String,
-  value: Number
+  value: Float
 }
 
 state cooldown: Integer = 0
@@ -209,7 +209,7 @@ They are valid only as the first argument to `emit(...)` inside `Run()`.
 - An `emit(...)` call targeting an undeclared output is a parse-time error.
 
 **Out of scope for the current revision** (may be added later): user-tunable config inputs
-(`input period: Number = 14`); named reusable custom types (`type Alert { … }`).
+(`input period: Integer = 14`); named reusable custom types (`type Alert { … }`).
 
 ### 3.4 Value types
 
@@ -225,9 +225,15 @@ The core scalar value types:
 | `Time`     | A point in time. See §3.5. |
 | `Duration` | A length of time. See §3.5. |
 
-> `Number` in older prose meant a single `float64` type. The runtime has since split into
-> `Integer`/`Float`; `Integer → Float` coercion applies at operator and argument
-> boundaries. Where this document writes "numeric", it means either.
+> **The `Integer`/`Float` split is the shipped truth.** `Number` in older prose meant a single
+> `float64` type; it is not a type name and does not resolve. Where this document writes
+> "numeric", it means either `Integer` or `Float`, and `Integer → Float` coercion applies at
+> operator, argument, and assignment boundaries.
+>
+> Residual sharp edges, all current behaviour: `/` always returns `Float`, even for two
+> `Integer`s; `Integer` arithmetic **wraps silently** on overflow (`9223372036854775807 + 1`);
+> and `-9223372036854775808` fails to parse, since `-` is an operator and the bare literal
+> overflows on its own.
 
 **Collection types (`Tuple`, arrays/slices) are core but POSTPONED.** They are planned
 core language types (fixed-arity tuples from multi-return calls; indexable arrays). They
@@ -282,7 +288,7 @@ hours.
 #### `Duration`
 
 A `Duration` is a length of time, in milliseconds, signed. Produced by `Time - Time`, by
-`Number * <constant>`, or by arithmetic on existing durations.
+a numeric literal times a `time.*` constant, or by arithmetic on existing durations.
 
 **Duration constants live in the `time.*` namespace** (`time` is a reserved namespace
 identifier alongside `math`):
@@ -323,11 +329,11 @@ The `time` namespace also hosts pure helpers:
 | Property      | Type     | Notes |
 |---------------|----------|-------|
 | `.milliseconds` | Integer  | total milliseconds |
-| `.seconds`    | Number   | total seconds (may be fractional) |
-| `.minutes`    | Number   | total minutes |
-| `.hours`      | Number   | total hours |
-| `.days`       | Number   | total days |
-| `.weeks`      | Number   | total weeks |
+| `.seconds`    | Float    | total seconds (may be fractional) |
+| `.minutes`    | Float    | total minutes |
+| `.hours`      | Float    | total hours |
+| `.days`       | Float    | total days |
+| `.weeks`      | Float    | total weeks |
 | `.abs`        | Duration | absolute duration |
 
 #### Operator semantics
@@ -342,7 +348,7 @@ The `time` namespace also hosts pure helpers:
 | `Time < Time`, `<=`, `>`, `>=` | `Bool` |
 | `Time == Time` | `Bool` (strict same-type equality) |
 | `Time + Time` | parse-time error |
-| `Time + Number`, `Time - Number` | parse-time error (use `Duration`) |
+| `Time + <numeric>`, `Time - <numeric>` | parse-time error (use `Duration`) |
 
 `Duration`:
 
@@ -350,17 +356,17 @@ The `time` namespace also hosts pure helpers:
 |----|--------|
 | `Duration + Duration` | `Duration` |
 | `Duration - Duration` | `Duration` |
-| `Number * Duration` | `Duration` |
-| `Duration * Number` | `Duration` |
-| `Duration / Number` | `Duration` |
-| `Duration / Duration` | `Number` (ratio) |
+| `<numeric> * Duration` | `Duration` |
+| `Duration * <numeric>` | `Duration` |
+| `Duration / <numeric>` | `Duration` |
+| `Duration / Duration` | `Float` (ratio) |
 | `Duration < Duration` etc. | `Bool` |
 | `Duration == Duration`, `!=` | `Bool` |
 | unary `-Duration` | `Duration` |
-| `Duration + Number` | parse-time error |
+| `Duration + <numeric>` | parse-time error |
 
-`Duration / Number` and `Duration / Duration` with a zero divisor are runtime errors.
-`Number * Duration`, `Duration * Number`, and `Duration / Number` round the resulting
+`Duration / <numeric>` and `Duration / Duration` with a zero divisor are runtime errors.
+`<numeric> * Duration`, `Duration * <numeric>`, and `Duration / <numeric>` round the resulting
 milliseconds to the nearest integer, half away from zero. Invalid `Time.truncate(...)`
 buckets are runtime errors following the failure protocol (§6.5).
 
@@ -636,7 +642,7 @@ emit(OUTPUT, ident=expr [, ident=expr]*)
   opaque object) is a runtime error.
 
 ```js
-input metric: Number
+input metric: Float
 output logs: String
 
 function Run() {
@@ -645,8 +651,8 @@ function Run() {
 ```
 
 ```js
-input metric: Number
-output alert: { message: String, value: Number }
+input metric: Float
+output alert: { message: String, value: Float }
 
 function Run() {
   emit(alert, message="threshold crossed", value=metric)
@@ -837,11 +843,11 @@ One numeric input, a persistent counter, a threshold condition.
 ```js
 const THRESHOLD = 100
 
-input metric: Number
+input metric: Float
 
 output alerts: {
   level: String,
-  value: Number
+  value: Float
 }
 
 state cooldown: Integer = 0
@@ -863,10 +869,10 @@ Exercises `Time`/`Duration`, `state.*` holding a `Time`, and `Init()` seeding.
 ```js
 const COOLDOWN = 10 * time.MINUTE
 
-input metric: Number
+input metric: Float
 input clock: Time            // host supplies the current activation time
 
-output alerts: { value: Number }
+output alerts: { value: Float }
 
 state last_alert: Time
 

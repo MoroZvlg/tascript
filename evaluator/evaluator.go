@@ -209,7 +209,10 @@ func (e *Evaluator) evalIf(stmt *resolved.IfStmt, env *Env) (registry.Value, err
 	if err != nil {
 		return nil, err
 	}
-	condBool, _ := condition.(registry.Bool)
+	condBool, ok := condition.(registry.Bool)
+	if !ok {
+		panic("if condition is not Bool: resolver failed to guard boolean position")
+	}
 
 	if condBool {
 		return e.evalBlock(stmt.Consequence, NewEnclosedEnv(env))

@@ -259,6 +259,7 @@ func TestEvaluator_Statements(t *testing.T) {
 		{"two lets", "let a = 2\nlet b = 3\na * b", registry.Integer(6)},
 		{"let from expression", "let x = t.double(1.0) + 1\nx", registry.Float(3)},
 		{"let value is coerced", "let x = 1\nx + 0.5", registry.Float(1.5)},
+		{"assigned value is coerced", "let x = 1.5\nx = 1\nx", registry.Float(1)},
 	}
 
 	for _, tt := range tests {
