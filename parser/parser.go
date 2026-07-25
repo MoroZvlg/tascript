@@ -7,6 +7,8 @@ import (
 	"github.com/MoroZvlg/tascript/token"
 )
 
+const maxParseErrors = 100
+
 const (
 	InitFnIdent     = "Init"
 	RunFnIdent      = "Run"
@@ -18,7 +20,9 @@ type Parser struct {
 	currentToken token.Token
 	peekToken    token.Token
 	errors       []diag.Diagnostic
-	depth        int
+	// slice may stop growing, so we add separate counter to replace len(errors)
+	errCount int
+	depth    int
 
 	prefixFns map[token.TokenType]func() ast.Expression
 	infixFns  map[token.TokenType]func(ast.Expression) ast.Expression
@@ -67,6 +71,14 @@ func (p *Parser) Diagnostics() []diag.Diagnostic {
 	return p.errors
 }
 
+func (p *Parser) addDiag(d diag.Diagnostic) {
+	p.errCount++
+	if len(p.errors) >= maxParseErrors {
+		return
+	}
+	p.errors = append(p.errors, d)
+}
+
 func (p *Parser) Parse() *ast.Program {
 	prog := &ast.Program{Valid: true}
 	for !p.currTokenIs(token.EOF) {
@@ -75,31 +87,31 @@ func (p *Parser) Parse() *ast.Program {
 			continue
 		}
 
-		errsBefore := len(p.errors)
+		errsBefore := p.errCount
 		switch p.currentToken.Type {
 		case token.CONST:
 			decl := p.parseConstDecl()
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				prog.Consts = append(prog.Consts, decl)
 			}
 		case token.INPUT:
 			decl := p.parseInputDecl()
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				prog.Inputs = append(prog.Inputs, decl)
 			}
 		case token.OUTPUT:
 			decl := p.parseOutputDecl()
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				prog.Outputs = append(prog.Outputs, decl)
 			}
 		case token.STATE:
 			decl := p.parseStateFieldDecl()
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				prog.StateFields = append(prog.StateFields, decl)
 			}
 		case token.FUNCTION:
 			decl := p.parseFunctionDecl()
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				switch decl.Identifier.String() {
 				case InitFnIdent:
 					if prog.InitFn != nil {
@@ -123,18 +135,22 @@ func (p *Parser) Parse() *ast.Program {
 		default:
 			p.addUnexpectedTopDecl(p.currentToken.Pos)
 		}
-		if len(p.errors) == errsBefore &&
+		if p.errCount == errsBefore &&
 			!p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) {
 			p.addUnexpectedToken(p.peekToken, token.NEWLINE)
 		}
-		if len(p.errors) > errsBefore {
+		if p.errCount > errsBefore {
 			prog.Valid = false
+			// no point of further parsing. we won't add diags anyway
+			if p.errCount >= maxParseErrors {
+				break
+			}
 			p.syncToNewLine()
 		}
 		p.nextToken()
 	}
 
-	if prog.RunFn == nil && len(p.errors) == 0 {
+	if prog.RunFn == nil && p.errCount == 0 {
 		prog.Valid = false
 		p.addMissingRunFn(p.currentToken.Pos)
 	}
@@ -263,7 +279,7 @@ func (p *Parser) parseConstDecl() *ast.ConstDecl {
 func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 	decl := &ast.FunctionDecl{Token: p.currentToken}
 	p.nextToken()
-	errsBeforeDecl := len(p.errors)
+	errsBeforeDecl := p.errCount
 	if p.currTokenIs(token.IDENT) {
 		if p.currentToken.Literal != InitFnIdent && p.currentToken.Literal != RunFnIdent {
 			p.addForbiddenFunc(p.currentToken.Pos)
@@ -280,32 +296,32 @@ func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 	if p.currTokenIs(token.LPAREN) {
 		p.nextToken()
 	} else {
-		if len(p.errors) == errsBeforeDecl {
+		if p.errCount == errsBeforeDecl {
 			p.addUnexpectedToken(p.currentToken, token.LPAREN)
 		}
 	}
 	if p.currTokenIs(token.RPAREN) {
 		p.nextToken()
 	} else {
-		if len(p.errors) == errsBeforeDecl {
+		if p.errCount == errsBeforeDecl {
 			p.addUnexpectedToken(p.currentToken, token.RPAREN)
 		}
 	}
 
 	if !p.currTokenIs(token.LBRACE) {
-		if len(p.errors) == errsBeforeDecl {
+		if p.errCount == errsBeforeDecl {
 			p.addUnexpectedToken(p.currentToken, token.LBRACE)
 		}
 		// we didn't find func block declaration start. don't need to parse
 		return decl
 	}
 
-	errsBeforeBody := len(p.errors)
+	errsBeforeBody := p.errCount
 	decl.Body = p.parseBlock() // leaves current ON `}` (or EOF)
 
 	// only Run (and the unreachable unnamed case) reject a genuinely empty body
 	notInitFn := decl.Identifier == nil || decl.Identifier.String() == RunFnIdent
-	if len(decl.Body.Stmts) == 0 && len(p.errors) == errsBeforeBody && notInitFn {
+	if len(decl.Body.Stmts) == 0 && p.errCount == errsBeforeBody && notInitFn {
 		p.addEmptyFunctionBody(p.currentToken.Pos)
 	}
 

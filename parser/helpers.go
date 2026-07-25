@@ -62,7 +62,7 @@ func (p *Parser) skipPeekNewLines() {
 }
 
 func (p *Parser) addExpressionExpected(tok token.Token) {
-	p.errors = append(p.errors, &diag.ExpressionExpected{
+	p.addDiag(&diag.ExpressionExpected{
 		Phase: diag.PhaseParse,
 		Pos:   tok.Pos,
 		Got:   tok.Type,
@@ -70,7 +70,7 @@ func (p *Parser) addExpressionExpected(tok token.Token) {
 }
 
 func (p *Parser) addUnexpectedToken(tok token.Token, expected token.TokenType) {
-	p.errors = append(p.errors, &diag.UnexpectedToken{
+	p.addDiag(&diag.UnexpectedToken{
 		Phase:    diag.PhaseParse,
 		Pos:      tok.Pos,
 		Got:      tok.Type,
@@ -79,14 +79,14 @@ func (p *Parser) addUnexpectedToken(tok token.Token, expected token.TokenType) {
 }
 
 func (p *Parser) addUnexpectedTopDecl(pos token.Pos) {
-	p.errors = append(p.errors, &diag.UnexpectedTopDecl{
+	p.addDiag(&diag.UnexpectedTopDecl{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})
 }
 
 func (p *Parser) addTopDeclInBody(tok token.Token) {
-	p.errors = append(p.errors, &diag.TopDeclInBody{
+	p.addDiag(&diag.TopDeclInBody{
 		Phase:   diag.PhaseParse,
 		Pos:     tok.Pos,
 		Keyword: tok.Type,
@@ -94,7 +94,7 @@ func (p *Parser) addTopDeclInBody(tok token.Token) {
 }
 
 func (p *Parser) addDuplicateDecl(kwToken, identToken token.Token) {
-	p.errors = append(p.errors, &diag.DuplicateDeclaration{
+	p.addDiag(&diag.DuplicateDeclaration{
 		Phase:        diag.PhaseParse,
 		KeywordToken: kwToken,
 		IdentToken:   identToken,
@@ -102,7 +102,7 @@ func (p *Parser) addDuplicateDecl(kwToken, identToken token.Token) {
 }
 
 func (p *Parser) addParseFailed(pos token.Pos, target token.TokenType, _ error) {
-	p.errors = append(p.errors, &diag.ParseFailed{
+	p.addDiag(&diag.ParseFailed{
 		Phase:  diag.PhaseParse,
 		Pos:    pos,
 		Target: target,
@@ -110,49 +110,49 @@ func (p *Parser) addParseFailed(pos token.Pos, target token.TokenType, _ error) 
 }
 
 func (p *Parser) addTypeOrCustomTypeExpected(pos token.Pos) {
-	p.errors = append(p.errors, &diag.TypeOrCustomTypeExpected{
+	p.addDiag(&diag.TypeOrCustomTypeExpected{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})
 }
 
 func (p *Parser) addEmptyCustomType(pos token.Pos) {
-	p.errors = append(p.errors, &diag.EmptyCustomType{
+	p.addDiag(&diag.EmptyCustomType{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})
 }
 
 func (p *Parser) addForbiddenFunc(pos token.Pos) {
-	p.errors = append(p.errors, &diag.ForbiddenFunc{
+	p.addDiag(&diag.ForbiddenFunc{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})
 }
 
 func (p *Parser) addEmptyFunctionBody(pos token.Pos) {
-	p.errors = append(p.errors, &diag.EmptyFunctionBody{
+	p.addDiag(&diag.EmptyFunctionBody{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})
 }
 
 func (p *Parser) addArgsOrder(pos token.Pos) {
-	p.errors = append(p.errors, &diag.ArgsOrder{
+	p.addDiag(&diag.ArgsOrder{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})
 }
 
 func (p *Parser) addMissingRunFn(pos token.Pos) {
-	p.errors = append(p.errors, &diag.MissingRunFunc{
+	p.addDiag(&diag.MissingRunFunc{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})
 }
 
 func (p *Parser) addNestingTooDeep(pos token.Pos) {
-	p.errors = append(p.errors, &diag.NestingTooDeep{
+	p.addDiag(&diag.NestingTooDeep{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})

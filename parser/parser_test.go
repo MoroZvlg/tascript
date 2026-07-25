@@ -1401,6 +1401,19 @@ func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []dia
 	}
 }
 
+func TestParser_ErrorCap(t *testing.T) {
+	src := strings.Repeat("@\n", 300)
+	p := parser.New(lexer.New(src))
+	prog := p.Parse()
+
+	if prog.Valid {
+		t.Errorf("expected prog be invalid, got true")
+	}
+	if got := len(p.Diagnostics()); got != 100 {
+		t.Fatalf("expected diagnostics capped at 100, got %d", got)
+	}
+}
+
 // Program-level recovery: a junk top-level token must not drop the following good const
 func TestParser_ErrorModeLeak(t *testing.T) {
 	t.Run("junk before good const is recovered", func(t *testing.T) {

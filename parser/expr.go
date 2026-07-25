@@ -117,14 +117,14 @@ func (p *Parser) parseCallExpr(callee ast.Expression) ast.Expression {
 	for {
 		p.nextToken()
 
-		errsBefore := len(p.errors)
+		errsBefore := p.errCount
 		if p.currTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
 			kwargSeen = true
 			kwarg := &ast.KwargsExpr{Token: p.currentToken, Key: &ast.IdentExpr{Token: p.currentToken}}
 			p.nextToken() // consume `=`
 			p.nextToken()
 			value := p.parseExpression(LowestPrec)
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				kwarg.Value = value
 				callExpr.Kwargs = append(callExpr.Kwargs, kwarg)
 			}
@@ -134,7 +134,7 @@ func (p *Parser) parseCallExpr(callee ast.Expression) ast.Expression {
 				break
 			}
 			arg := p.parseExpression(LowestPrec)
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				callExpr.Args = append(callExpr.Args, arg)
 			}
 		}
