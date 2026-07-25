@@ -183,6 +183,20 @@ func TestLexer_Simple(t *testing.T) {
 			"a\n\rb",
 			[]token.TokenType{token.IDENT, token.NEWLINE, token.IDENT, token.EOF},
 		},
+		// an unterminated string ends at the line break; the NEWLINE must survive or the
+		// next statement merges into the bad one
+		{"unterminated string stops at newline",
+			"\"line1\nconst B = 5",
+			[]token.TokenType{token.ILLEGAL, token.NEWLINE, token.CONST, token.IDENT, token.ASSIGN, token.INTEGER, token.EOF},
+		},
+		{"unterminated string stops at backslash-newline",
+			"\"abc\\\nconst B = 5",
+			[]token.TokenType{token.ILLEGAL, token.NEWLINE, token.CONST, token.IDENT, token.ASSIGN, token.INTEGER, token.EOF},
+		},
+		{"unterminated string stops at CRLF",
+			"\"line1\r\nconst B = 5",
+			[]token.TokenType{token.ILLEGAL, token.NEWLINE, token.CONST, token.IDENT, token.ASSIGN, token.INTEGER, token.EOF},
+		},
 		// a // comment must end at a lone CR too, not run to EOF
 		{"comment ends at CR",
 			"123 // comment\r foo",
@@ -259,7 +273,7 @@ func TestLexer_StringEscapes(t *testing.T) {
 		name        string
 		input       string
 		wantType    token.TokenType
-		wantLiteral string // checked only when wantType is STRING
+		wantLiteral string
 	}{
 		{"plain", `"foo"`, token.STRING, "foo"},
 		{"escaped quote", `"he said \"hi\""`, token.STRING, `he said "hi"`},
@@ -267,9 +281,10 @@ func TestLexer_StringEscapes(t *testing.T) {
 		{"newline escape", `"a\nb"`, token.STRING, "a\nb"},
 		{"tab escape", `"a\tb"`, token.STRING, "a\tb"},
 		{"carriage return escape", `"a\rb"`, token.STRING, "a\rb"},
-		{"invalid escape recovers to closing quote", `"a\qb"`, token.ILLEGAL, ""},
-		{"embedded NUL is illegal", "\"a\x00b\"", token.ILLEGAL, ""},
-		{"trailing backslash", `"abc\`, token.ILLEGAL, ""},
+		{"invalid escape recovers to closing quote", `"a\qb"`, token.ILLEGAL, "invalid escape sequence"},
+		{"embedded NUL is illegal", "\"a\x00b\"", token.ILLEGAL, "illegal NUL byte"},
+		{"trailing backslash", `"abc\`, token.ILLEGAL, "unterminated string"},
+		{"unterminated at EOF", `"abc`, token.ILLEGAL, "unterminated string"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -282,7 +297,7 @@ func TestLexer_StringEscapes(t *testing.T) {
 			if tokens[0].Type != tt.wantType {
 				t.Fatalf("expected %s, got %s (%q)", tt.wantType, tokens[0].Type, tokens[0].Literal)
 			}
-			if tt.wantType == token.STRING && tokens[0].Literal != tt.wantLiteral {
+			if tokens[0].Literal != tt.wantLiteral {
 				t.Errorf("literal: expected %q, got %q", tt.wantLiteral, tokens[0].Literal)
 			}
 		})

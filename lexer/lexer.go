@@ -238,6 +238,10 @@ func (l *Lexer) readString() (string, string) {
 	var sb strings.Builder
 	errMsg := "" // first error wins; we keep scanning to the closing quote either way
 	for {
+		// stop before the newline, never on it: the parser needs it as a statement separator
+		if isNewline(l.peek()) {
+			return "", "unterminated string"
+		}
 		l.advance()
 		switch l.currChar {
 		case 0:
@@ -257,6 +261,9 @@ func (l *Lexer) readString() (string, string) {
 			}
 			return sb.String(), ""
 		case '\\':
+			if isNewline(l.peek()) {
+				return "", "unterminated string"
+			}
 			l.advance()
 			if l.eof() {
 				return "", "unterminated string"
@@ -303,7 +310,9 @@ func (l *Lexer) pos() token.Pos {
 	}
 }
 
-func (l *Lexer) atNewline() bool { return l.currChar == '\n' || l.currChar == '\r' }
+func (l *Lexer) atNewline() bool { return isNewline(l.currChar) }
+
+func isNewline(char byte) bool { return char == '\n' || char == '\r' }
 
 func (l *Lexer) eof() bool { return l.currCursor >= len(l.src) }
 
