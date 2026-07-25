@@ -152,7 +152,7 @@ func (p *Parser) addMissingRunFn(pos token.Pos) {
 }
 
 func (p *Parser) addNestingTooDeep(pos token.Pos) {
-	p.errors = append(p.errors, diag.NestingTooDeep{
+	p.errors = append(p.errors, &diag.NestingTooDeep{
 		Phase: diag.PhaseParse,
 		Pos:   pos,
 	})

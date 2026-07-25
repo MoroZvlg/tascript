@@ -57,7 +57,7 @@ type Pos struct {
 	Col  int
 }
 
-func (p *Pos) String() string {
+func (p Pos) String() string {
 	return fmt.Sprintf("%d:%d", p.Line, p.Col)
 }
 
@@ -67,7 +67,7 @@ type Token struct {
 	Literal string
 }
 
-func (t *Token) String() string {
+func (t Token) String() string {
 	return fmt.Sprintf("[%s] -> %s", t.Type, t.Literal)
 }
 

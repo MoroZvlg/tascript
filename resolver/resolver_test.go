@@ -364,7 +364,7 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 			},
 		},
 		{
-			"args number missmatch",
+			"arg type missmatch",
 			`const FOO = math.sqrt^("foo")`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
@@ -1018,9 +1018,8 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 	}
 }
 
-// runDiagCases parses input (with ^ markers stripped to positions), then asserts the parser's
-// diagnostics match what buildDiags(positions) returns. When any diagnostic is expected, the
-// program must also be marked invalid. Empty vs nil diagnostic slices compare equal.
+// runDiagCases parses and resolves input (with ^ markers stripped to positions), then asserts
+// the resolver's diagnostics match what buildDiags(positions) returns.
 func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []diag.Diagnostic) {
 	t.Helper()
 	runDiagCasesWithRegistry(t, input, buildDiags, nil)

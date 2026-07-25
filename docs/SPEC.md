@@ -79,9 +79,11 @@ These belong to a separate routing / delivery layer that consumes the event stre
 
 tascript leans on a JavaScript-flavoured surface syntax with deliberate deviations:
 
-- **No statement terminators.** Newlines end statements; `;` is not used. Newlines are
-  ignored while inside an open `(`, `[`, or `{`, so output schemas and long calls may span
-  multiple lines. Broader trailing-token continuation is deferred (see §8 gaps).
+- **No statement terminators.** Newlines end statements; `;` is not used. The lexer
+  suppresses newlines inside an open `(` or `[`, so long calls may span multiple lines.
+  Inline type schemas (`{field: Type, ...}`) may also span lines — the parser skips newlines
+  while reading them — but `{` **blocks** keep newlines significant, since there they are the
+  statement separators. Broader trailing-token continuation is deferred (see §8 gaps).
 - **C-style blocks.** `if (cond) { ... } else { ... }` — parentheses around conditions,
   braces around bodies.
 - **C-style logical operators.** `&&`, `||`, `!` (not `and`, `or`, `not`).

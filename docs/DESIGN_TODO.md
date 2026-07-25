@@ -154,7 +154,7 @@ shared-handle invariant, see the input-wiring section).
 | 18 | P3 | evaluator | `evalIf` silently treats a non-Bool condition as false (evaluator.go:175: `condBool, _ := condition.(registry.Bool)`) | **Downgraded to P3 (2026-07-22): the resolver now guards it** — `resolveIfStmt` rejects a non-Bool `if` condition (resolver.go:224, TYPE_MISMATCH), so the eval-time hole is only reachable via a `BadExpr` leak from #2/#3. Still worth the one-line `ok`-check → internal panic/error, since in a signal product a silently skipped branch (silently *not emitting*) is the worst failure mode; low urgency now that the normal path is covered |
 | 19 | P3 | resolver | Assignment doesn't coerce (`let x = 1.5` then `x = 1` → TypeMissmatch) | Inconsistent with args/infix which coerce Int→Float |
 | 20 | P3 | resolver | `resolveArgs` kwarg diagnostics: unknown kwarg silently skipped; positional+kwarg duplicate → actively wrong message | Verified: `math.pow(2.0, base=3.0)` reports "missing exponent arg" — the user passed `base` twice; the count check + silent kwarg-over-positional overwrite convert "duplicate arg" into "missing other arg". Fix: `resolvedIdx[i]` already true → "duplicate argument"; no rule match → "unknown keyword argument". Also: for emit, the count diag says "expected 2 args but got 1" counting only value args, though the user typed the target too — fix wording together with #21 |
-| 21 | P3 | resolver | `CallArgExpr.Token` is the call token (existing TODO in `resolveArgs`) | Arg-level errors point at `(` instead of the arg |
+| 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
 | 22 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #2–#3 mechanically |
 | 23 | P3 | resolver | No Unknown-type poisoning — one error cascades | `let x = <bad expr>` binds `x` as `UnknownTypeID`; every later use emits a fresh INVALID_OPERATION/TYPE_MISSMATCH (the `errsBefore` guard only dedups within one expression tree). Standard fix: lookups where an operand is Unknown succeed silently as Unknown |
 | 24 | P3 | lexer | Raw newlines are legal inside string literals (`readString`) | Verified: `"line1<LF>line2"` lexes as one STRING. Consequence: an *unterminated* string swallows the file to the next quote — one confusing far-away error, recovery wrecked for everything between. Spec is silent on multi-line strings. Recommend: newline in string → `unterminated string` at the opening quote, terminate the token at line end (standard single-line recovery) |
@@ -268,33 +268,28 @@ Design locked in tracker #6 / spec §4.3. Explicitly parked:
 
 From the 2026-07-05 review; each is a mechanical fix.
 
-- `addNestingTooDeep` appends a **value** diagnostic; every other helper appends a
-  pointer, and a test type-asserts the value form. Unify on pointers.
-- `resolveArgs` parameter named `token` shadows the package (resolver.go:394) —
-  rename (`callToken`).
-- `Resolver.Resolve` ends in two identical branches (resolver.go:46-49) — a lost
-  `return nil`? Decide the partial-tree-on-error contract and simplify.
+Cleared 2026-07-25: `addNestingTooDeep` now appends a pointer like every other helper (test
+assertion updated); `resolveArgs`'s `token` parameter renamed to `argToken` (it is correct as written — the TODOs moved to the two callers, which are the ones passing a call token); `Resolver.Resolve`
+collapsed to one `return` — **contract decided: it always returns the (possibly partial)
+resolved program, and callers must check `Diagnostics()` before using it**; `parseInputDecl`/
+`parseOutputDecl` now share `parsePortDecl` (they differed only in the node they build);
+`token.Pos`/`token.Token` `String()` moved to value receivers; spec §3.1 reworded; the test debt
+(the `len(prog.Consts)`-in-an-inputs-test assertion, the duplicated and the `"???"` subtest names,
+the stale `runDiagCases` doc comment). **`extractErrorsPos`/`runDiagCases` stay duplicated in the
+parser and resolver test packages — deliberate, do not re-file as debt.** A shared home was built
+and rejected: it can only live in a normal package (Go cannot import a `_test` package), which
+means either `internal/` or a public `diag/diagtest`; `diag` itself is out, since it is imported by
+every package and a host, and `Assert` would drag `testing` + `go-cmp` into all of them. Revisit
+only if a host embedding tascript needs to assert diagnostics in its own tests — then it becomes a
+public `diag/diagtest` (the `httptest` pattern), not an internal one.
+
 - Two `Env` implementations drifting: resolver keys by `Symbol`, evaluator by
   `string`; resolver's `Get` special-cases `isTopLevel()` while the evaluator walks
   the parent chain plainly; `Symbol` is declared in resolver.go, not env.go. Align
   during the slot-based rework at the latest.
-- `parseInputDecl` / `parseOutputDecl` are byte-identical copy-paste (parser.go:139-203),
-  same "IDEN" typo comment three times including `parseConstDecl` — one parameterized
-  helper.
-- `token.Pos` / `token.Token` `String()` on pointer receivers — value receivers are
-  idiomatic for tiny immutable structs, and `%s` on a `Pos` value misses the Stringer
-  today.
 - `resolved.LetStmt`/`AssignNameStmt` expose `Type()` though no interface requires it;
   `CallArgExpr.T` always equals `Value.Type()` after coercion wrapping. Promote
   deliberately or trim.
-- Test debt: `extractErrorsPos` + `runDiagCases` duplicated between parser and resolver
-  test packages and already forked (registry-setup param) — one shared home;
-  parser_test.go:465 prints `len(prog.Consts)` in an inputs assertion; two subtests
-  both named "args number missmatch" (the second is a type-mismatch case); a subtest
-  named `"???"`; resolver's `runDiagCases` doc comment says "parser's diagnostics".
-- Spec §3.1 wording: newline suppression is `(` / `[` only in the lexer; `{…}` schemas
-  get parser-side newline skipping; `{` *blocks* keep newlines significant (they are
-  statement separators). Fix the sentence.
 
 ## Test-coverage gaps worth closing
 

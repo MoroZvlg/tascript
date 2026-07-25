@@ -142,8 +142,14 @@ func (p *Parser) Parse() *ast.Program {
 	return prog
 }
 
-func (p *Parser) parseInputDecl() *ast.InputDecl {
-	decl := &ast.InputDecl{Token: p.currentToken}
+type portDecl struct {
+	Token      token.Token
+	Identifier *ast.IdentExpr
+	Type       ast.TypeDecl
+}
+
+func (p *Parser) parsePortDecl() portDecl {
+	decl := portDecl{Token: p.currentToken}
 
 	p.nextToken()
 
@@ -157,7 +163,7 @@ func (p *Parser) parseInputDecl() *ast.InputDecl {
 	if p.currTokenIs(token.COLON) {
 		p.nextToken()
 	} else {
-		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
+		// don't need to add second error on the same pos (we didn't move in case of missing IDENT)
 		if decl.Identifier != nil {
 			p.addUnexpectedToken(p.currentToken, token.COLON)
 		}
@@ -175,37 +181,14 @@ func (p *Parser) parseInputDecl() *ast.InputDecl {
 	return decl
 }
 
+func (p *Parser) parseInputDecl() *ast.InputDecl {
+	decl := p.parsePortDecl()
+	return &ast.InputDecl{Token: decl.Token, Identifier: decl.Identifier, Type: decl.Type}
+}
+
 func (p *Parser) parseOutputDecl() *ast.OutputDecl {
-	decl := &ast.OutputDecl{Token: p.currentToken}
-
-	p.nextToken()
-
-	if p.currTokenIs(token.IDENT) {
-		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
-		p.nextToken()
-	} else {
-		p.addUnexpectedToken(p.currentToken, token.IDENT)
-	}
-
-	if p.currTokenIs(token.COLON) {
-		p.nextToken()
-	} else {
-		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
-		if decl.Identifier != nil {
-			p.addUnexpectedToken(p.currentToken, token.COLON)
-		}
-		return decl
-	}
-
-	switch p.currentToken.Type {
-	case token.IDENT:
-		decl.Type = &ast.IdentExpr{Token: p.currentToken}
-	case token.LBRACE:
-		decl.Type = p.parseInlineTypeExpr()
-	default:
-		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
-	}
-	return decl
+	decl := p.parsePortDecl()
+	return &ast.OutputDecl{Token: decl.Token, Identifier: decl.Identifier, Type: decl.Type}
 }
 
 func (p *Parser) parseStateFieldDecl() *ast.StateFieldDecl {
@@ -223,7 +206,7 @@ func (p *Parser) parseStateFieldDecl() *ast.StateFieldDecl {
 	if p.currTokenIs(token.COLON) {
 		p.nextToken()
 	} else {
-		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
+		// don't need to add second error on the same pos (we didn't move in case of missing IDENT)
 		if decl.Identifier != nil {
 			p.addUnexpectedToken(p.currentToken, token.COLON)
 		}
@@ -264,7 +247,7 @@ func (p *Parser) parseConstDecl() *ast.ConstDecl {
 	if p.currTokenIs(token.ASSIGN) {
 		p.nextToken()
 	} else {
-		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
+		// don't need to add second error on the same pos (we didn't move in case of missing IDENT)
 		if decl.Identifier != nil {
 			p.addUnexpectedToken(p.currentToken, token.ASSIGN)
 		}

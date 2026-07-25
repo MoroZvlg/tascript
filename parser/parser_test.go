@@ -168,7 +168,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 			},
 		},
 		{
-			"???",
+			"[Group] missing operand and illegal token",
 			"const FOO = (3 + ^) * ^#",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
@@ -462,7 +462,7 @@ func TestParser_ParseInputRecovery(t *testing.T) {
 	}
 
 	if len(prog.Inputs) != 2 {
-		t.Fatalf("expected 2 inputs parsed after recovery, got %d", len(prog.Consts))
+		t.Fatalf("expected 2 inputs parsed after recovery, got %d", len(prog.Inputs))
 	}
 }
 
@@ -1482,18 +1482,16 @@ func TestParser_DeepNesting(t *testing.T) {
 			if prog.Valid {
 				t.Errorf("expected invalid program for deeply nested input, got valid")
 			}
-			if !hasNestingTooDeep(p.Diagnostics()) {
+			found := false
+			for _, d := range p.Diagnostics() {
+				if _, ok := d.(*diag.NestingTooDeep); ok {
+					found = true
+					break
+				}
+			}
+			if !found {
 				t.Errorf("expected a NESTING_TOO_DEEP diagnostic, got: %v", p.Diagnostics())
 			}
 		})
 	}
-}
-
-func hasNestingTooDeep(diags []diag.Diagnostic) bool {
-	for _, d := range diags {
-		if _, ok := d.(diag.NestingTooDeep); ok {
-			return true
-		}
-	}
-	return false
 }
