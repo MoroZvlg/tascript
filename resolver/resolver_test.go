@@ -577,6 +577,33 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			},
 		},
 		{
+			"nothing is indexable",
+			"function Run() {\nlet x = 1\nlet y = x^[0]\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotIndexable(ps[0], registry.IntegerID),
+				}
+			},
+		},
+		{
+			"bad indexed expression reports only its own error",
+			"function Run() {\nlet y = ^missing[0]\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "missing"}),
+				}
+			},
+		},
+		{
+			"bad index reports only its own error",
+			"function Run() {\nlet x = 1\nlet y = x[^missing]\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "missing"}),
+				}
+			},
+		},
+		{
 			"call on a non-ident callee",
 			"function Run() {\nlet x = (1 + 2)^()\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -1084,6 +1111,10 @@ func addUndefinedAttribute(member token.Token) *diag.UndefinedAttribute {
 
 func addUndefinedMethod(method token.Token) *diag.UndefinedMethod {
 	return &diag.UndefinedMethod{Phase: diag.PhaseCheck, Method: method}
+}
+
+func addNotIndexable(pos token.Pos, left registry.TypeID) *diag.NotIndexable {
+	return &diag.NotIndexable{Phase: diag.PhaseCheck, Pos: pos, Left: left}
 }
 
 func addUndefinedFunc(tok token.Token) *diag.UndefinedFunc {

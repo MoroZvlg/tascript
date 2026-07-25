@@ -263,6 +263,16 @@ func (um UndefinedMethod) Error() string {
 	return fmt.Sprintf("%s [UNDEFINED_MEETHOD] %s: unknown method %s", um.Phase, um.Method.Pos.String(), um.Method.String())
 }
 
+type NotIndexable struct {
+	Phase Phase
+	Pos   token.Pos
+	Left  registry.TypeID
+}
+
+func (ni NotIndexable) Error() string {
+	return fmt.Sprintf("%s [NOT_INDEXABLE] %s: %s is not indexable", ni.Phase, ni.Pos.String(), ni.Left)
+}
+
 type UndefinedFunc struct {
 	Phase Phase
 	Token token.Token

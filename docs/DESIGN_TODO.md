@@ -67,9 +67,9 @@ frame (#7) and the P1 hole batch are stable:**
   replay), clocks** — all signal-host, on top of A–E.
 
 **How this reshapes existing tracker rows:**
-- #3 (`IndexExpr`/`[n]`) — the client is now explicit: the *historyable* capability (item
-  A) + named `series` slots. Still diag-always until item A/F land; `LookupIndex` arrives
-  with historyable.
+- #3 (`IndexExpr`/`[n]`) — shipped as diag-always (2026-07-25); the client is now explicit: the
+  *historyable* capability (item A) + named `series` slots. `LookupIndex` arrives with
+  historyable and replaces the diag at that one site.
 - #7 (frame) — the per-tick frame is the per-event activation; unchanged, just reframed.
 - #13 (engine/host API) — absorbs item D and the `examples/` signal-host packaging.
 - #15/coercion/subtyping sections — the `CandleSeries <: Series` and multi-way-projection
@@ -132,11 +132,18 @@ since nothing in the value namespace is callable and no `LookupFunc` table exist
 one until bare functions are a real feature); any other callee (`(1 + 2)()`) → `NOT_CALLABLE`.
 Args are deliberately not resolved — the call can never be valid, and the call diag is the
 actionable one. Recorded decision: `emit` is matched by callee name, so `let emit = 3` does not
-shadow it — keyword-by-convention).
+shadow it — keyword-by-convention), **`IndexExpr` diagnostics** (was #3, 2026-07-25:
+`resolveExpr` resolves `Left` and `Index` first so their errors surface, then reports
+`NOT_INDEXABLE` (`Integer is not indexable`, pointing at `[`) behind the infix-style dedup guard
+and returns `BadExpr`. **Diag-always, not a feature** — nothing is indexable today and no index-rule
+table exists; do NOT add an empty one. The future client is series history (spec §4.3 item 1) +
+the *historyable* capability (rework item A): `LookupIndex(receiverType, indexType)` slots in where
+the diag is today — success builds the already-existing `resolved.IndexExpr`, failure keeps this
+diag. Keep it **read-only** when it lands — index assignment is one of the three ways to break the
+shared-handle invariant, see the input-wiring section).
 
 | # | Prio | Area | Missing | Details |
 |---|------|------|---------|---------|
-| 3 | P1 | resolver | `IndexExpr` (`a[i]`) — no case in `resolveExpr`, falls to silent-`BadExpr` default | Verified: same eval-time death as #2. **Nothing is indexable today**: registry has no index-rule table (`VectorShape` declared but unused), so the fix is diag-always, not a feature. Plan: resolve `Left` and `Index` first (their errors surface), then `NOT_INDEXABLE` diag (`Integer is not indexable`) with the infix-style dedup guard (only add if no new errs) + `BadExpr`. Note (2026-07-05): state is NOT the future index client anymore — the locked state design (#6) has no `[n]` access; series history (spec §4.3 item 1) is the client that will eventually justify `LookupIndex(receiverType, indexType)` (lookup success builds the already-existing `resolved.IndexExpr`, failure keeps the same diag). Until then this stays diag-always; do NOT add an empty registry table before then |
 | 5 | P1 | resolver | `resolveTypeDecl` silently swallows the `RegisterScriptType` error (resolver.go:319-323, comment now reads `// unreachable: duplicate decl names are caught by the env check first`) | Still open (2026-07-22). Reachable on registry reuse: a second `Compile()` against the same registry drops the input/output decl with **no diag**, then every use reports a misleading `UNDEFINED_IDENT` (verified: `emit(sig, …)` → "unknown identifier sig", zero hint at the cause). Even as a defensive branch it must append a diagnostic — silently dropping declarations violates the project's own "fail loudly" principle. Full fix (purge-on-reuse) stays in #13; the diag is a 3-liner now |
 | 11 | P2 | resolver | No reserved-name / shadowing rules | All verified accepted-without-diag: `let math = 5` shadows the module inside a function (spec: RESERVED_REASSIGN); `let m = math` then `m.sqrt(9.0)` — modules are first-class, aliasable values (spec §5.4: passive syntactic prefixes, not values — a bare module ident in value position should diag); `const Init = 5` coexists with `function Init()` — function names never enter the top-level env (spec §3.3: one namespace). Decision needed alongside: same-scope `let x` redeclaration currently silently rebinds, even with a new type (JS errors on it; spec silent) |
 | 12 | P2 | resolver | `emit` semantic checks: placement, payload shape, reserved kwargs | Verified gaps: (a) emit inside `Init()` resolves + evals clean — spec §5.2 wants EMIT_OUTSIDE_RUN (`resolveFunc` is identical for both fns; needs a context flag); (b) positional args fill *structured* outputs — `emit(sig, "down", 0.5)` — spec says kwargs-only, and `TestResolver_ResolveEmit` blesses the behavior: decide, then fix test or spec; (c) `emit(logs, value="hi")` — the synthetic `value` param name from `Registry.EmitRule` leaks into the surface language (kwargs on value outputs should be rejected); (d) reserved kwargs `ts`/`output` (spec: EMIT_RESERVED_KWARG) unenforced — cheap to reject at output-decl resolution before host wiring lands |
@@ -154,9 +161,9 @@ shadow it — keyword-by-convention).
 | 24 | P3 | lexer | Raw newlines are legal inside string literals (`readString`) | Verified: `"line1<LF>line2"` lexes as one STRING. Consequence: an *unterminated* string swallows the file to the next quote — one confusing far-away error, recovery wrecked for everything between. Spec is silent on multi-line strings. Recommend: newline in string → `unterminated string` at the opening quote, terminate the token at line end (standard single-line recovery) |
 | 25 | P3 | parser | Spec §7 resource limits: only nesting depth (64) exists | The parse-error cap (spec: 100) is a few lines and bounds worst-case memory — the parser currently collects unbounded diagnostics. String-length, identifier-length, source-size, kwarg-count caps can wait |
 
-Suggested order (re-sequenced 2026-07-25 — #2/#6/#7/#8/#9/#10 now shipped):
-**P1 hole-plugging batch: #3/#5 remain** (same disease as #2: silent `BadExpr` holes reachable
-from valid parses, failing without diagnostics). Then #14 before any external tooling consumes
+Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
+**P1 hole-plugging batch: #5 remains** (same disease as #2/#3: silent holes reachable from valid
+parses, failing without diagnostics). Then #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
 stable. #13 (Engine/host API rework, absorbing item D) last, informed by the `Emitted()` +
 `EvalRun(frame)` stopgaps being used in anger. The strategic milestone beyond the core is the
@@ -443,9 +450,10 @@ divergence). Known so far:
 - `resolved.KwargsExpr` — never constructed (see naming section above).
 - `ast.FunctionDecl` commented-out `Parameters` block — delete; git remembers.
 - `registry.ParamRule.Default` — see "Expression-form defaults" above.
-- Deliberately kept, tied to tracker items (do not delete): `registry.VectorShape` (#3),
-  `resolved.IndexExpr` (#3). (`diag.PhaseRuntime` is no longer dead — #10 shipped and both
-  `RuntimeFailure`/`InternalFailure` now carry it.)
+- Deliberately kept, still unconstructed after #3 shipped diag-always (do not delete): both
+  `registry.VectorShape` and `resolved.IndexExpr` wait for the *historyable* capability
+  (rework item A) — that's when `LookupIndex` starts building the node. (`diag.PhaseRuntime`
+  is no longer dead — #10 shipped and both `RuntimeFailure`/`InternalFailure` now carry it.)
 
 ## Parser: trailing comma in call args (bug — double error)
 

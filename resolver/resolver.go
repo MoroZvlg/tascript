@@ -532,6 +532,14 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 			T:      rule.EvalType,
 			EvalFn: rule.EvalFn,
 		}
+	case *ast.IndexExpr:
+		errsBefore := len(r.errs)
+		left := r.resolveExpr(typedExpr.Left, env)
+		r.resolveExpr(typedExpr.Index, env)
+		if len(r.errs) == errsBefore {
+			r.addNotIndexable(typedExpr.Token, left.Type())
+		}
+		return &resolved.BadExpr{Token: typedExpr.Token}
 	case *ast.CallExpr:
 		switch callee := typedExpr.Callee.(type) {
 		case *ast.MemberAccessExpr:
@@ -746,6 +754,14 @@ func (r *Resolver) addUndefinedMethod(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedMethod{
 		Phase:  diag.PhaseCheck,
 		Method: opToken,
+	})
+}
+
+func (r *Resolver) addNotIndexable(bracketToken token.Token, left registry.TypeID) {
+	r.errs = append(r.errs, &diag.NotIndexable{
+		Phase: diag.PhaseCheck,
+		Pos:   bracketToken.Pos,
+		Left:  left,
 	})
 }
 
