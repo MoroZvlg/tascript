@@ -93,6 +93,9 @@ func (l *Lexer) NextToken() token.Token {
 				break
 			}
 		}
+		if l.atElse() {
+			return l.NextToken()
+		}
 		return token.Token{Pos: pos, Type: token.NEWLINE, Literal: ""}
 	}
 
@@ -311,6 +314,19 @@ func (l *Lexer) pos() token.Pos {
 }
 
 func (l *Lexer) atNewline() bool { return isNewline(l.currChar) }
+
+func (l *Lexer) atElse() bool {
+	const kw = "else"
+	if l.currCursor < 0 || l.currCursor+len(kw) > len(l.src) || l.src[l.currCursor:l.currCursor+len(kw)] != kw {
+		return false
+	}
+	next := l.currCursor + len(kw)
+	if next == len(l.src) {
+		return true
+	}
+	// if next symbol is letter or digit we have not an else Stmt but some other IDENT
+	return !isLetter(l.src[next]) && !isDigit(l.src[next])
+}
 
 func isNewline(char byte) bool { return char == '\n' || char == '\r' }
 

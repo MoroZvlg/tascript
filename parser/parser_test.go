@@ -835,11 +835,10 @@ func TestParser_ParseFunc(t *testing.T) {
 	}{
 		{
 			"missing ident",
-			"function ^() {^}",
+			"function ^() {}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.IDENT, token.LPAREN),
-					emptyFuncErr(ps[1]),
 				}
 			},
 		},
@@ -872,11 +871,10 @@ func TestParser_ParseFunc(t *testing.T) {
 		},
 		{
 			"missing iden and (",
-			"function ^){^}",
+			"function ^){}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.IDENT, token.RPAREN),
-					emptyFuncErr(ps[1]),
 				}
 			},
 		},
@@ -964,7 +962,17 @@ func TestParser_ParseFunc(t *testing.T) {
 		},
 		{
 			"forbidden func name",
-			"function ^MyFunction() ^{}",
+			"function ^MyFunction() {}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					forbiddenFuncErr(ps[0]),
+				}
+			},
+		},
+		{
+			// the body is parsed, not skipped: recovery must not land inside it
+			"forbidden func name with body",
+			"function ^MyFunction() {\nlet a = 3\na + 1\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					forbiddenFuncErr(ps[0]),
@@ -1001,6 +1009,9 @@ func TestParser_ParseFuncBlockSimple(t *testing.T) {
 		{"foo.bar((2+5), key=value)", "foo.bar((2 + 5), key = value)"},
 		{"foo.bar((2+5), key=(3+5))", "foo.bar((2 + 5), key = (3 + 5))"},
 		{"foo.bar(\n(2+5), \nkey=(3+5)\n)", "foo.bar((2 + 5), key = (3 + 5))"},
+		{"foo.bar(2,)", "foo.bar(2)"},
+		{"foo.bar(key=value, )", "foo.bar(key = value)"},
+		{"foo.bar(2, key=value,\n)", "foo.bar(2, key = value)"},
 		{"emit(foo)", "emit(foo)"},
 		{`emit(foo, "bar")`, `emit(foo, "bar")`},
 		{"emit(foo, bar=value)", "emit(foo, bar = value)"},
@@ -1010,6 +1021,10 @@ func TestParser_ParseFuncBlockSimple(t *testing.T) {
 		{"if (a > b) {\nlet c = 3\n}", "if ((a > b)) {\nlet c = 3\n}"},
 		{"if (a) {\nlet b = 3\n} else {\nlet c = 4\n}", "if (a) {\nlet b = 3\n} else {\nlet c = 4\n}"},
 		{"if (a) {\nlet b = 3\n} else if (c) {\nlet d = 4\n}", "if (a) {\nlet b = 3\n} else if (c) {\nlet d = 4\n}"},
+		// `else` may start its own line — nothing else can follow a `}` this way
+		{"if (a) {\nlet b = 3\n}\nelse {\nlet c = 4\n}", "if (a) {\nlet b = 3\n} else {\nlet c = 4\n}"},
+		{"if (a) {\nlet b = 3\n}\nelse if (c) {\nlet d = 4\n}", "if (a) {\nlet b = 3\n} else if (c) {\nlet d = 4\n}"},
+		{"if (a) {\nlet b = 3\n} // why\nelse {\nlet c = 4\n}", "if (a) {\nlet b = 3\n} else {\nlet c = 4\n}"},
 		{"if (a) {\nif (b) {\nlet c = 3\n}\n}", "if (a) {\nif (b) {\nlet c = 3\n}\n}"},
 		// newlines are suppressed inside (), so a multi-line condition parses fine
 		{"if (a &&\nb) {\nlet c = 3\n}", "if ((a && b)) {\nlet c = 3\n}"},

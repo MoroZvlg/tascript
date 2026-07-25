@@ -148,8 +148,6 @@ shared-handle invariant, see the input-wiring section).
 | 12 | P2 | resolver | `emit` semantic checks: placement, payload shape, reserved kwargs | Verified gaps: (a) emit inside `Init()` resolves + evals clean — spec §5.2 wants EMIT_OUTSIDE_RUN (`resolveFunc` is identical for both fns; needs a context flag); (b) positional args fill *structured* outputs — `emit(sig, "down", 0.5)` — spec says kwargs-only, and `TestResolver_ResolveEmit` blesses the behavior: decide, then fix test or spec; (c) `emit(logs, value="hi")` — the synthetic `value` param name from `Registry.EmitRule` leaks into the surface language (kwargs on value outputs should be rejected); (d) reserved kwargs `ts`/`output` (spec: EMIT_RESERVED_KWARG) unenforced — cheap to reject at output-decl resolution before host wiring lands |
 | 13 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the shipped `EvalRun(frame map[string]Value)` map stopgap (#7 — migrate to a slot `[]Value` frame) | Includes registry purge-on-reuse: `resolveTypeDecl` writes synthesized inline port types (`input.x`/`output.sig`) into the host-owned registry, but the duplicate guard reads the per-pass env — so a second `Compile()` on one Engine, or two scripts sharing one registry, collides. Scope the synthesized types per compile (or purge on reuse) rather than papering over the collision with a diagnostic. Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" below — that section now also carries the resolver-contract and registry-encapsulation notes from the review |
 | 14 | P2 | diag | Diagnostics quality pass: machine-readable interface, code reconciliation, message hygiene | `diag.Diagnostic` is just `Error() string` — spec §6.2/§6.4 promises tooling phase/code/pos without parsing messages; add `Phase()`/`Code()`/`Pos()` accessors while the type count is small. Fix misspelled external-contract codes **before** tooling matches on them: `TYPE_MISSMATCH`/`ARGS_NUMBER_MISSMATCH` (spec: `TYPE_MISMATCH`), `UNDEFINED_MEETHOD`. Stop leaking `Token.String()` debug format into messages ("unknown identifier [IDENTIFIER] -> sig") — use `.Literal`; affects ~9 diag types. Reconcile the code set with spec §6.4: UNEXPECTED_TOP_DECL vs TOP_LEVEL_FORM, DUPLICATE_DECLARATION vs PORT_DUPLICATE, INVALID_OPERATION shared by two diag types, EMPTY_FUNCTION absent from spec (also decide whether an empty `Run` is even illegal — spec never says so). Phases: spec defines two, impl has three (`PhaseCheck`), and `DuplicateDeclaration` ships with PhaseParse from the parser but PhaseCheck from the resolver (the NOTE at parser.go:100 already doubts it) |
-| 16 | P2 | parser | Forbidden function name → error cascade (parser.go:238-241) | `function Foo() {…}` returns without consuming the body; top-level recovery (`syncToNewLine`) lands inside it → verified: FORBIDDEN_FUNCTION + one UNEXPECTED_TOP_DECL per body line + one for the closing `}` (4 errors for a 2-line body). Parse the body normally (or skip balanced braces) and report once |
-| 17 | P2 | parser | `else` on its own line fails with misleading "expected expression got else" (stmt.go:90) | The peek for ELSE doesn't cross NEWLINE; `} // comment` before `else` fails too (both verified). JS — the surface model — allows Allman-else. Either skip newlines before the ELSE check (unambiguous: `else` can't start a statement) or keep the restriction and emit a dedicated "else must follow } on the same line" diag |
 | 20 | P3 | resolver | `resolveArgs` kwarg diagnostics: unknown kwarg silently skipped; positional+kwarg duplicate → actively wrong message | Verified: `math.pow(2.0, base=3.0)` reports "missing exponent arg" — the user passed `base` twice; the count check + silent kwarg-over-positional overwrite convert "duplicate arg" into "missing other arg". Fix: `resolvedIdx[i]` already true → "duplicate argument"; no rule match → "unknown keyword argument". Also: for emit, the count diag says "expected 2 args but got 1" counting only value args, though the user typed the target too — fix wording together with #21 |
 | 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
 | 22 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #2–#3 mechanically |
@@ -162,7 +160,13 @@ of 100 (`maxParseErrors`, with `errCount` counting past the cap so the `errsBefo
 gate AST nodes keep working); a newline inside a string literal ends the token at the line break
 with `unterminated string` at the opening quote, leaving the NEWLINE intact so recovery survives;
 `x = 1` on a `Float` binding coerces like args/infix/state-assign already did; spec §3.4 reworded
-and every remaining `Number` in the spec replaced (it never resolved as a type name). Next: #14
+and every remaining `Number` in the spec replaced (it never resolved as a type name).
+The E-batch parser smalls (#16/#17 + trailing comma) shipped 2026-07-25: a forbidden function
+name no longer skips the body (recovery used to land inside it — 4 errors for a 2-line body,
+now 1); `else` may start its own line — the lexer suppresses the NEWLINE run before an `else`
+(`atElse`), the same way it already suppresses newlines inside `(`/`[`, so the parser keeps its
+single token source and never has to look past a separator it may still need; a trailing comma
+before `)` in a call closes the arg list instead of reporting 2 errors. Next: #14
 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
 stable. #13 (Engine/host API rework, absorbing item D) last, informed by the `Emitted()` +
@@ -298,7 +302,7 @@ public `diag/diagtest` (the `httptest` pattern), not an internal one.
 - `/` and `%` by zero now trap uniformly (DIVISION_BY_ZERO) across Integer/Float/Duration
   since #10 landed — pin with tests if not already covered. `math.sqrt(-1)` → NaN is still
   a silent-`NaN` gap; decide whether it should trap (INVALID_ARGUMENT) or stay NaN.
-- emit-inside-Init (#12), shadowing cases (#11), Allman-else (#17).
+- emit-inside-Init (#12), shadowing cases (#11).
 - `Init` coverage exists now that state seeding runs there; a test pinning "Init writes
   persist into Run" is still the executable spec for the load-phase contract.
 - No fuzz target on lexer/parser; the `^`-marker corpus makes seeds cheap.
@@ -444,16 +448,13 @@ outside their own definitions.
   (rework item A) — that's when `LookupIndex` starts building the node. (`diag.PhaseRuntime`
   is no longer dead — #10 shipped and both `RuntimeFailure`/`InternalFailure` now carry it.)
 
-## Parser: trailing comma in call args (bug — double error)
+## Parser: trailing comma — call args allow it, inline type schemas don't
 
-`math.sqrt(number_foo=9.0, number=5, )` produces **2** errors:
+Fixed 2026-07-25 for call args: `math.sqrt(number=9.0, )` parsed as a positional arg after
+kwargs and then tripped again on `)` (2 errors); a `,` directly before `)` now closes the
+list, 0 errors.
 
-```
-parse [ARGS_ORDER] 1:49: args after kwargs not allowed
-parse [UNEXPECTED_TOKEN] 1:50: expected ) got NEWLINE
-```
-
-Should be **0** — a trailing comma before `)` is probably fine, allow it. Even if we
-decide trailing commas are illegal, it must be **one** error (the trailing comma itself),
-not a cascade: the parser currently misreads the `,` `)` sequence as a positional arg
-after kwargs and then trips again on the close paren.
+**Left inconsistent on purpose, decide later:** `input x: {a: Integer,}` is still an error
+(`expected IDENTIFIER got }`), and two tests bless it (`TestParser_Input` /
+`TestParser_Output`, "trailing comma in custom type"). The one-line fix mirrors the call-arg
+one in `parseInlineTypeExpr`; it was reverted only because those tests pin the current rule.

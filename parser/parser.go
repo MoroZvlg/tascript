@@ -283,8 +283,6 @@ func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 	if p.currTokenIs(token.IDENT) {
 		if p.currentToken.Literal != InitFnIdent && p.currentToken.Literal != RunFnIdent {
 			p.addForbiddenFunc(p.currentToken.Pos)
-			// don't need to parse func body if it's forbidden func
-			return decl
 		}
 
 		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
@@ -316,12 +314,11 @@ func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 		return decl
 	}
 
-	errsBeforeBody := p.errCount
 	decl.Body = p.parseBlock() // leaves current ON `}` (or EOF)
 
 	// only Run (and the unreachable unnamed case) reject a genuinely empty body
 	notInitFn := decl.Identifier == nil || decl.Identifier.String() == RunFnIdent
-	if len(decl.Body.Stmts) == 0 && p.errCount == errsBeforeBody && notInitFn {
+	if len(decl.Body.Stmts) == 0 && p.errCount == errsBeforeDecl && notInitFn {
 		p.addEmptyFunctionBody(p.currentToken.Pos)
 	}
 

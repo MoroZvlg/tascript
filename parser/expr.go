@@ -141,6 +141,9 @@ func (p *Parser) parseCallExpr(callee ast.Expression) ast.Expression {
 
 		if p.peekTokenIs(token.COMMA) {
 			p.nextToken()
+			if p.peekTokenIs(token.RPAREN) {
+				break
+			}
 			continue
 		}
 

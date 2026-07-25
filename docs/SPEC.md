@@ -80,13 +80,16 @@ These belong to a separate routing / delivery layer that consumes the event stre
 tascript leans on a JavaScript-flavoured surface syntax with deliberate deviations:
 
 - **No statement terminators.** Newlines end statements; `;` is not used. The lexer
-  suppresses newlines inside an open `(` or `[`, so long calls may span multiple lines.
+  suppresses newlines inside an open `(` or `[`, so long calls may span multiple lines, and
+  before an `else`, so the keyword may start its own line.
   Inline type schemas (`{field: Type, ...}`) may also span lines — the parser skips newlines
   while reading them — but `{` **blocks** keep newlines significant, since there they are the
   statement separators. Broader trailing-token continuation is deferred (see §8 gaps).
 - **C-style blocks.** `if (cond) { ... } else { ... }` — parentheses around conditions,
-  braces around bodies.
+  braces around bodies. `else` may also start its own line (Allman style).
 - **C-style logical operators.** `&&`, `||`, `!` (not `and`, `or`, `not`).
+- **Trailing comma in call arguments.** `f(a, key=b,)` is accepted. Inline type schemas
+  do not accept one yet (`{a: Integer,}` is an error) — an inconsistency, not a rule.
 - **Function-local bindings use `let`.** Inside `Init()` and `Run()`, `let x = a > b`
   creates a binding that lives **only for the current invocation** of that function and is
   dropped when it returns. There is no `var`, and `const` is not valid inside function
@@ -893,6 +896,9 @@ function Run() {
 1. **`return` statement.** No early-return form is locked; the substitute is wrapping body
    code in a filter `if`. If real programs grow nested, `return` should be a small addition.
 2. **Multi-line expressions / line continuation.** Bracket-depth suppression is locked: a
-   NEWLINE is swallowed inside an open `(` `[` `{`, permitting multi-line schemas and calls.
-   Broader trailing-token continuation is deferred; the locked invariant is that continuation
-   is decided by the token at the **end** of a line, never the start.
+   NEWLINE is swallowed inside an open `(` or `[`, permitting multi-line calls and index
+   expressions (inline schemas span lines because the parser skips newlines while reading
+   them, not because of bracket depth). Broader trailing-token continuation is deferred:
+   continuation is decided by the token at the **end** of a line, with one exception —
+   keywords that can never begin a statement. `else` is the only one today; adding to that
+   set requires the same proof.
