@@ -5,6 +5,77 @@ up later — plus, merged in as of 2026-07-05, the findings of the full project 
 (formerly `docs/REVIEW_FINDINGS.md`). Behavioral claims marked "verified" were
 reproduced by running real scripts through the parse → resolve → eval pipeline.
 
+## Architecture rework (2026-07-25) — target redefined, read first
+
+A long design session redefined what tascript *is*. **Authoritative surface:
+`docs/SPEC.md`** (core language) + **`docs/SPEC_SIGNAL_HOST.md`** (signal-block host). The
+**why / rejected alternatives / open decisions** are in
+**`docs/DESIGN_STREAMING_INDICATORS.md`** (a rationale/decision log, no longer normative).
+Read the specs before picking up new work. Summary of what changed and how it reshapes
+this queue:
+
+**tascript is NOT a TA-DSL.** It is the shared language inside many *block types* on a
+visual whiteboard (signal / filter / trading / SL-TP). Each block type is a **host**
+embedding the same core with a different registered vocabulary. Therefore:
+
+- **The core is domain-blind.** It knows primitives, control flow, typed input/output
+  ports, `state`, host-type dispatch (+ future effect metadata), snapshot/rollback, and a
+  **per-event** execution model (a message on a port → `Run` → `emit`; the candle tick is
+  just the signal block's special case). *When* `Run` fires is a host sync primitive, not
+  a language feature.
+- **Indicators are NOT a language feature.** They are the *signal-block host's* vocabulary:
+  a host-registered type + a host-registered declaration keyword. Everything TA
+  (`indicator`/`series`/`step`/warmup/clocks) lives in ONE host, built later.
+- **All TA/talive code lives in `examples/` + tests ONLY.** Core packages (`registry`,
+  `resolver`, `evaluator`, `lexer`, `parser`, `ast`, `resolved`, `token`) must never
+  import talive or mention candles. (Add a CI import-guard later.)
+
+**Capability model (the mechanism everything rides on):** two orthogonal axes —
+*type capabilities* (per TYPE: comparable/ordered/arithmetic/historyable/snapshotable/
+replaceable/has-methods — a **closed** core vocabulary; types are open/host-registered)
+and *slot policy* (per BINDING: read-only/assignable/rebindable/fixed). Assignability =
+`slotWritable(kind) AND typeReplaceable(T)` — this is why "safety from type alone" was
+wrong; binding kinds survive as slot policy. `state` is not hardcoded — it is a **standard
+prelude** registration over the persistent-slot mechanism (included by every host).
+
+**New CORE work items (reusable by every block type), in order — do AFTER the in-flight
+frame (#7) and the P1 hole batch are stable:**
+
+- **A. Type capabilities** — add capability metadata fields to `registry.TypeDef`
+  (`storable`, `replaceable`, `snapshot`: value-copy|host|none, `historyable`); populate
+  the builtin scalars. Pure data, no behavior change; unblocks the gates.
+- **B. Slot-policy two-gate** — generalize `resolver.Binding.Assignable()` into
+  `canWrite = slotWritable(kind) && typeReplaceable(T)`; route `input`/host-object
+  assignment rejection through it. **Do NOT refactor `state` yet** — leave `resolved.State`
+  working; converge it onto the generic slot in item D, once indicators exist to validate
+  the shape.
+- **C. Persistent host-object slots + snapshot generalization** — generalize the
+  state-snapshot into a slot table that holds host `Value`s across ticks; add a
+  `Snapshotable` interface host types implement (or reject-at-load if a host object in a
+  persistent slot can't snapshot — see input-wiring residual note #3). **This is the real
+  enabler for indicators.**
+
+**Deferred to the signal-block host (build when you start it, NOT before):**
+
+- **D. Host-registerable declaration keywords** — contextual keyword + declaration-form
+  registry (parser refactor); this is when `state`/`input`/`output` fold into the generic
+  mechanism as prelude registrations. Overlaps tracker #13 (engine/host API rework).
+- **E. Effect metadata on `CallRule`** (pure/mutates-receiver/cardinality/phase/ownership)
+  — needed for safe stepping. Closes the "registry can't express 'this rule mutates'"
+  foot-gun already flagged under input-wiring residuals and State deferred extensions.
+- **F. `indicator`/`series`/`step`/`sparse`, `[n]` history windows, warmup (prefeed vs
+  replay), clocks** — all signal-host, on top of A–E.
+
+**How this reshapes existing tracker rows:**
+- #3 (`IndexExpr`/`[n]`) — the client is now explicit: the *historyable* capability (item
+  A) + named `series` slots. Still diag-always until item A/F land; `LookupIndex` arrives
+  with historyable.
+- #7 (frame) — the per-tick frame is the per-event activation; unchanged, just reframed.
+- #13 (engine/host API) — absorbs item D and the `examples/` signal-host packaging.
+- #15/coercion/subtyping sections — the `CandleSeries <: Series` and multi-way-projection
+  notes are all **host** concerns now; keep the mechanisms (Coerce/Implements) core, the
+  concrete types host.
+
 ## Resolver/evaluator gap tracker (actionable work queue)
 
 Unlike the rest of this doc, these are **not** deferred ideas — it's the prioritized
@@ -51,7 +122,7 @@ evaluator `evalLogical` skips the RHS when the LHS decides the result, asserts B
 | 2 | P1 | resolver | Bare `CallExpr` (`foo()`) → silent `BadExpr`, no diagnostic | Breaks "resolution gates evaluation" — verified: compiles clean, dies at eval with `not implemented expression *resolved.BadExpr` (internal type name leaks to the user). Two sub-cases: (a) callee ident is `emit` → precise diag "emit is a statement and cannot be used as a value" (statement-position emit is intercepted upstream in `resolveStmt`, so reaching `resolveExpr` with an emit call *is* expression position, e.g. `let x = emit(...)`); (b) any other bare call → "unknown function"-style diag (no `LookupFunc` table exists; don't build one until bare functions are a real feature). Related decision to record: `emit` is matched by callee name, so `let emit = 3` does not shadow it — keyword-by-convention |
 | 3 | P1 | resolver | `IndexExpr` (`a[i]`) — no case in `resolveExpr`, falls to silent-`BadExpr` default | Verified: same eval-time death as #2. **Nothing is indexable today**: registry has no index-rule table (`VectorShape` declared but unused), so the fix is diag-always, not a feature. Plan: resolve `Left` and `Index` first (their errors surface), then `NOT_INDEXABLE` diag (`Integer is not indexable`) with the infix-style dedup guard (only add if no new errs) + `BadExpr`. Note (2026-07-05): state is NOT the future index client anymore — the locked state design (#6) has no `[n]` access; series history (spec §4.3 item 1) is the client that will eventually justify `LookupIndex(receiverType, indexType)` (lookup success builds the already-existing `resolved.IndexExpr`, failure keeps the same diag). Until then this stays diag-always; do NOT add an empty registry table before then |
 | 5 | P1 | resolver | `resolveTypeDecl` silently swallows the `RegisterScriptType` error (resolver.go:319-323, comment now reads `// unreachable: duplicate decl names are caught by the env check first`) | Still open (2026-07-22). Reachable on registry reuse: a second `Compile()` against the same registry drops the input/output decl with **no diag**, then every use reports a misleading `UNDEFINED_IDENT` (verified: `emit(sig, …)` → "unknown identifier sig", zero hint at the cause). Even as a defensive branch it must append a diagnostic — silently dropping declarations violates the project's own "fail loudly" principle. Full fix (purge-on-reuse) stays in #13; the diag is a 3-liner now |
-| 7 | P2 | evaluator | Runtime input binding stopgap — scripts *declaring* inputs resolve but die at eval ("unknown identifier") because no values ever reach the env | Sketch agreed: `EvalRun(inputs map[string]registry.Value)` — for each `prog.Inputs`: missing → error, `value.TypeID() != decl.T` → error, else bind into the **per-run** env (not top-level; fresh values per bar). Same "temporary until host API" contract as `Emitted()`. Note: changes `EvalRun`'s signature → touches `evalSrc` test helper. These runtime checks are legitimately eval's job (host values arrive at run time; resolver can't vouch for them) |
+| 7 | P2 | evaluator | Runtime input binding stopgap — scripts *declaring* inputs resolve but die at eval ("unknown identifier") because no values ever reach the env | **Design settled 2026-07-23 (frame model) — see "Input wiring — design decision" below.** Minimal impl: `EvalRun(frame map[string]registry.Value)` — for each `prog.Inputs`: missing → error, `value.TypeID() != decl.T` → error (allow the int→float coerce edge, matching args/infix; #19), else bind into the **per-run** env (not top-level; fresh per bar). Extra/undeclared keys → error (fail loudly; a typo'd key otherwise masquerades as a *missing* declared input). Same "temporary until host API #13" contract as `Emitted()`; the map is throwaway — migrate to a slot `[]Value` frame later (slot-based rework). Changes `EvalRun`'s signature → touches `evalSrc`/`evalRunBody` test helpers (pass `nil` for input-less scripts). These checks are legitimately eval's job (host values arrive at run time; resolver can't vouch for them) |
 | 11 | P2 | resolver | No reserved-name / shadowing rules | All verified accepted-without-diag: `let math = 5` shadows the module inside a function (spec: RESERVED_REASSIGN); `let m = math` then `m.sqrt(9.0)` — modules are first-class, aliasable values (spec §5.4: passive syntactic prefixes, not values — a bare module ident in value position should diag); `const Init = 5` coexists with `function Init()` — function names never enter the top-level env (spec §3.3: one namespace). Decision needed alongside: same-scope `let x` redeclaration currently silently rebinds, even with a new type (JS errors on it; spec silent) |
 | 12 | P2 | resolver | `emit` semantic checks: placement, payload shape, reserved kwargs | Verified gaps: (a) emit inside `Init()` resolves + evals clean — spec §5.2 wants EMIT_OUTSIDE_RUN (`resolveFunc` is identical for both fns; needs a context flag); (b) positional args fill *structured* outputs — `emit(sig, "down", 0.5)` — spec says kwargs-only, and `TestResolver_ResolveEmit` blesses the behavior: decide, then fix test or spec; (c) `emit(logs, value="hi")` — the synthetic `value` param name from `Registry.EmitRule` leaks into the surface language (kwargs on value outputs should be rejected); (d) reserved kwargs `ts`/`output` (spec: EMIT_RESERVED_KWARG) unenforced — cheap to reject at output-decl resolution before host wiring lands |
 | 13 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the `EvalRun(inputs)` stopgap from #7 | Includes registry purge-on-reuse (see #5 for the immediate diag fix). Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" below — that section now also carries the resolver-contract and registry-encapsulation notes from the review |
@@ -78,6 +149,85 @@ informed by the `Emitted()` + `EvalRun(inputs)` stopgaps being used in anger. Be
 queue, the strategic next milestone is **talive integration** (real indicators): the failure
 protocol (#10) it was gated on is now shipped, so the remaining prerequisites are #7 (values
 reach the env) and the registry surface settling.
+
+## Input wiring — design decision (2026-07-23 session)
+
+How host data reaches a running strategy. Decided after weighing alternatives and a
+cross-check against how other embeddable languages solve it (Starlark, Lua/LuaJIT,
+Pine, CEL/Expr, wasm, NumPy/Arrow).
+
+**Decision: the frozen per-tick FRAME.** The host hands the evaluator a snapshot of all
+declared inputs, coherent as-of one timestamp, bound into the per-run env before each
+`Run()`. This is the CEL/Expr "compile-once, eval-many with a per-call activation" model
+and matches the spec's existing host-synchronizer framing (§4.1 "Run() cadence is a
+runtime concern").
+
+**Rejected alternatives:**
+- **Live refs/pointers the script reads directly** (host registers `*Value`, a goroutine
+  updates it). Fatally breaks *per-tick coherence*: a background write between two reads
+  inside one `Run()` lets the strategy see `price@T` and `volume@T+1` — a worldview no
+  market state ever produced, silently. Also needs atomics/locks and wrecks backtest
+  determinism. The moment you add snapshot/epoch semantics to fix coherence, it collapses
+  back into the frame. The *update-cadence-decoupling* this idea wanted is legitimate — but
+  it belongs on the **host side**: the host keeps a live store (goroutines welcome), and the
+  engine snapshots a frozen frame at the tick boundary. The script never reads a live pointer.
+- **Actor mailbox / data-source iterator** — good fits for the future streaming runtime, but
+  they *produce* a frame; they're #13 host-API shapes, adapters over the same frame contract,
+  not a different execution model.
+
+**The coherence boundary is the whole point:** who owns "a tick is one consistent snapshot."
+Answer: the engine evaluates against a frozen frame; the host guarantees the frame's backing
+data is immutable for the duration of a `Run`. Free in a synchronous backtest driver (update
+and eval on one goroutine); a generation-stamp / double-buffer for a live concurrent updater.
+**tascript promises nothing about host concurrency** — all sync primitives live host-side, and
+that's fine; the host handles it easily.
+
+**Memory — large inputs (e.g. "latest 5000 candles") are already cheap.** `registry.Value` is a
+Go *interface* (two-word header), so a `CandleSeries`/window input rides in the frame as a
+**handle**, not a copy — per-tick frame cost is O(#inputs), never O(window size). "Pass a ref"
+is literally what an interface value is. This is *better* than wasm for our case: wasm copies
+into linear memory across a heavy boundary; in-process Go shares the pointer directly. The only
+thing faster is LuaJIT-FFI raw-pointer access, which trades away all safety — not worth it.
+Optimization ladder (cheapest first): ring buffer (O(1) advance, no realloc) → reuse the handle
+across ticks → columnar struct-of-arrays (`[]float64` per field, cache-friendly, likely what
+talive wants) → opaque handle + column projections (`candles.close`; only touched columns
+materialize; matches spec §3.4 CandleSeries + the "explicit named projections" note) → slot-array
+frame (kills map hashing). The 5000-candle case ultimately wants to be an **engine-owned rolling
+series the script indexes backward** (Pine's model; spec §4.2 history buffers) rather than a
+per-tick input — the frame handle is the correct stopgap until then and costs nothing.
+
+**Safety is a language-surface property, NOT a Go-memory property** (verified 2026-07-23). The
+ring buffer is genuinely shared by reference, and it's safe anyway because *the script cannot
+phrase a write to it*. tascript has exactly three assignment forms — `let x =`, `x =` (rebind a
+`let`), and `state.field =` (state only). Verified rejections at resolve time: `price = 10` →
+NOT_ASSIGNABLE (`Binding.Assignable()` is `Kind == KindLet`; inputs/const/output/module all
+fail); `p.close = 10` → INVALID_ASSIGN_TARGET (member-assign requires the object be `state`).
+Scalars are Go value types anyway (no aliasing even in principle); only compound handles are
+shared, and they have no write syntax.
+
+**Invariant to hold (the shared ref stays safe only while this holds):** host-registered types
+expose **read-only methods only**, and the language never grows `obj.field =` / `arr[i] =` for
+host-owned values (state mutation is fine — state is engine-owned). Three ways to accidentally
+break it, guard against each: (1) general member assignment beyond `state.`; (2) index assignment
+when `[n]` lands (#3 — make it read-only); (3) a host method registered with side effects (a
+setter) writing through the shared pointer — the registry can't currently express "this rule
+mutates" (same class as the impure-fn foot-gun already noted under State deferred extensions).
+
+**Adversarial sweep (Codex, 2026-07-23) — no script-level mutation path today**, assuming
+registered `EvalFn`s are genuinely read-only. `let x = candles` aliases but only name-rebinding
+is available; `obj.field=`, `arr[i]=`, nested `state.a.b=` all fail to resolve to writes. Three
+residual **escape/coherence** notes (not holes — no write surface — but real for #13 + state):
+- **Handle escape via Run result** — `function Run() { candles }` returns the live input handle
+  (`EvalRun` returns the block result as-is; `result` is already flagged temp/debug). If the host
+  retains it past the tick it's no longer a snapshot.
+- **Handle escape via emit** — `emit(out, candles)` with `output out: CandleSeries` emits the live
+  handle; structured emits allocate a fresh outer `Record` but field values are still shared.
+- **State is NOT scalar-only** (corrects an earlier claim) — only *inline-record* state is
+  rejected; `state x: NamedType` accepts any registered type. Verified: `state m: math = math`
+  compiles clean and persists a module handle across ticks. Once a `CandleSeries` seed/constructor
+  exists, `state.saved = candles` would store a live host handle across ticks — breaking the
+  "state holds copied scalars" assumption and making shallow `maps.Clone` rollback insufficient if
+  such a handle's internals ever become mutable. Still no write primitive by itself.
 
 ## State — deferred extensions (from the 2026-07-05 design session)
 
