@@ -31,11 +31,6 @@ type Expression interface {
 	expressionNode()
 }
 
-type Declaration interface {
-	Node
-	declarationNode()
-}
-
 type TypeDecl interface {
 	Node
 	typeDeclNode()
@@ -69,8 +64,6 @@ func (id *InputDecl) String() string {
 	return out.String()
 }
 
-func (id *InputDecl) declarationNode() {}
-
 // OutputDecl
 // - output alert: String
 // - output alert: { field: Type }
@@ -99,8 +92,6 @@ func (od *OutputDecl) String() string {
 	return out.String()
 }
 
-func (od *OutputDecl) declarationNode() {}
-
 // ConstDecl - const FOO = "BAR" + "ZOO"
 type ConstDecl struct {
 	Token      token.Token
@@ -124,8 +115,6 @@ func (cd *ConstDecl) String() string {
 	}
 	return out.String()
 }
-
-func (cd *ConstDecl) declarationNode() {}
 
 type StateFieldDecl struct {
 	Token      token.Token
@@ -156,16 +145,12 @@ func (sfd *StateFieldDecl) String() string {
 	return out.String()
 }
 
-func (sfd *StateFieldDecl) declarationNode() {}
-
 // FunctionDecl
 // - function Init() {}
 type FunctionDecl struct {
 	Token      token.Token
 	Identifier *IdentExpr
-	// we don't have params for now
-	//Parameters []*Identifier
-	Body *BlockStmt
+	Body       *BlockStmt
 }
 
 func (fd *FunctionDecl) String() string {
@@ -177,20 +162,12 @@ func (fd *FunctionDecl) String() string {
 		out.WriteString(fd.Identifier.String())
 	}
 	out.WriteString("(")
-	//for i, param := range fd.Parameters {
-	//	out.WriteString(param.String())
-	//	if i < len(fd.Parameters)-1 {
-	//		out.WriteString(", ")
-	//	}
-	//}
 	out.WriteString(") ")
 	if fd.Body != nil {
 		out.WriteString(fd.Body.String())
 	}
 	return out.String()
 }
-
-func (fd *FunctionDecl) declarationNode() {}
 
 type BadExpr struct {
 	Token token.Token

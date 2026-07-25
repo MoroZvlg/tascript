@@ -144,10 +144,9 @@ shared-handle invariant, see the input-wiring section).
 
 | # | Prio | Area | Missing | Details |
 |---|------|------|---------|---------|
-| 5 | P1 | resolver | `resolveTypeDecl` silently swallows the `RegisterScriptType` error (resolver.go:319-323, comment now reads `// unreachable: duplicate decl names are caught by the env check first`) | Still open (2026-07-22). Reachable on registry reuse: a second `Compile()` against the same registry drops the input/output decl with **no diag**, then every use reports a misleading `UNDEFINED_IDENT` (verified: `emit(sig, …)` → "unknown identifier sig", zero hint at the cause). Even as a defensive branch it must append a diagnostic — silently dropping declarations violates the project's own "fail loudly" principle. Full fix (purge-on-reuse) stays in #13; the diag is a 3-liner now |
 | 11 | P2 | resolver | No reserved-name / shadowing rules | All verified accepted-without-diag: `let math = 5` shadows the module inside a function (spec: RESERVED_REASSIGN); `let m = math` then `m.sqrt(9.0)` — modules are first-class, aliasable values (spec §5.4: passive syntactic prefixes, not values — a bare module ident in value position should diag); `const Init = 5` coexists with `function Init()` — function names never enter the top-level env (spec §3.3: one namespace). Decision needed alongside: same-scope `let x` redeclaration currently silently rebinds, even with a new type (JS errors on it; spec silent) |
 | 12 | P2 | resolver | `emit` semantic checks: placement, payload shape, reserved kwargs | Verified gaps: (a) emit inside `Init()` resolves + evals clean — spec §5.2 wants EMIT_OUTSIDE_RUN (`resolveFunc` is identical for both fns; needs a context flag); (b) positional args fill *structured* outputs — `emit(sig, "down", 0.5)` — spec says kwargs-only, and `TestResolver_ResolveEmit` blesses the behavior: decide, then fix test or spec; (c) `emit(logs, value="hi")` — the synthetic `value` param name from `Registry.EmitRule` leaks into the surface language (kwargs on value outputs should be rejected); (d) reserved kwargs `ts`/`output` (spec: EMIT_RESERVED_KWARG) unenforced — cheap to reject at output-decl resolution before host wiring lands |
-| 13 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the shipped `EvalRun(frame map[string]Value)` map stopgap (#7 — migrate to a slot `[]Value` frame) | Includes registry purge-on-reuse (see #5 for the immediate diag fix). Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" below — that section now also carries the resolver-contract and registry-encapsulation notes from the review |
+| 13 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the shipped `EvalRun(frame map[string]Value)` map stopgap (#7 — migrate to a slot `[]Value` frame) | Includes registry purge-on-reuse: `resolveTypeDecl` writes synthesized inline port types (`input.x`/`output.sig`) into the host-owned registry, but the duplicate guard reads the per-pass env — so a second `Compile()` on one Engine, or two scripts sharing one registry, collides. Scope the synthesized types per compile (or purge on reuse) rather than papering over the collision with a diagnostic. Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" below — that section now also carries the resolver-contract and registry-encapsulation notes from the review |
 | 14 | P2 | diag | Diagnostics quality pass: machine-readable interface, code reconciliation, message hygiene | `diag.Diagnostic` is just `Error() string` — spec §6.2/§6.4 promises tooling phase/code/pos without parsing messages; add `Phase()`/`Code()`/`Pos()` accessors while the type count is small. Fix misspelled external-contract codes **before** tooling matches on them: `TYPE_MISSMATCH`/`ARGS_NUMBER_MISSMATCH` (spec: `TYPE_MISMATCH`), `UNDEFINED_MEETHOD`. Stop leaking `Token.String()` debug format into messages ("unknown identifier [IDENTIFIER] -> sig") — use `.Literal`; affects ~9 diag types. Reconcile the code set with spec §6.4: UNEXPECTED_TOP_DECL vs TOP_LEVEL_FORM, DUPLICATE_DECLARATION vs PORT_DUPLICATE, INVALID_OPERATION shared by two diag types, EMPTY_FUNCTION absent from spec (also decide whether an empty `Run` is even illegal — spec never says so). Phases: spec defines two, impl has three (`PhaseCheck`), and `DuplicateDeclaration` ships with PhaseParse from the parser but PhaseCheck from the resolver (the NOTE at parser.go:100 already doubts it) |
 | 15 | P3 | spec/both | Type-system divergence: the Int/Float split already shipped; spec §3.4's table still headlines a single `Number` (float64) | **Downgraded to P3 (2026-07-22): the split is now the accepted truth** — spec §3.5 explicitly names "the current `Integer`/`Float` runtime split" (line ~443) and time-operator registration is written around it, and §3.4 already documents Int/Float as a permitted future split. Remaining work is doc-consistency, not a fork: reword the §3.4 `Number` table row to acknowledge the shipped split up front (today only §3.5 does), keep user-facing names (`Float`/`Integer`) consistent, and note the residual sharp edges — `/` always float-returning (shipped), int arithmetic wraps silently (verified `9223372036854775807 + 1`), `-9223372036854775808` fails to parse (minus is an operator, bare literal overflows Atoi). No behavior change needed |
 | 16 | P2 | parser | Forbidden function name → error cascade (parser.go:238-241) | `function Foo() {…}` returns without consuming the body; top-level recovery (`syncToNewLine`) lands inside it → verified: FORBIDDEN_FUNCTION + one UNEXPECTED_TOP_DECL per body line + one for the closing `}` (4 errors for a 2-line body). Parse the body normally (or skip balanced braces) and report once |
@@ -162,8 +161,7 @@ shared-handle invariant, see the input-wiring section).
 | 25 | P3 | parser | Spec §7 resource limits: only nesting depth (64) exists | The parse-error cap (spec: 100) is a few lines and bounds worst-case memory — the parser currently collects unbounded diagnostics. String-length, identifier-length, source-size, kwarg-count caps can wait |
 
 Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
-**P1 hole-plugging batch: #5 remains** (same disease as #2/#3: silent holes reachable from valid
-parses, failing without diagnostics). Then #14 before any external tooling consumes
+**No P1 rows remain.** Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
 stable. #13 (Engine/host API rework, absorbing item D) last, informed by the `Emitted()` +
 `EvalRun(frame)` stopgaps being used in anger. The strategic milestone beyond the core is the
@@ -303,8 +301,7 @@ From the 2026-07-05 review; each is a mechanical fix.
 - `/` and `%` by zero now trap uniformly (DIVISION_BY_ZERO) across Integer/Float/Duration
   since #10 landed — pin with tests if not already covered. `math.sqrt(-1)` → NaN is still
   a silent-`NaN` gap; decide whether it should trap (INVALID_ARGUMENT) or stay NaN.
-- emit-inside-Init (#12), shadowing cases (#11), Allman-else (#17),
-  compile-twice-against-one-registry (#5).
+- emit-inside-Init (#12), shadowing cases (#11), Allman-else (#17).
 - `Init` coverage exists now that state seeding runs there; a test pinning "Init writes
   persist into Run" is still the executable spec for the load-phase contract.
 - No fuzz target on lexer/parser; the `^`-marker corpus makes seeds cheap.
@@ -366,16 +363,14 @@ hidden price selection in a strategy.
 
 ## Expression-form defaults
 
-**Status:** deferred. `ParamRule.Default` is an evaluated `Value` (constants only).
+**Status:** deferred, and the `ParamRule.Default` field was deleted 2026-07-25 — it was
+declared, never set, never read, and `resolveArgs` enforces an exact arg count, so the first
+rule that set a default would have hard-failed anyway. Re-add it together with the
+default-folding in `resolveArgs`, not before.
 
-Fine for `period: 14`. To allow `offset: length/2` later, `Default` must become an `Expr`
-(or a `resolved` node) evaluated at the call site. Crossing that line is the trigger.
-
-Review addition — **the field is currently dead code and a trap**: declared, set `nil`
-everywhere, never read, and `resolveArgs` enforces exact arg count, so the first registry
-entry that actually sets a Default still hard-fails. Either wire default-folding into
-`resolveArgs` or delete the field until this section triggers; at minimum comment it
-"not folded yet".
+When it comes back: a `Value` (evaluated constant) is enough for `period: 14`. To allow
+`offset: length/2`, `Default` must be an `Expr` (or a `resolved` node) evaluated at the call
+site. Crossing that line is the trigger.
 
 ## Lighter position info on resolved nodes (`Span`/`Pos` instead of full `token.Token`)
 
@@ -430,12 +425,11 @@ The two packages mirror each other node-for-node, but small inconsistencies have
 during the migration. Do a pass to align them (or deliberately document each intentional
 divergence). Known so far:
 
-- `MemberAccessExpr.Method` / `KwargsExpr.Key`: `*ast.IdentExpr` in `ast`, bare `token.Token`
-  in `resolved`. (The `resolved` choice is cleaner — a method/kwarg name isn't a variable — so
-  consider fixing the AST side instead.)
-- `ast.KwargsExpr` implements `Expression`; `resolved.KwargsExpr` is a plain helper. Review
-  data point: `resolved.KwargsExpr` is **never constructed** (the resolver lowers kwargs to
-  `CallArgExpr`) — deleting it resolves this bullet for free.
+- `MemberAccessExpr.Method`: `*ast.IdentExpr` in `ast`, bare `token.Token` in `resolved`.
+  (The `resolved` choice is cleaner — a method name isn't a variable — so consider fixing the
+  AST side instead.) The `KwargsExpr.Key` half of this bullet is gone: `resolved.KwargsExpr`
+  was deleted 2026-07-25 (the resolver lowers kwargs straight to `CallArgExpr`), so kwargs now
+  exist only in `ast`.
 - Node-name suffix conventions (`*Expr` / `*Stmt` / `*Decl`) — verify they match 1:1 and that
   wrappers line up (`ast.Program.InitFn/RunFn` ↔ `resolved.Program.InitFn/RunFn`, etc.).
 - Field name `Name` type differs across nodes (`token.Token` vs `string`) — audit for
@@ -443,13 +437,11 @@ divergence). Known so far:
 
 ## Dead code to remove
 
-- `ast.Declaration` (and the four `declarationNode()` markers on `InputDecl`/`OutputDecl`/
-  `ConstDecl`/`FunctionDecl`) — defined and satisfied but **never used as a type**; `Program`
-  holds concrete slices. Drop the interface and markers. (Not mirrored in `resolved` for the
-  same reason.)
-- `resolved.KwargsExpr` — never constructed (see naming section above).
-- `ast.FunctionDecl` commented-out `Parameters` block — delete; git remembers.
-- `registry.ParamRule.Default` — see "Expression-form defaults" above.
+Cleared 2026-07-25: `ast.Declaration` + its five `declarationNode()` markers (the doc said
+four — `StateFieldDecl` implemented it too), `resolved.KwargsExpr`, the `ast.FunctionDecl`
+commented-out `Parameters` block, and `registry.ParamRule.Default`. All were unreferenced
+outside their own definitions.
+
 - Deliberately kept, still unconstructed after #3 shipped diag-always (do not delete): both
   `registry.VectorShape` and `resolved.IndexExpr` wait for the *historyable* capability
   (rework item A) — that's when `LookupIndex` starts building the node. (`diag.PhaseRuntime`

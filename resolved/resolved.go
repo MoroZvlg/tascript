@@ -291,26 +291,6 @@ func (ce *MethodCallExpr) Type() registry.TypeID {
 	return ce.T
 }
 
-// KwargsExpr is a call-argument helper, not a standalone expression: it only
-// ever appears inside CallExpr.Kwargs, so it does not implement Expression.
-type KwargsExpr struct {
-	Token token.Token
-	Key   token.Token
-	Value Expression
-}
-
-func (ke *KwargsExpr) String() string {
-	var out bytes.Buffer
-	out.WriteString(ke.Key.Literal)
-	out.WriteString(" = ")
-	if ke.Value == nil {
-		out.WriteString("<missing expression>")
-	} else {
-		out.WriteString(ke.Value.String())
-	}
-	return out.String()
-}
-
 // CoerceExpr is synthesized by the resolver (it has no source token of its own)
 // to mark an implicit conversion of Inner to type T, e.g. Integer -> Float. The
 // evaluator applies the registered coercion when it reaches this node.

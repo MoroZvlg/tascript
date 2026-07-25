@@ -28,10 +28,9 @@ type CallRule struct {
 }
 
 type ParamRule struct {
-	Type    TypeID
-	Name    string
-	Exact   bool
-	Default Value
+	Type  TypeID
+	Name  string
+	Exact bool
 }
 
 type BinaryKey struct {
