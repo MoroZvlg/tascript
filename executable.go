@@ -19,7 +19,7 @@ func (e *Executable) Init() error {
 // Run executes one tick.
 // Error stops execution but do not prevent calling Run once again. State will be rollback
 // TODO: result is temp for debug/tests
-func (e *Executable) Run() (registry.Value, error) {
-	result, err := e.eval.EvalRun()
+func (e *Executable) Run(inputs map[string]registry.Value) (registry.Value, error) {
+	result, err := e.eval.EvalRun(inputs)
 	return result, err
 }

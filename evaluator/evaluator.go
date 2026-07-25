@@ -73,8 +73,9 @@ func (e *Evaluator) EvalInit() (result registry.Value, err error) {
 
 // EvalRun executes one tick.
 // On error the tick is rolled back (state + emits); a later Run may still be called.
+// frame values must stay immutable for the call's duration (host-owned coherence).
 // TODO: result is temp for debug/tests.
-func (e *Evaluator) EvalRun() (result registry.Value, err error) {
+func (e *Evaluator) EvalRun(frame map[string]registry.Value) (result registry.Value, err error) {
 	e.currFn = "Run"
 	snapshot := maps.Clone(e.states)
 	defer func() {
@@ -89,7 +90,43 @@ func (e *Evaluator) EvalRun() (result registry.Value, err error) {
 
 	e.emitted = nil
 
-	return e.evalBlock(e.prog.RunFn.Body, NewEnclosedEnv(e.env))
+	runEnv := NewEnclosedEnv(e.env)
+	if err := e.bindInputs(runEnv, frame); err != nil {
+		return nil, err
+	}
+
+	return e.evalBlock(e.prog.RunFn.Body, runEnv)
+}
+
+func (e *Evaluator) bindInputs(env *Env, frame map[string]registry.Value) error {
+	if len(frame) > len(e.prog.Inputs) {
+		declared := make(map[string]struct{}, len(e.prog.Inputs))
+		for _, decl := range e.prog.Inputs {
+			declared[decl.Name] = struct{}{}
+		}
+		for name := range frame {
+			if _, ok := declared[name]; !ok {
+				return fmt.Errorf("unknown input %q: not declared", name)
+			}
+		}
+	}
+
+	for _, decl := range e.prog.Inputs {
+		value, ok := frame[decl.Name]
+		if !ok {
+			return fmt.Errorf("missing input %q", decl.Name)
+		}
+		if value.TypeID() != decl.T {
+			rule, canCoerce := e.registry.LookupCoerce(value.TypeID(), decl.T)
+			if !canCoerce {
+				return fmt.Errorf("input %q: expected %s, got %s", decl.Name, decl.T, value.TypeID())
+			}
+			value = rule.EvalFn(value)
+		}
+		env.Set(decl.Name, value)
+	}
+
+	return nil
 }
 
 func (e *Evaluator) internalFailure(panicValue any) error {

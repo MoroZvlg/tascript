@@ -32,7 +32,7 @@ func runExpr(t *testing.T, expr string) (registry.Value, error) {
 	if _, err := ev.EvalInit(); err != nil {
 		t.Fatalf("init error: %v", err)
 	}
-	return ev.EvalRun()
+	return ev.EvalRun(nil)
 }
 
 func TestTime_Pipeline(t *testing.T) {

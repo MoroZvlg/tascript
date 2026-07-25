@@ -81,7 +81,7 @@ function Run() { foo }
 		return
 	}
 
-	result, err := program.Run()
+	result, err := program.Run(nil)
 	if err != nil {
 		panic(err)
 	}
