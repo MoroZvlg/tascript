@@ -755,6 +755,8 @@ their specs):
 | `UNDEFINED_FUNC` | parse | A bare call `foo(...)`; only module methods are callable. |
 | `NOT_CALLABLE` | parse | Call on an expression that is not a callable form. |
 | `NOT_INDEXABLE` | parse | `a[i]` on a type with no index rule (today: every type). |
+| `ARG_DUPLICATE` | parse | One parameter filled twice — positionally and by keyword, or by two keywords. |
+| `ARG_UNKNOWN_KEYWORD` | parse | Keyword argument that names no parameter of the callee. |
 | `TOP_LEVEL_FORM` | parse | A construct not permitted at the top level (e.g. a `state.*` assignment, `if`). |
 | `TOP_DECL_IN_BODY` | parse | A top-level declaration used inside a function body. |
 | `MISSING_REQUIRED_FN` | parse | Program does not declare `function Run()`. |

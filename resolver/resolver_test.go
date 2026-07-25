@@ -1,6 +1,7 @@
 package resolver_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/MoroZvlg/tascript/diag"
@@ -374,9 +375,20 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 		},
 		{
 			"arg missing",
-			`const FOO = test.fn^(1, foo=2)`,
+			`const FOO = test.fn^(1, ^foo=2)`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
+					addUnknownKwarg(token.Token{Type: token.IDENT, Pos: ps[1], Literal: "foo"}, "foo"),
+					addMissingArg(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, "right"),
+				}
+			},
+		},
+		{
+			"positional and kwarg fill the same param",
+			`const FOO = test.fn^(1, ^left=2)`,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateArg(token.Token{Type: token.IDENT, Pos: ps[1], Literal: "left"}, "left"),
 					addMissingArg(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, "right"),
 				}
 			},
@@ -386,7 +398,7 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var setupRegistry func(*registry.Registry)
-			if tt.name == "arg missing" {
+			if strings.Contains(tt.input, "test.fn") {
 				setupRegistry = registerResolverTestModule
 			}
 			runDiagCasesWithRegistry(t, tt.input+runSuffix, tt.buildDiags, setupRegistry)
@@ -1139,6 +1151,14 @@ func addArgsNumberMismatch(tok token.Token, expected, got int) *diag.ArgsNumberM
 
 func addMissingArg(tok token.Token, expected string) *diag.MissingArg {
 	return &diag.MissingArg{Phase: diag.PhaseCheck, Token: tok, Expected: expected}
+}
+
+func addDuplicateArg(tok token.Token, name string) *diag.DuplicateArg {
+	return &diag.DuplicateArg{Phase: diag.PhaseCheck, Token: tok, Name: name}
+}
+
+func addUnknownKwarg(tok token.Token, name string) *diag.UnknownKwarg {
+	return &diag.UnknownKwarg{Phase: diag.PhaseCheck, Token: tok, Name: name}
 }
 
 func addTypeMissmatch(tok token.Token, expected, got registry.TypeID) *diag.TypeMissmatch {

@@ -321,6 +321,26 @@ func (am MissingArg) Error() string {
 	return fmt.Sprintf("%s [ARG_MISSING] %s: missing %s arg", am.Phase, am.Token.Pos.String(), am.Expected)
 }
 
+type DuplicateArg struct {
+	Phase Phase
+	Token token.Token
+	Name  string
+}
+
+func (da DuplicateArg) Error() string {
+	return fmt.Sprintf("%s [ARG_DUPLICATE] %s: %s arg passed more than once", da.Phase, da.Token.Pos.String(), da.Name)
+}
+
+type UnknownKwarg struct {
+	Phase Phase
+	Token token.Token
+	Name  string
+}
+
+func (uk UnknownKwarg) Error() string {
+	return fmt.Sprintf("%s [ARG_UNKNOWN_KEYWORD] %s: unknown keyword argument %s", uk.Phase, uk.Token.Pos.String(), uk.Name)
+}
+
 type TypeMissmatch struct {
 	Phase    Phase
 	Token    token.Token

@@ -636,7 +636,15 @@ func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwar
 		}
 
 		if argRule == nil {
-			continue // NOTE: allows to pass extra KWargs. simply skips it
+			r.addUnknownKwarg(kwArg.Token, kwArg.Key.String())
+			hasErrs = true
+			continue
+		}
+
+		if resolvedIdx[argRuleIdx] {
+			r.addDuplicateArg(kwArg.Token, argRule.Name)
+			hasErrs = true
+			continue
 		}
 
 		resolvedIdx[argRuleIdx] = true
@@ -805,6 +813,22 @@ func (r *Resolver) addArgsMissing(opToken token.Token, expected string) {
 		Phase:    diag.PhaseCheck,
 		Token:    opToken,
 		Expected: expected,
+	})
+}
+
+func (r *Resolver) addDuplicateArg(kwToken token.Token, name string) {
+	r.errs = append(r.errs, &diag.DuplicateArg{
+		Phase: diag.PhaseCheck,
+		Token: kwToken,
+		Name:  name,
+	})
+}
+
+func (r *Resolver) addUnknownKwarg(kwToken token.Token, name string) {
+	r.errs = append(r.errs, &diag.UnknownKwarg{
+		Phase: diag.PhaseCheck,
+		Token: kwToken,
+		Name:  name,
 	})
 }
 

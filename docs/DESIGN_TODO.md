@@ -148,10 +148,14 @@ shared-handle invariant, see the input-wiring section).
 | 12 | P2 | resolver | `emit` semantic checks: placement, payload shape, reserved kwargs | Verified gaps: (a) emit inside `Init()` resolves + evals clean — spec §5.2 wants EMIT_OUTSIDE_RUN (`resolveFunc` is identical for both fns; needs a context flag); (b) positional args fill *structured* outputs — `emit(sig, "down", 0.5)` — spec says kwargs-only, and `TestResolver_ResolveEmit` blesses the behavior: decide, then fix test or spec; (c) `emit(logs, value="hi")` — the synthetic `value` param name from `Registry.EmitRule` leaks into the surface language (kwargs on value outputs should be rejected); (d) reserved kwargs `ts`/`output` (spec: EMIT_RESERVED_KWARG) unenforced — cheap to reject at output-decl resolution before host wiring lands |
 | 13 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the shipped `EvalRun(frame map[string]Value)` map stopgap (#7 — migrate to a slot `[]Value` frame) | Includes registry purge-on-reuse: `resolveTypeDecl` writes synthesized inline port types (`input.x`/`output.sig`) into the host-owned registry, but the duplicate guard reads the per-pass env — so a second `Compile()` on one Engine, or two scripts sharing one registry, collides. Scope the synthesized types per compile (or purge on reuse) rather than papering over the collision with a diagnostic. Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" below — that section now also carries the resolver-contract and registry-encapsulation notes from the review |
 | 14 | P2 | diag | Diagnostics quality pass: machine-readable interface, code reconciliation, message hygiene | `diag.Diagnostic` is just `Error() string` — spec §6.2/§6.4 promises tooling phase/code/pos without parsing messages; add `Phase()`/`Code()`/`Pos()` accessors while the type count is small. Fix misspelled external-contract codes **before** tooling matches on them: `TYPE_MISSMATCH`/`ARGS_NUMBER_MISSMATCH` (spec: `TYPE_MISMATCH`), `UNDEFINED_MEETHOD`. Stop leaking `Token.String()` debug format into messages ("unknown identifier [IDENTIFIER] -> sig") — use `.Literal`; affects ~9 diag types. Reconcile the code set with spec §6.4: UNEXPECTED_TOP_DECL vs TOP_LEVEL_FORM, DUPLICATE_DECLARATION vs PORT_DUPLICATE, INVALID_OPERATION shared by two diag types, EMPTY_FUNCTION absent from spec (also decide whether an empty `Run` is even illegal — spec never says so). Phases: spec defines two, impl has three (`PhaseCheck`), and `DuplicateDeclaration` ships with PhaseParse from the parser but PhaseCheck from the resolver (the NOTE at parser.go:100 already doubts it) |
-| 20 | P3 | resolver | `resolveArgs` kwarg diagnostics: unknown kwarg silently skipped; positional+kwarg duplicate → actively wrong message | Verified: `math.pow(2.0, base=3.0)` reports "missing exponent arg" — the user passed `base` twice; the count check + silent kwarg-over-positional overwrite convert "duplicate arg" into "missing other arg". Fix: `resolvedIdx[i]` already true → "duplicate argument"; no rule match → "unknown keyword argument". Also: for emit, the count diag says "expected 2 args but got 1" counting only value args, though the user typed the target too — fix wording together with #21 |
 | 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
 | 22 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #2–#3 mechanically |
 | 23 | P3 | resolver | No Unknown-type poisoning — one error cascades | `let x = <bad expr>` binds `x` as `UnknownTypeID`; every later use emits a fresh INVALID_OPERATION/TYPE_MISSMATCH (the `errsBefore` guard only dedups within one expression tree). Standard fix: lookups where an operand is Unknown succeed silently as Unknown |
+| 26 | P2 | stdlib | `math.sqrt(-1)` returns NaN silently | Decision, then a one-line rule change: trap with `INVALID_ARGUMENT` (the kind already exists, spec §6.4) or keep NaN and say so in the spec. A NaN then flows through comparisons as `false` everywhere, which is exactly the silent-wrong-answer shape #15 was fixed to avoid |
+| 27 | P3 | parser | Trailing comma allowed in call args, rejected in inline type schemas | Shipped 2026-07-25 for calls; `input x: {a: Integer,}` still errors, and `TestParser_Input`/`TestParser_Output` bless that. Fix mirrors the call-arg one in `parseInlineTypeExpr` (3 lines + 2 test expectations) — it was reverted only because those tests pin the current rule. Details in "Parser: trailing comma" below |
+| 28 | P3 | resolved | Node metadata that is unused or always derivable | `LetStmt`/`AssignNameStmt` expose `Type()` though no interface requires it; `CallArgExpr.T` always equals `Value.Type()` after coercion wrapping. Promote deliberately (state the interface) or trim |
+| 29 | P3 | both | `ast` ↔ `resolved` naming divergence | `MemberAccessExpr.Method` is `*ast.IdentExpr` in `ast` but a bare `token.Token` in `resolved` (the `resolved` shape is the better one); `Name` field types differ across nodes (`token.Token` vs `string`); `*Expr`/`*Stmt`/`*Decl` suffix conventions and wrapper pairs unverified. Full list in "Reconcile naming between `ast` and `resolved`" below |
+| 30 | P3 | tests | Test debt with no design attached | Pin `/` and `%` by zero across Integer/Float/Duration (may already be covered — check, don't assume); pin "Init writes persist into Run", the executable spec for the load-phase contract; add a fuzz target for lexer/parser, seeded from the `^`-marker corpus. Full list in "Test-coverage gaps worth closing" below |
 
 Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
 **No P1 rows remain**, and the D-batch smalls (#15/#18/#19/#24/#25) shipped 2026-07-25:
@@ -166,8 +170,18 @@ name no longer skips the body (recovery used to land inside it — 4 errors for 
 now 1); `else` may start its own line — the lexer suppresses the NEWLINE run before an `else`
 (`atElse`), the same way it already suppresses newlines inside `(`/`[`, so the parser keeps its
 single token source and never has to look past a separator it may still need; a trailing comma
-before `)` in a call closes the arg list instead of reporting 2 errors. Next: #14
-before any external tooling consumes
+before `)` in a call closes the arg list instead of reporting 2 errors. #20 followed: an unknown
+kwarg is now `ARG_UNKNOWN_KEYWORD` instead of being silently dropped, and a parameter filled
+twice is `ARG_DUPLICATE` instead of surfacing as "missing <the other> arg"; both point at the
+kwarg's own token, unlike the positional diagnostics still blocked on #21. Still open from that
+row: the emit count diag says "expected 2 args but got 1" without counting the target — wording
+belongs with #21.
+
+**Rows #26–#30 (added 2026-07-25) are the smalls that were only ever prose bullets** in the
+sections below — promoted so the table is the single work queue. Each is mechanical or one
+decision wide; none blocks anything else, so they are fill-in work between the design items.
+
+Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
 stable. #13 (Engine/host API rework, absorbing item D) last, informed by the `Emitted()` +
 `EvalRun(frame)` stopgaps being used in anger. The strategic milestone beyond the core is the
@@ -293,15 +307,15 @@ public `diag/diagtest` (the `httptest` pattern), not an internal one.
   `string`; resolver's `Get` special-cases `isTopLevel()` while the evaluator walks
   the parent chain plainly; `Symbol` is declared in resolver.go, not env.go. Align
   during the slot-based rework at the latest.
-- `resolved.LetStmt`/`AssignNameStmt` expose `Type()` though no interface requires it;
-  `CallArgExpr.T` always equals `Value.Type()` after coercion wrapping. Promote
-  deliberately or trim.
+- The unused-node-metadata bullet is now tracker row **#28**.
 
 ## Test-coverage gaps worth closing
 
+Tracked as row **#30** (except the ones that belong to a feature row).
+
 - `/` and `%` by zero now trap uniformly (DIVISION_BY_ZERO) across Integer/Float/Duration
-  since #10 landed — pin with tests if not already covered. `math.sqrt(-1)` → NaN is still
-  a silent-`NaN` gap; decide whether it should trap (INVALID_ARGUMENT) or stay NaN.
+  since #10 landed — pin with tests if not already covered. (`math.sqrt(-1)` → NaN is a
+  language decision, not test debt: row **#26**.)
 - emit-inside-Init (#12), shadowing cases (#11).
 - `Init` coverage exists now that state seeding runs there; a test pinning "Init writes
   persist into Run" is still the executable spec for the load-phase contract.
@@ -422,6 +436,8 @@ Review additions:
 
 ## Reconcile naming between `ast` and `resolved`
 
+Tracked as row **#29**.
+
 The two packages mirror each other node-for-node, but small inconsistencies have crept in
 during the migration. Do a pass to align them (or deliberately document each intentional
 divergence). Known so far:
@@ -449,6 +465,8 @@ outside their own definitions.
   is no longer dead — #10 shipped and both `RuntimeFailure`/`InternalFailure` now carry it.)
 
 ## Parser: trailing comma — call args allow it, inline type schemas don't
+
+Tracked as row **#27**.
 
 Fixed 2026-07-25 for call args: `math.sqrt(number=9.0, )` parsed as a positional arg after
 kwargs and then tripped again on `)` (2 errors); a `,` directly before `)` now closes the
