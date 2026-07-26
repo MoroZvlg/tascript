@@ -188,18 +188,18 @@ func (pe *PrefixExpr) Type() registry.TypeID {
 }
 
 type MemberAccessExpr struct {
-	Token  token.Token
-	Object Expression
-	Method string
-	T      registry.TypeID
-	EvalFn func(registry.Value) (registry.Value, error)
+	Token     token.Token
+	Object    Expression
+	Attribute string
+	T         registry.TypeID
+	EvalFn    func(registry.Value) (registry.Value, error)
 }
 
 func (ma *MemberAccessExpr) String() string {
 	var out bytes.Buffer
 	out.WriteString(ma.Object.String())
 	out.WriteString(ma.Token.Literal)
-	out.WriteString(ma.Method)
+	out.WriteString(ma.Attribute)
 	return out.String()
 }
 
@@ -210,16 +210,16 @@ func (ma *MemberAccessExpr) Type() registry.TypeID {
 }
 
 type StateAccessExpr struct {
-	Token  token.Token
-	Method string
-	T      registry.TypeID
+	Token token.Token
+	Field string
+	T     registry.TypeID
 }
 
 func (sa *StateAccessExpr) String() string {
 	var out bytes.Buffer
 	out.WriteString("state")
 	out.WriteString(sa.Token.Literal)
-	out.WriteString(sa.Method)
+	out.WriteString(sa.Field)
 	return out.String()
 }
 
@@ -481,8 +481,8 @@ type Program struct {
 	Inputs  []*InputDecl
 	Outputs []*OutputDecl
 	State   *State
-	InitFn  *Function
-	RunFn   *Function
+	InitFn  *FunctionDecl
+	RunFn   *FunctionDecl
 }
 
 type State struct {
@@ -541,14 +541,14 @@ func (od *OutputDecl) String() string {
 	return "output " + od.Name + ":" + od.T.String()
 }
 
-type Function struct {
+type FunctionDecl struct {
 	Token token.Token
 	Body  *BlockStmt
 }
 
 type ConstDecl struct {
 	Token token.Token
-	Name  *IdentExpr
+	Name  string
 	Value Expression
 	T     registry.TypeID
 }
@@ -556,11 +556,7 @@ type ConstDecl struct {
 func (cd *ConstDecl) String() string {
 	var out bytes.Buffer
 	out.WriteString("const ")
-	if cd.Name == nil {
-		out.WriteString("<unknown>")
-	} else {
-		out.WriteString(cd.Name.String())
-	}
+	out.WriteString(cd.Name)
 	out.WriteString(" = ")
 	if cd.Value == nil {
 		out.WriteString("<missing expression>")

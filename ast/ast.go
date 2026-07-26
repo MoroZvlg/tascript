@@ -273,14 +273,14 @@ func (pe *PrefixExpr) expressionNode() {}
 type MemberAccessExpr struct {
 	Token  token.Token
 	Object Expression
-	Method *IdentExpr
+	Member *IdentExpr
 }
 
 func (ma *MemberAccessExpr) String() string {
 	var out bytes.Buffer
 	out.WriteString(ma.Object.String())
 	out.WriteString(ma.Token.Literal)
-	out.WriteString(ma.Method.String())
+	out.WriteString(ma.Member.String())
 	return out.String()
 }
 

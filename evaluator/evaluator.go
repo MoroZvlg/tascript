@@ -158,7 +158,7 @@ func (e *Evaluator) evalConst(decl *resolved.ConstDecl, env *Env) error {
 	if err != nil {
 		return err
 	}
-	env.Set(decl.Name.String(), value)
+	env.Set(decl.Name, value)
 	return nil
 }
 
@@ -306,10 +306,10 @@ func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value
 }
 
 func (e *Evaluator) evalStateAccess(expr *resolved.StateAccessExpr) (registry.Value, error) {
-	value, ok := e.states[expr.Method]
+	value, ok := e.states[expr.Field]
 	if !ok {
 		// unreachable: definite-assignment analysis rejects unseeded reads
-		panic(fmt.Sprintf("state field %s read before initialization", expr.Method))
+		panic(fmt.Sprintf("state field %s read before initialization", expr.Field))
 	}
 	return value, nil
 }

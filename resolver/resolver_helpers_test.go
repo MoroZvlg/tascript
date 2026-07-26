@@ -41,7 +41,7 @@ func dump(t *testing.T, resolvedExpr resolved.Expression) string {
 	case *resolved.CoerceExpr:
 		return fmt.Sprintf("(coerce:%s, %s)", expr.Type(), dump(t, expr.Inner))
 	case *resolved.MemberAccessExpr:
-		return fmt.Sprintf("(member_access:%s, %s, %s)", expr.Type(), dump(t, expr.Object), expr.Method)
+		return fmt.Sprintf("(member_access:%s, %s, %s)", expr.Type(), dump(t, expr.Object), expr.Attribute)
 	case *resolved.MethodCallExpr:
 		return fmt.Sprintf("(method_call:%s, %s, %s, %s)", expr.Type(), dump(t, expr.Receiver), expr.Method, dumpArgs(t, expr.Args))
 	case *resolved.IndexExpr:

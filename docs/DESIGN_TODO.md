@@ -151,7 +151,6 @@ shared-handle invariant, see the input-wiring section).
 | 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
 | 22 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #2–#3 mechanically |
 | 23 | P3 | resolver | No Unknown-type poisoning — one error cascades | `let x = <bad expr>` binds `x` as `UnknownTypeID`; every later use emits a fresh INVALID_OPERATION/TYPE_MISSMATCH (the `errsBefore` guard only dedups within one expression tree). Standard fix: lookups where an operand is Unknown succeed silently as Unknown |
-| 29 | P3 | both | `ast` ↔ `resolved` naming divergence | `MemberAccessExpr.Method` is `*ast.IdentExpr` in `ast` but a bare `token.Token` in `resolved` (the `resolved` shape is the better one); `Name` field types differ across nodes (`token.Token` vs `string`); `*Expr`/`*Stmt`/`*Decl` suffix conventions and wrapper pairs unverified. Full list in "Reconcile naming between `ast` and `resolved`" below |
 
 Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
 **No P1 rows remain**, and the D-batch smalls (#15/#18/#19/#24/#25) shipped 2026-07-25:
@@ -183,7 +182,10 @@ a NaN that every later comparison reads as `false`. `math.pow` can still produce
 #30 followed on 2026-07-26 (Duration div-by-zero rows, `TestEvaluator_LoadPhase`, and the
 lexer/parser fuzz targets — details in "Test-coverage gaps worth closing" below), and #28
 followed the same day (six unused `Type()` methods + `CallArgExpr.T` deleted; the "a Statement
-has no type" decision is recorded under "Style & cleanup backlog"). **#29 is the last small.**
+has no type" decision is recorded under "Style & cleanup backlog"), and #29 closed with it
+(see "Reconcile naming between `ast` and `resolved`" — the `ast`/`resolved` type difference
+turned out to be the layer boundary and was deliberately kept). **No smalls remain: the table
+is now #11, #12, #13, #14, #21, #22, #23 — all design work.**
 
 Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
@@ -463,21 +465,48 @@ Review additions:
 
 ## Reconcile naming between `ast` and `resolved`
 
-Tracked as row **#29**.
+Row **#29 closed 2026-07-26.** The audit found the packages were *more* consistent than the
+row claimed, and the row's own premise was wrong on two counts.
 
-The two packages mirror each other node-for-node, but small inconsistencies have crept in
-during the migration. Do a pass to align them (or deliberately document each intentional
-divergence). Known so far:
+**The `ast` ↔ `resolved` type difference is the layer boundary, not drift — do not "fix" it.**
+Counted across every name-holding field: `ast` is `*IdentExpr` 10/10, `resolved` is `string`
+10/11. Syntax nodes carry a position because resolve-time diagnostics need it; resolved nodes
+are plain data because positions are spent by then. The row proposed flattening
+`ast.MemberAccessExpr.Method` to a bare token to "match" `resolved` — that would have made it
+the only outlier in `ast`. Dropped. (The row also mis-stated the `resolved` side as
+`token.Token`; it was already `string`.)
 
-- `MemberAccessExpr.Method`: `*ast.IdentExpr` in `ast`, bare `token.Token` in `resolved`.
-  (The `resolved` choice is cleaner — a method name isn't a variable — so consider fixing the
-  AST side instead.) The `KwargsExpr.Key` half of this bullet is gone: `resolved.KwargsExpr`
-  was deleted 2026-07-25 (the resolver lowers kwargs straight to `CallArgExpr`), so kwargs now
-  exist only in `ast`.
-- Node-name suffix conventions (`*Expr` / `*Stmt` / `*Decl`) — verify they match 1:1 and that
-  wrappers line up (`ast.Program.InitFn/RunFn` ↔ `resolved.Program.InitFn/RunFn`, etc.).
-- Field name `Name` type differs across nodes (`token.Token` vs `string`) — audit for
-  consistency now that `ConstDecl.Name` is a token.
+What actually shipped:
+
+- **`resolved.ConstDecl.Name`: `*IdentExpr` → `string`** — the lone outlier in a package of
+  `string`s. `String()` lost a dead `== nil` guard (the resolver already dereferences
+  `c.Identifier` unguarded upstream). Note the const *identifier's* position is no longer on
+  the resolved node — only `ConstDecl.Token` (the `const` keyword). Nothing needs it: duplicate
+  -const diags fire at resolve time off the ast node, and runtime failures inside a const's
+  value get their position from the value expression. Add a `NameToken` if that ever changes.
+- **`Method` renamed where it holds no method.** It named three different things.
+  `resolved.MemberAccessExpr.Method` → `Attribute` (`math.PI` invokes nothing — and the
+  resolver already reported `addUndefinedAttribute` three lines below the lookup);
+  `resolved.StateAccessExpr.Method` → `Field` (`state.cooldown` is a state field);
+  `MethodCallExpr.Method` kept, it genuinely holds a method name. On the `ast` side the same
+  field became **`Member`**, not `Attribute` — the parser cannot yet know whether the name
+  after the dot is an attribute, a method, or a state field; the resolver decides.
+- **`resolved.Function` → `FunctionDecl`** — `InputDecl`/`OutputDecl`/`ConstDecl` all keep the
+  suffix and the `ast` counterpart is `FunctionDecl`.
+
+Deliberately left divergent: `ast.CallExpr` ↔ `resolved.MethodCallExpr` is a real **narrowing**
+(the parser accepts any `Callee Expression`; only a member-access callee resolves, everything
+else diags), so the more specific name is correct. `resolved.State`/`StateField` are not a
+mirror of `ast.StateFieldDecl` — `State` is a container of `[]*StateField` — so renaming them
+`*Decl` would fake a 1:1 correspondence that does not exist. `resolved.KwargsExpr` is gone
+entirely (deleted 2026-07-25; the resolver lowers kwargs straight to `CallArgExpr`), so kwargs
+exist only in `ast` by design.
+
+Adjacent wart, not fixed, no row yet: `ast.IdentExpr` implements `expressionNode()`, so all 10
+of those fields claim to hold an *expression* — but a decl's identifier, a kwarg key, and the
+name after a dot are none of them evaluable. If it's worth fixing it's a dedicated
+`ast.Name{Token}` applied to all 10 sites, not a one-off; nothing traverses those fields as
+expressions today.
 
 ## Dead code to remove
 

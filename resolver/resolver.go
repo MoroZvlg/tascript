@@ -57,8 +57,8 @@ func (r *Resolver) Resolve() *resolved.Program {
 	return r.resolvedProg
 }
 
-func (r *Resolver) resolveFunc(astFunc *ast.FunctionDecl, env *Env) *resolved.Function {
-	resolvedFunc := &resolved.Function{Token: astFunc.Token}
+func (r *Resolver) resolveFunc(astFunc *ast.FunctionDecl, env *Env) *resolved.FunctionDecl {
+	resolvedFunc := &resolved.FunctionDecl{Token: astFunc.Token}
 	resolvedFunc.Body = r.resolveBlock(astFunc.Body, env)
 	return resolvedFunc
 }
@@ -137,7 +137,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 				return &resolved.BadStmt{Token: astStmtTyped.Token}
 			}
 
-			fieldName := target.Method.String()
+			fieldName := target.Member.String()
 			var fieldDecl *resolved.StateField
 			for _, field := range r.resolvedProg.State.Fields {
 				if field.Name == fieldName {
@@ -147,7 +147,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			}
 
 			if fieldDecl == nil {
-				r.addStateUndeclared(target.Method.Token)
+				r.addStateUndeclared(target.Member.Token)
 				return &resolved.BadStmt{Token: astStmtTyped.Token}
 			}
 
@@ -351,7 +351,7 @@ func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.C
 		env.Set(sym, Binding{T: constValue.Type(), Kind: KindConst})
 		resolvedConsts = append(resolvedConsts, &resolved.ConstDecl{
 			Token: c.Token,
-			Name:  &resolved.IdentExpr{Token: c.Identifier.Token, T: constValue.Type()},
+			Name:  c.Identifier.String(),
 			Value: constValue,
 			T:     constValue.Type(),
 		})
@@ -498,7 +498,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		errsBefore := len(r.errs)
 		identExpr, isIdent := typedExpr.Object.(*ast.IdentExpr)
 		if isIdent && identExpr.Token.Type == token.STATE {
-			fieldName := typedExpr.Method.String()
+			fieldName := typedExpr.Member.String()
 			var fieldDecl *resolved.StateField
 
 			for _, field := range r.resolvedProg.State.Fields {
@@ -509,31 +509,31 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 			}
 
 			if fieldDecl == nil {
-				r.addStateUndeclared(typedExpr.Method.Token)
+				r.addStateUndeclared(typedExpr.Member.Token)
 				return &resolved.BadExpr{Token: typedExpr.Token}
 			}
 
 			return &resolved.StateAccessExpr{
-				Token:  typedExpr.Token,
-				Method: fieldName,
-				T:      fieldDecl.T,
+				Token: typedExpr.Token,
+				Field: fieldName,
+				T:     fieldDecl.T,
 			}
 		}
 
 		resolvedExpr := r.resolveExpr(typedExpr.Object, env)
-		rule, exists := r.reg.LookupMemberAccess(resolvedExpr.Type(), typedExpr.Method.String())
+		rule, exists := r.reg.LookupMemberAccess(resolvedExpr.Type(), typedExpr.Member.String())
 		if !exists {
 			if len(r.errs) == errsBefore {
-				r.addUndefinedAttribute(typedExpr.Method.Token)
+				r.addUndefinedAttribute(typedExpr.Member.Token)
 			}
 			return &resolved.BadExpr{Token: typedExpr.Token}
 		}
 		return &resolved.MemberAccessExpr{
-			Token:  typedExpr.Token,
-			Object: resolvedExpr,
-			Method: typedExpr.Method.String(),
-			T:      rule.EvalType,
-			EvalFn: rule.EvalFn,
+			Token:     typedExpr.Token,
+			Object:    resolvedExpr,
+			Attribute: typedExpr.Member.String(),
+			T:         rule.EvalType,
+			EvalFn:    rule.EvalFn,
 		}
 	case *ast.IndexExpr:
 		errsBefore := len(r.errs)
@@ -549,10 +549,10 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 			errsBefore := len(r.errs)
 			resolvedExpr := r.resolveExpr(callee.Object, env)
 
-			rule, callExists := r.reg.LookupCall(resolvedExpr.Type(), callee.Method.String())
+			rule, callExists := r.reg.LookupCall(resolvedExpr.Type(), callee.Member.String())
 			if !callExists {
 				if len(r.errs) == errsBefore {
-					r.addUndefinedMethod(callee.Method.Token)
+					r.addUndefinedMethod(callee.Member.Token)
 				}
 				return &resolved.BadExpr{Token: typedExpr.Token}
 			}
@@ -564,7 +564,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 				return &resolved.MethodCallExpr{
 					Token:    typedExpr.Token,
 					Receiver: resolvedExpr,
-					Method:   callee.Method.String(),
+					Method:   callee.Member.String(),
 					Args:     args,
 					T:        rule.EvalType,
 					EvalFn:   rule.EvalFn,
