@@ -88,8 +88,8 @@ tascript leans on a JavaScript-flavoured surface syntax with deliberate deviatio
 - **C-style blocks.** `if (cond) { ... } else { ... }` — parentheses around conditions,
   braces around bodies. `else` may also start its own line (Allman style).
 - **C-style logical operators.** `&&`, `||`, `!` (not `and`, `or`, `not`).
-- **Trailing comma in call arguments.** `f(a, key=b,)` is accepted. Inline type schemas
-  do not accept one yet (`{a: Integer,}` is an error) — an inconsistency, not a rule.
+- **Trailing comma in comma-separated lists.** Both call arguments (`f(a, key=b,)`) and
+  inline type schemas (`{a: Integer,}`) accept one.
 - **Function-local bindings use `let`.** Inside `Init()` and `Run()`, `let x = a > b`
   creates a binding that lives **only for the current invocation** of that function and is
   dropped when it returns. There is no `var`, and `const` is not valid inside function
@@ -689,14 +689,14 @@ not first-class values — `math` cannot be assigned, passed, or reflected on.
 | `math.max(a, b)` | larger of two numbers |
 | `math.min(a, b)` | smaller of two numbers |
 | `math.abs(x)` | absolute value |
-| `math.sqrt(x)` | square root |
+| `math.sqrt(x)` | square root; `INVALID_ARGUMENT` if `x < 0` |
 | `math.pow(x, y)` | x to the y |
 | `math.floor(x)` | round toward −∞ |
 | `math.ceil(x)` | round toward +∞ |
 | `math.round(x)` | round to nearest integer, half toward +∞ |
 | `math.trunc(x)` | integer part, toward zero |
 | `math.sign(x)` | sign of number |
-| `math.log(x)` | natural logarithm |
+| `math.log(x)` | natural logarithm; `INVALID_ARGUMENT` if `x <= 0` |
 
 `math` and `time` are reserved namespace identifiers; reassigning either is a parse-time
 error. Host libraries add their own namespaces (e.g. `ta` — `SPEC_SIGNAL_HOST.md`).

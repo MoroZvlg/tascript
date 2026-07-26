@@ -151,8 +151,6 @@ shared-handle invariant, see the input-wiring section).
 | 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
 | 22 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #2–#3 mechanically |
 | 23 | P3 | resolver | No Unknown-type poisoning — one error cascades | `let x = <bad expr>` binds `x` as `UnknownTypeID`; every later use emits a fresh INVALID_OPERATION/TYPE_MISSMATCH (the `errsBefore` guard only dedups within one expression tree). Standard fix: lookups where an operand is Unknown succeed silently as Unknown |
-| 26 | P2 | stdlib | `math.sqrt(-1)` returns NaN silently | Decision, then a one-line rule change: trap with `INVALID_ARGUMENT` (the kind already exists, spec §6.4) or keep NaN and say so in the spec. A NaN then flows through comparisons as `false` everywhere, which is exactly the silent-wrong-answer shape #15 was fixed to avoid |
-| 27 | P3 | parser | Trailing comma allowed in call args, rejected in inline type schemas | Shipped 2026-07-25 for calls; `input x: {a: Integer,}` still errors, and `TestParser_Input`/`TestParser_Output` bless that. Fix mirrors the call-arg one in `parseInlineTypeExpr` (3 lines + 2 test expectations) — it was reverted only because those tests pin the current rule. Details in "Parser: trailing comma" below |
 | 28 | P3 | resolved | Node metadata that is unused or always derivable | `LetStmt`/`AssignNameStmt` expose `Type()` though no interface requires it; `CallArgExpr.T` always equals `Value.Type()` after coercion wrapping. Promote deliberately (state the interface) or trim |
 | 29 | P3 | both | `ast` ↔ `resolved` naming divergence | `MemberAccessExpr.Method` is `*ast.IdentExpr` in `ast` but a bare `token.Token` in `resolved` (the `resolved` shape is the better one); `Name` field types differ across nodes (`token.Token` vs `string`); `*Expr`/`*Stmt`/`*Decl` suffix conventions and wrapper pairs unverified. Full list in "Reconcile naming between `ast` and `resolved`" below |
 | 30 | P3 | tests | Test debt with no design attached | Pin `/` and `%` by zero across Integer/Float/Duration (may already be covered — check, don't assume); pin "Init writes persist into Run", the executable spec for the load-phase contract; add a fuzz target for lexer/parser, seeded from the `^`-marker corpus. Full list in "Test-coverage gaps worth closing" below |
@@ -180,6 +178,10 @@ belongs with #21.
 **Rows #26–#30 (added 2026-07-25) are the smalls that were only ever prose bullets** in the
 sections below — promoted so the table is the single work queue. Each is mechanical or one
 decision wide; none blocks anything else, so they are fill-in work between the design items.
+#26/#27 shipped the same day: a trailing comma now closes an inline type schema too, and
+`math.sqrt(x < 0)` / `math.log(x <= 0)` trap with `INVALID_ARGUMENT` instead of handing back
+a NaN that every later comparison reads as `false`. `math.pow` can still produce a NaN
+(`pow(-1.0, 0.5)`); it needs a two-argument domain rule, so it was left for whoever wants it.
 
 Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
@@ -314,8 +316,8 @@ public `diag/diagtest` (the `httptest` pattern), not an internal one.
 Tracked as row **#30** (except the ones that belong to a feature row).
 
 - `/` and `%` by zero now trap uniformly (DIVISION_BY_ZERO) across Integer/Float/Duration
-  since #10 landed — pin with tests if not already covered. (`math.sqrt(-1)` → NaN is a
-  language decision, not test debt: row **#26**.)
+  since #10 landed. Integer and Float are pinned by `TestEvaluator_TrapDivisionByZero`;
+  the three Duration rules in `time_operators.go` trap but are untested.
 - emit-inside-Init (#12), shadowing cases (#11).
 - `Init` coverage exists now that state seeding runs there; a test pinning "Init writes
   persist into Run" is still the executable spec for the load-phase contract.
@@ -464,15 +466,9 @@ outside their own definitions.
   (rework item A) — that's when `LookupIndex` starts building the node. (`diag.PhaseRuntime`
   is no longer dead — #10 shipped and both `RuntimeFailure`/`InternalFailure` now carry it.)
 
-## Parser: trailing comma — call args allow it, inline type schemas don't
+## Parser: trailing comma — shipped
 
-Tracked as row **#27**.
-
-Fixed 2026-07-25 for call args: `math.sqrt(number=9.0, )` parsed as a positional arg after
-kwargs and then tripped again on `)` (2 errors); a `,` directly before `)` now closes the
-list, 0 errors.
-
-**Left inconsistent on purpose, decide later:** `input x: {a: Integer,}` is still an error
-(`expected IDENTIFIER got }`), and two tests bless it (`TestParser_Input` /
-`TestParser_Output`, "trailing comma in custom type"). The one-line fix mirrors the call-arg
-one in `parseInlineTypeExpr`; it was reverted only because those tests pin the current rule.
+Fixed 2026-07-25, both sites: `math.sqrt(number=9.0, )` parsed as a positional arg after
+kwargs and then tripped again on `)` (2 errors); `input x: {a: Integer,}` reopened the field
+loop and demanded another field. A `,` directly before the closer now ends the list in both,
+0 errors. The schema form also skips a newline run first, so `{\na: Integer,\n}` closes.

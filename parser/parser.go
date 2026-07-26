@@ -368,6 +368,11 @@ func (p *Parser) parseInlineTypeExpr() *ast.TypeExpr {
 
 		if p.peekTokenIs(token.COMMA) {
 			p.nextToken()
+			p.skipPeekNewLines()
+			if p.peekTokenIs(token.RBRACE) {
+				p.nextToken()
+				break
+			}
 			continue
 		}
 

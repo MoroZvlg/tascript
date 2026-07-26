@@ -405,16 +405,6 @@ func TestParser_Input(t *testing.T) {
 			},
 		},
 		{
-			// a trailing comma reopens the field loop, which then demands another field
-			"trailing comma in custom type",
-			"input btc: {foo: Integer,^}",
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					unexpectedErr(ps[0], token.IDENT, token.RBRACE),
-				}
-			},
-		},
-		{
 			// keywords are not IDENT, so they can't be used as field names
 			"keyword as field name",
 			"input btc: {^const: Integer}",
@@ -599,13 +589,17 @@ func TestParser_Output(t *testing.T) {
 			},
 		},
 		{
-			// a trailing comma reopens the field loop, which then demands another field
 			"trailing comma in custom type",
-			"output alert: {foo: Integer,^}",
+			"output alert: {foo: Integer,}",
 			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					unexpectedErr(ps[0], token.IDENT, token.RBRACE),
-				}
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"trailing comma before a newline",
+			"output alert: {\nfoo: Integer,\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
 			},
 		},
 		{
