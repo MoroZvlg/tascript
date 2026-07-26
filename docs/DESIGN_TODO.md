@@ -153,7 +153,6 @@ shared-handle invariant, see the input-wiring section).
 | 23 | P3 | resolver | No Unknown-type poisoning — one error cascades | `let x = <bad expr>` binds `x` as `UnknownTypeID`; every later use emits a fresh INVALID_OPERATION/TYPE_MISSMATCH (the `errsBefore` guard only dedups within one expression tree). Standard fix: lookups where an operand is Unknown succeed silently as Unknown |
 | 28 | P3 | resolved | Node metadata that is unused or always derivable | `LetStmt`/`AssignNameStmt` expose `Type()` though no interface requires it; `CallArgExpr.T` always equals `Value.Type()` after coercion wrapping. Promote deliberately (state the interface) or trim |
 | 29 | P3 | both | `ast` ↔ `resolved` naming divergence | `MemberAccessExpr.Method` is `*ast.IdentExpr` in `ast` but a bare `token.Token` in `resolved` (the `resolved` shape is the better one); `Name` field types differ across nodes (`token.Token` vs `string`); `*Expr`/`*Stmt`/`*Decl` suffix conventions and wrapper pairs unverified. Full list in "Reconcile naming between `ast` and `resolved`" below |
-| 30 | P3 | tests | Test debt with no design attached | Pin `/` and `%` by zero across Integer/Float/Duration (may already be covered — check, don't assume); pin "Init writes persist into Run", the executable spec for the load-phase contract; add a fuzz target for lexer/parser, seeded from the `^`-marker corpus. Full list in "Test-coverage gaps worth closing" below |
 
 Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
 **No P1 rows remain**, and the D-batch smalls (#15/#18/#19/#24/#25) shipped 2026-07-25:
@@ -182,6 +181,10 @@ decision wide; none blocks anything else, so they are fill-in work between the d
 `math.sqrt(x < 0)` / `math.log(x <= 0)` trap with `INVALID_ARGUMENT` instead of handing back
 a NaN that every later comparison reads as `false`. `math.pow` can still produce a NaN
 (`pow(-1.0, 0.5)`); it needs a two-argument domain rule, so it was left for whoever wants it.
+#30 followed on 2026-07-26 (Duration div-by-zero rows, `TestEvaluator_LoadPhase`, and the
+lexer/parser fuzz targets — details in "Test-coverage gaps worth closing" below), leaving
+**#28 and #29** as the last smalls; they touch the same `resolved` nodes and should land as
+one mechanical pass.
 
 Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
@@ -313,15 +316,24 @@ public `diag/diagtest` (the `httptest` pattern), not an internal one.
 
 ## Test-coverage gaps worth closing
 
-Tracked as row **#30** (except the ones that belong to a feature row).
+Row **#30 closed 2026-07-26.** What shipped:
 
-- `/` and `%` by zero now trap uniformly (DIVISION_BY_ZERO) across Integer/Float/Duration
-  since #10 landed. Integer and Float are pinned by `TestEvaluator_TrapDivisionByZero`;
-  the three Duration rules in `time_operators.go` trap but are untested.
-- emit-inside-Init (#12), shadowing cases (#11).
-- `Init` coverage exists now that state seeding runs there; a test pinning "Init writes
-  persist into Run" is still the executable spec for the load-phase contract.
-- No fuzz target on lexer/parser; the `^`-marker corpus makes seeds cheap.
+- `/` by zero on Duration — the three `SLASH` rules in `time_operators.go` (`/Integer`,
+  `/Float`, `/Duration`) joined `TestStdlib_Traps_Pipeline` as `DIVISION_BY_ZERO` rows;
+  Integer and Float were already pinned by `TestEvaluator_TrapDivisionByZero`.
+- `TestEvaluator_LoadPhase` is the executable spec for the load-phase contract: Init state
+  writes persist into Run and across ticks, state initializers evaluate at load, and — via a
+  registered counter member that ticks on every evaluation — consts and the `Init` body each
+  evaluate exactly once no matter how many `EvalRun`s follow.
+- `FuzzLex`/`FuzzParse` in `parser/fuzz_test.go`, seeded with one sample per top-level form
+  plus the error shapes that needed recovery work. `FuzzLex` asserts EOF arrives within
+  `len(src)+2` tokens (every token consumes at least one byte, so a scanner that stops
+  consuming shows up as a hang, not a timeout). `FuzzParse` asserts the parser contract
+  `prog.Valid == (len(Diagnostics()) == 0)`, that a valid program always has a `RunFn`, and
+  that the diagnostic slice respects `maxParseErrors`. ~16.5M execs clean at time of writing.
+
+Still open, but owned by feature rows rather than by test debt: emit-inside-Init (#12),
+shadowing cases (#11).
 
 ## Slot-based variable access (perf)
 

@@ -512,20 +512,96 @@ emit(out, state.cooldown + state.seeded)
 	}
 }
 
-func initedEval(t *testing.T, src string) *evaluator.Evaluator {
+func initedEval(t *testing.T, src string, customize func(*registry.Registry)) *evaluator.Evaluator {
 	t.Helper()
-	ev := compileSrc(t, src, nil)
+	ev := compileSrc(t, src, customize)
 	if _, err := ev.EvalInit(); err != nil {
 		t.Fatalf("init error: %v", err)
 	}
 	return ev
 }
 
+func mustRun(t *testing.T, ev *evaluator.Evaluator) registry.Value {
+	t.Helper()
+	got, err := ev.EvalRun(nil)
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	return got
+}
+
+func TestEvaluator_LoadPhase(t *testing.T) {
+	var calls int
+	withCounter := func(reg *registry.Registry) {
+		module, _ := reg.RegisterModule("load")
+		reg.RegisterMemberAccess(module.TypeID(), "next", registry.MemberAccessRule{
+			EvalType: registry.IntegerID,
+			EvalFn: func(registry.Value) (registry.Value, error) {
+				calls++
+				return registry.Integer(calls), nil
+			},
+		})
+	}
+
+	t.Run("Init writes persist into Run", func(t *testing.T) {
+		src := "state seeded: Integer\n" +
+			"function Init() {\nstate.seeded = 10\n}\n" +
+			"function Run() {\nstate.seeded = state.seeded + 1\nstate.seeded\n}"
+		ev := initedEval(t, src, nil)
+
+		if got := mustRun(t, ev); got != registry.Integer(11) {
+			t.Errorf("first run: got %v, want 11", got)
+		}
+		if got := mustRun(t, ev); got != registry.Integer(12) {
+			t.Errorf("second run: got %v, want 12", got)
+		}
+	})
+
+	t.Run("state initializer is evaluated at load", func(t *testing.T) {
+		src := "state size: Integer = 2 * 3\nfunction Run() {\nstate.size\n}"
+		if got := mustRun(t, initedEval(t, src, nil)); got != registry.Integer(6) {
+			t.Errorf("got %v, want 6", got)
+		}
+	})
+
+	t.Run("consts are evaluated once, not per tick", func(t *testing.T) {
+		calls = 0
+		src := "const K = load.next\nfunction Run() {\nK\n}"
+		ev := initedEval(t, src, withCounter)
+
+		for tick := 1; tick <= 3; tick++ {
+			if got := mustRun(t, ev); got != registry.Integer(1) {
+				t.Fatalf("tick %d: got %v, want 1", tick, got)
+			}
+		}
+		if calls != 1 {
+			t.Errorf("load.next evaluated %d times, want 1", calls)
+		}
+	})
+
+	t.Run("Init body runs once", func(t *testing.T) {
+		calls = 0
+		src := "state stamp: Integer\n" +
+			"function Init() {\nstate.stamp = load.next\n}\n" +
+			"function Run() {\nstate.stamp\n}"
+		ev := initedEval(t, src, withCounter)
+
+		for tick := 1; tick <= 3; tick++ {
+			if got := mustRun(t, ev); got != registry.Integer(1) {
+				t.Fatalf("tick %d: got %v, want 1", tick, got)
+			}
+		}
+		if calls != 1 {
+			t.Errorf("load.next evaluated %d times, want 1", calls)
+		}
+	})
+}
+
 func TestEvaluator_InputBinding(t *testing.T) {
 	src := "input price: Float\nfunction Run() {\nprice\n}"
 
 	t.Run("bound value reaches the body", func(t *testing.T) {
-		ev := initedEval(t, src)
+		ev := initedEval(t, src, nil)
 		got, err := ev.EvalRun(map[string]registry.Value{"price": registry.Float(1.5)})
 		if err != nil {
 			t.Fatalf("eval error: %v", err)
@@ -536,7 +612,7 @@ func TestEvaluator_InputBinding(t *testing.T) {
 	})
 
 	t.Run("fresh value per tick", func(t *testing.T) {
-		ev := initedEval(t, src)
+		ev := initedEval(t, src, nil)
 		if _, err := ev.EvalRun(map[string]registry.Value{"price": registry.Float(1)}); err != nil {
 			t.Fatal(err)
 		}
@@ -550,7 +626,7 @@ func TestEvaluator_InputBinding(t *testing.T) {
 	})
 
 	t.Run("Integer coerces to declared Float", func(t *testing.T) {
-		ev := initedEval(t, src)
+		ev := initedEval(t, src, nil)
 		got, err := ev.EvalRun(map[string]registry.Value{"price": registry.Integer(3)})
 		if err != nil {
 			t.Fatalf("eval error: %v", err)
@@ -561,7 +637,7 @@ func TestEvaluator_InputBinding(t *testing.T) {
 	})
 
 	t.Run("missing input errors", func(t *testing.T) {
-		ev := initedEval(t, src)
+		ev := initedEval(t, src, nil)
 		_, err := ev.EvalRun(nil)
 		if err == nil || !strings.Contains(err.Error(), "missing input") {
 			t.Fatalf("want missing-input error, got: %v", err)
@@ -569,7 +645,7 @@ func TestEvaluator_InputBinding(t *testing.T) {
 	})
 
 	t.Run("type mismatch errors", func(t *testing.T) {
-		ev := initedEval(t, src)
+		ev := initedEval(t, src, nil)
 		_, err := ev.EvalRun(map[string]registry.Value{"price": registry.String("x")})
 		if err == nil || !strings.Contains(err.Error(), "expected") {
 			t.Fatalf("want type-mismatch error, got: %v", err)
@@ -577,7 +653,7 @@ func TestEvaluator_InputBinding(t *testing.T) {
 	})
 
 	t.Run("undeclared input errors", func(t *testing.T) {
-		ev := initedEval(t, src)
+		ev := initedEval(t, src, nil)
 		_, err := ev.EvalRun(map[string]registry.Value{
 			"price":  registry.Float(1),
 			"volume": registry.Float(2),

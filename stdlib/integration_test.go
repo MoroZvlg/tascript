@@ -131,6 +131,9 @@ func TestStdlib_Traps_Pipeline(t *testing.T) {
 		{"log of zero", `math.log(0.0)`, registry.InvalidArgument},
 		{"log of a negative", `math.log(-1.0)`, registry.InvalidArgument},
 		{"truncate to a non-divisor bucket", `time.from_unix_ms(0).truncate(7 * time.HOUR)`, registry.InvalidArgument},
+		{"duration over zero integer", `time.HOUR / 0`, registry.DivisionByZero},
+		{"duration over zero float", `time.HOUR / 0.0`, registry.DivisionByZero},
+		{"duration over zero duration", `time.HOUR / (0 * time.SECOND)`, registry.DivisionByZero},
 	}
 
 	for _, tt := range tests {
