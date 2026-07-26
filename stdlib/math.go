@@ -14,14 +14,14 @@ func RegisterMath(reg *registry.Registry) {
 	registerMathConst(reg, moduleType, "E", math.E)
 
 	registerUnaryMathFunc(reg, moduleType, "abs", math.Abs)
-	registerUnaryMathFunc(reg, moduleType, "sqrt", math.Sqrt)
+	registerUnaryMathFuncInDomain(reg, moduleType, "sqrt", math.Sqrt, isNonNegative, "sqrt of a negative number")
 	registerUnaryMathFunc(reg, moduleType, "floor", math.Floor)
 	registerUnaryMathFunc(reg, moduleType, "ceil", math.Ceil)
 	registerUnaryMathFunc(reg, moduleType, "round", mathRound)
 	registerUnaryMathFunc(reg, moduleType, "trunc", math.Trunc)
 	// TODO: all methods returns float for now... not sure if it's correct
 	registerUnaryMathFunc(reg, moduleType, "sign", mathSign)
-	registerUnaryMathFunc(reg, moduleType, "log", math.Log)
+	registerUnaryMathFuncInDomain(reg, moduleType, "log", math.Log, isPositive, "log of a non-positive number")
 
 	registerBinaryMathFunc(reg, moduleType, "max", "a", "b", math.Max)
 	registerBinaryMathFunc(reg, moduleType, "min", "a", "b", math.Min)
@@ -38,16 +38,28 @@ func registerMathConst(reg *registry.Registry, mathModule registry.TypeID, name 
 }
 
 func registerUnaryMathFunc(reg *registry.Registry, mathModule registry.TypeID, name string, fn func(float64) float64) {
+	registerUnaryMathFuncInDomain(reg, mathModule, name, fn, nil, "")
+}
+
+func registerUnaryMathFuncInDomain(reg *registry.Registry, mathModule registry.TypeID, name string, fn func(float64) float64, domainCheckFn func(float64) bool, errMsg string) {
 	reg.RegisterCall(mathModule, name, registry.CallRule{
 		Args: []registry.ParamRule{
 			{Type: registry.FloatID, Name: "number"},
 		},
 		EvalType: registry.FloatID,
 		EvalFn: func(_ registry.Value, args map[string]registry.Value) (registry.Value, error) {
-			return registry.Float(fn(float64(args["number"].(registry.Float)))), nil
+			number := float64(args["number"].(registry.Float))
+			if domainCheckFn != nil && !domainCheckFn(number) {
+				return nil, registry.Error{Kind: registry.InvalidArgument, Message: errMsg}
+			}
+			return registry.Float(fn(number)), nil
 		},
 	})
 }
+
+func isNonNegative(number float64) bool { return number >= 0 }
+
+func isPositive(number float64) bool { return number > 0 }
 
 func registerBinaryMathFunc(reg *registry.Registry, mathModule registry.TypeID, name, leftName, rightName string, fn func(float64, float64) float64) {
 	reg.RegisterCall(mathModule, name, registry.CallRule{

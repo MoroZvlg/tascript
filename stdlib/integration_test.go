@@ -120,14 +120,30 @@ func TestMath_Pipeline(t *testing.T) {
 	}
 }
 
-func TestTime_TruncateTrap_Pipeline(t *testing.T) {
-	_, err := runExpr(t, "time.from_unix_ms(0).truncate(7 * time.HOUR)")
-
-	var failure diag.RuntimeFailure
-	if !errors.As(err, &failure) {
-		t.Fatalf("expected diag.RuntimeFailure, got %T: %v", err, err)
+func TestStdlib_Traps_Pipeline(t *testing.T) {
+	tests := []struct {
+		name string
+		expr string
+		kind registry.ErrorKind
+	}{
+		{"sqrt of a negative", `math.sqrt(-1.0)`, registry.InvalidArgument},
+		{"sqrt of a coerced negative", `math.sqrt(-1)`, registry.InvalidArgument},
+		{"log of zero", `math.log(0.0)`, registry.InvalidArgument},
+		{"log of a negative", `math.log(-1.0)`, registry.InvalidArgument},
+		{"truncate to a non-divisor bucket", `time.from_unix_ms(0).truncate(7 * time.HOUR)`, registry.InvalidArgument},
 	}
-	if failure.Kind != registry.InvalidArgument {
-		t.Errorf("kind = %s, want %s", failure.Kind, registry.InvalidArgument)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := runExpr(t, tt.expr)
+
+			var failure diag.RuntimeFailure
+			if !errors.As(err, &failure) {
+				t.Fatalf("expected diag.RuntimeFailure, got %T: %v", err, err)
+			}
+			if failure.Kind != tt.kind {
+				t.Errorf("kind = %s, want %s", failure.Kind, tt.kind)
+			}
+		})
 	}
 }
