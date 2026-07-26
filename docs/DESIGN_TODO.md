@@ -151,7 +151,6 @@ shared-handle invariant, see the input-wiring section).
 | 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
 | 22 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #2–#3 mechanically |
 | 23 | P3 | resolver | No Unknown-type poisoning — one error cascades | `let x = <bad expr>` binds `x` as `UnknownTypeID`; every later use emits a fresh INVALID_OPERATION/TYPE_MISSMATCH (the `errsBefore` guard only dedups within one expression tree). Standard fix: lookups where an operand is Unknown succeed silently as Unknown |
-| 28 | P3 | resolved | Node metadata that is unused or always derivable | `LetStmt`/`AssignNameStmt` expose `Type()` though no interface requires it; `CallArgExpr.T` always equals `Value.Type()` after coercion wrapping. Promote deliberately (state the interface) or trim |
 | 29 | P3 | both | `ast` ↔ `resolved` naming divergence | `MemberAccessExpr.Method` is `*ast.IdentExpr` in `ast` but a bare `token.Token` in `resolved` (the `resolved` shape is the better one); `Name` field types differ across nodes (`token.Token` vs `string`); `*Expr`/`*Stmt`/`*Decl` suffix conventions and wrapper pairs unverified. Full list in "Reconcile naming between `ast` and `resolved`" below |
 
 Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
@@ -182,9 +181,9 @@ decision wide; none blocks anything else, so they are fill-in work between the d
 a NaN that every later comparison reads as `false`. `math.pow` can still produce a NaN
 (`pow(-1.0, 0.5)`); it needs a two-argument domain rule, so it was left for whoever wants it.
 #30 followed on 2026-07-26 (Duration div-by-zero rows, `TestEvaluator_LoadPhase`, and the
-lexer/parser fuzz targets — details in "Test-coverage gaps worth closing" below), leaving
-**#28 and #29** as the last smalls; they touch the same `resolved` nodes and should land as
-one mechanical pass.
+lexer/parser fuzz targets — details in "Test-coverage gaps worth closing" below), and #28
+followed the same day (six unused `Type()` methods + `CallArgExpr.T` deleted; the "a Statement
+has no type" decision is recorded under "Style & cleanup backlog"). **#29 is the last small.**
 
 Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
@@ -312,7 +311,21 @@ public `diag/diagtest` (the `httptest` pattern), not an internal one.
   `string`; resolver's `Get` special-cases `isTopLevel()` while the evaluator walks
   the parent chain plainly; `Symbol` is declared in resolver.go, not env.go. Align
   during the slot-based rework at the latest.
-- The unused-node-metadata bullet is now tracker row **#28**.
+- Unused node metadata (was row **#28**) — cleared 2026-07-26. Six `Type()` methods deleted
+  from `resolved`: `LetStmt`, `AssignNameStmt`, `AssignStateStmt`, `InputDecl`, `OutputDecl`,
+  `ConstDecl`. **Decision: a `Statement` has no type.** `Expression.Type()` is a contract the
+  resolver typechecks against; the `T` on a statement answers a different question each time
+  (`LetStmt.T` = the type of the binding it creates, `AssignStateStmt.T` = the type of the
+  target field, `EmitStmt.T` = the type of the output port), so exposing them all through the
+  method name that means "the static type of the value this evaluates to" invites treating
+  statements and expressions uniformly — which is exactly what isn't true. The `T` **fields
+  stay** (`EmitStmt.T` is load-bearing: the evaluator builds the emitted `Record` from it);
+  only the methods went, and the two resolver test dumpers now read `.T` directly. There is no
+  `resolved.Declaration` interface, so the three `*Decl` methods had no callers at all.
+  `CallArgExpr.T` was deleted outright — written twice in `resolveArgs`, never read, and equal
+  to `Value.Type()` once coercion wrapping is applied. Revisit only if tascript ever goes
+  expression-oriented (`let x = if c { 1 } else { 2 }`), which would make `IfStmt` an `IfExpr`
+  and give blocks real types.
 
 ## Test-coverage gaps worth closing
 

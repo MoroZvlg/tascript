@@ -14,7 +14,7 @@ func dumpConst(t *testing.T, resolvedConst *resolved.ConstDecl) string {
 	return fmt.Sprintf(
 		"const %s:%s = %s",
 		resolvedConst.Name,
-		resolvedConst.Type(),
+		resolvedConst.T,
 		dump(t, resolvedConst.Value),
 	)
 }
@@ -57,9 +57,9 @@ func dumpStmt(t *testing.T, resolvedStmt resolved.Statement) string {
 	t.Helper()
 	switch stmt := resolvedStmt.(type) {
 	case *resolved.LetStmt:
-		return fmt.Sprintf("let %s:%s = %s", stmt.Name, stmt.Type(), dump(t, stmt.Value))
+		return fmt.Sprintf("let %s:%s = %s", stmt.Name, stmt.T, dump(t, stmt.Value))
 	case *resolved.AssignNameStmt:
-		return fmt.Sprintf("%s:%s = %s", stmt.Target, stmt.Type(), dump(t, stmt.Value))
+		return fmt.Sprintf("%s:%s = %s", stmt.Target, stmt.T, dump(t, stmt.Value))
 	case *resolved.ExprStmt:
 		return dump(t, stmt.Expr)
 	case *resolved.BlockStmt:

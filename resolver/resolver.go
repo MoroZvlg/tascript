@@ -619,7 +619,6 @@ func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwar
 			Token: argToken,
 			Name:  argRule.Name,
 			Value: resolvedArg,
-			T:     argRule.Type,
 		}
 	}
 
@@ -666,7 +665,6 @@ func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwar
 			Token: argToken,
 			Name:  argRule.Name,
 			Value: resolvedArg,
-			T:     argRule.Type,
 		}
 	}
 

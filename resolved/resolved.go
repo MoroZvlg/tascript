@@ -264,7 +264,6 @@ type CallArgExpr struct {
 	Token token.Token
 	Name  string
 	Value Expression
-	T     registry.TypeID
 }
 
 func (ce *MethodCallExpr) String() string {
@@ -331,10 +330,6 @@ func (ls *LetStmt) String() string {
 	return out.String()
 }
 
-func (ls *LetStmt) Type() registry.TypeID {
-	return ls.T
-}
-
 func (ls *LetStmt) statementNode() {}
 
 type AssignNameStmt struct {
@@ -354,10 +349,6 @@ func (as *AssignNameStmt) String() string {
 		out.WriteString(as.Value.String())
 	}
 	return out.String()
-}
-
-func (as *AssignNameStmt) Type() registry.TypeID {
-	return as.T
 }
 
 func (as *AssignNameStmt) statementNode() {}
@@ -380,10 +371,6 @@ func (as *AssignStateStmt) String() string {
 		out.WriteString(as.Value.String())
 	}
 	return out.String()
-}
-
-func (as *AssignStateStmt) Type() registry.TypeID {
-	return as.T
 }
 
 func (as *AssignStateStmt) statementNode() {}
@@ -540,10 +527,6 @@ type InputDecl struct {
 	T     registry.TypeID
 }
 
-func (id *InputDecl) Type() registry.TypeID {
-	return id.T
-}
-
 func (id *InputDecl) String() string {
 	return "input " + id.Name + ":" + id.T.String()
 }
@@ -552,10 +535,6 @@ type OutputDecl struct {
 	Token token.Token
 	Name  string
 	T     registry.TypeID
-}
-
-func (od *OutputDecl) Type() registry.TypeID {
-	return od.T
 }
 
 func (od *OutputDecl) String() string {
@@ -572,10 +551,6 @@ type ConstDecl struct {
 	Name  *IdentExpr
 	Value Expression
 	T     registry.TypeID
-}
-
-func (cd *ConstDecl) Type() registry.TypeID {
-	return cd.T
 }
 
 func (cd *ConstDecl) String() string {
