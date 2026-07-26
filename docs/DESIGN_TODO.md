@@ -149,7 +149,6 @@ shared-handle invariant, see the input-wiring section).
 | 13 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the shipped `EvalRun(frame map[string]Value)` map stopgap (#7 — migrate to a slot `[]Value` frame) | Includes registry purge-on-reuse: `resolveTypeDecl` writes synthesized inline port types (`input.x`/`output.sig`) into the host-owned registry, but the duplicate guard reads the per-pass env — so a second `Compile()` on one Engine, or two scripts sharing one registry, collides. Scope the synthesized types per compile (or purge on reuse) rather than papering over the collision with a diagnostic. Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" below — that section now also carries the resolver-contract and registry-encapsulation notes from the review |
 | 14 | P2 | diag | Diagnostics quality pass: machine-readable interface, code reconciliation, message hygiene | `diag.Diagnostic` is just `Error() string` — spec §6.2/§6.4 promises tooling phase/code/pos without parsing messages; add `Phase()`/`Code()`/`Pos()` accessors while the type count is small. Fix misspelled external-contract codes **before** tooling matches on them: `TYPE_MISSMATCH`/`ARGS_NUMBER_MISSMATCH` (spec: `TYPE_MISMATCH`), `UNDEFINED_MEETHOD`. Stop leaking `Token.String()` debug format into messages ("unknown identifier [IDENTIFIER] -> sig") — use `.Literal`; affects ~9 diag types. Reconcile the code set with spec §6.4: UNEXPECTED_TOP_DECL vs TOP_LEVEL_FORM, DUPLICATE_DECLARATION vs PORT_DUPLICATE, INVALID_OPERATION shared by two diag types, EMPTY_FUNCTION absent from spec (also decide whether an empty `Run` is even illegal — spec never says so). Phases: spec defines two, impl has three (`PhaseCheck`), and `DuplicateDeclaration` ships with PhaseParse from the parser but PhaseCheck from the resolver (the NOTE at parser.go:100 already doubts it) |
 | 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
-| 22 | P3 | both | Bad-node invariant unchecked (the rolled-back `containsBad` walker) | Would have caught #2–#3 mechanically |
 | 23 | P3 | resolver | No Unknown-type poisoning — one error cascades | `let x = <bad expr>` binds `x` as `UnknownTypeID`; every later use emits a fresh INVALID_OPERATION/TYPE_MISSMATCH (the `errsBefore` guard only dedups within one expression tree). Standard fix: lookups where an operand is Unknown succeed silently as Unknown |
 
 Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
@@ -184,8 +183,26 @@ lexer/parser fuzz targets — details in "Test-coverage gaps worth closing" belo
 followed the same day (six unused `Type()` methods + `CallArgExpr.T` deleted; the "a Statement
 has no type" decision is recorded under "Style & cleanup backlog"), and #29 closed with it
 (see "Reconcile naming between `ast` and `resolved`" — the `ast`/`resolved` type difference
-turned out to be the layer boundary and was deliberately kept). **No smalls remain: the table
-is now #11, #12, #13, #14, #21, #22, #23 — all design work.**
+turned out to be the layer boundary and was deliberately kept).
+
+**#22 closed 2026-07-26 without building the walker.** The audit that preceded it: 26 of the 28
+`BadExpr`/`BadStmt` construction sites in `resolveStmt`/`resolveExpr` pair the bad node with a
+diagnostic — five of them report conditionally behind `if len(r.errs) == errsBefore`, which only
+skips when an inner expression already reported, so `len(Diagnostics()) == 0 ⟹ no Bad node`
+holds there. The invariant had exactly **two** holes, both `default:` branches returning a bad
+node with zero diagnostics under an "unreachable" comment (resolver.go:182 and :591). Reaching
+either meant the host saw an empty `Diagnostics()`, ran the program, and got
+`unsupported statement %T` out of the *evaluator* instead. Both now `panic` with the offending
+`%T`, matching the evaluator's existing unreachable-branch convention. That covers the same bug
+class — a new `ast` node the resolver never wired up — for two lines instead of a ~70-line
+walker over 23 node types that would itself need a case per new node. The walker only adds value
+if the resolver ever grows a path that builds a bad node for a reason *other* than a reported
+error; revisit then, not before. Note these panics are not recovered — unlike `EvalRun`/`EvalInit`,
+`Resolve()` has no recover boundary, which is consistent with it already nil-dereffing on an
+invalid program (see "Rethink the public API surface"). If `FuzzParse` is ever extended to resolve
+the programs it accepts, these become fuzz-visible.
+
+**No smalls remain: the table is now #11, #12, #13, #14, #21, #23 — all design work.**
 
 Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is

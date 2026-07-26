@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"fmt"
+
 	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/diag"
 	"github.com/MoroZvlg/tascript/registry"
@@ -179,7 +181,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 		// parser already reported it
 		return &resolved.BadStmt{Token: token.Token{Pos: astStmtTyped.From}}
 	default:
-		return &resolved.BadStmt{} // unreachable: all stmt types are handled above
+		panic(fmt.Sprintf("unhandled ast statement %T: ast grew a node the resolver never wired up", astStmtTyped))
 	}
 }
 
@@ -585,7 +587,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		}
 
 	default:
-		return &resolved.BadExpr{} // unreachable. we know all ast types. otherwise error on prev phase
+		panic(fmt.Sprintf("unhandled ast expression %T: ast grew a node the resolver never wired up", typedExpr))
 	}
 }
 
