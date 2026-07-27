@@ -60,7 +60,7 @@ func (r *Resolver) Resolve() *resolved.Program {
 }
 
 func (r *Resolver) resolveFunc(astFunc *ast.FunctionDecl, env *Env) *resolved.FunctionDecl {
-	resolvedFunc := &resolved.FunctionDecl{Token: astFunc.Token}
+	resolvedFunc := &resolved.FunctionDecl{Token: astFunc.Tok()}
 	resolvedFunc.Body = r.resolveBlock(astFunc.Body, env)
 	return resolvedFunc
 }
@@ -71,7 +71,7 @@ func (r *Resolver) resolveBlock(astBlock *ast.BlockStmt, env *Env) *resolved.Blo
 		resolvedStmts = append(resolvedStmts, r.resolveStmt(stmt, env))
 	}
 	return &resolved.BlockStmt{
-		Token: astBlock.Token,
+		Token: astBlock.Tok(),
 		Stmts: resolvedStmts,
 	}
 }
@@ -83,7 +83,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			return r.resolveEmit(call, env)
 		}
 		return &resolved.ExprStmt{
-			Token: astStmtTyped.Token,
+			Token: astStmtTyped.Tok(),
 			Expr:  r.resolveExpr(astStmtTyped.Expr, env),
 		}
 	case *ast.LetStmt:
@@ -91,7 +91,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 		exprVal := r.resolveExpr(astStmtTyped.Value, env)
 		env.Set(Symbol(name), Binding{T: exprVal.Type(), Kind: KindLet})
 		return &resolved.LetStmt{
-			Token: astStmtTyped.Token,
+			Token: astStmtTyped.Tok(),
 			Name:  name,
 			Value: exprVal,
 			T:     exprVal.Type(),
@@ -102,27 +102,27 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 		case *ast.IdentExpr:
 			binding, exists := env.Get(Symbol(target.String()))
 			if !exists {
-				r.addUndefinedVar(target.Token)
-				return &resolved.BadStmt{Token: target.Token}
+				r.addUndefinedVar(target.Tok())
+				return &resolved.BadStmt{Token: target.Tok()}
 			}
 			if !binding.Assignable() {
-				r.addNotAssignable(target.Token, binding.Kind)
-				return &resolved.BadStmt{Token: target.Token}
+				r.addNotAssignable(target.Tok(), binding.Kind)
+				return &resolved.BadStmt{Token: target.Tok()}
 			}
 			if isErrorType(value.Type(), binding.T) {
-				return &resolved.BadStmt{Token: astStmtTyped.Token}
+				return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 			}
 			if binding.T != value.Type() {
 				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), binding.T)
 				if !coerceExists {
-					r.addTypeMissmatch(astStmtTyped.Token, binding.T, value.Type())
-					return &resolved.BadStmt{Token: astStmtTyped.Token}
+					r.addTypeMissmatch(astStmtTyped.Tok(), binding.T, value.Type())
+					return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 				}
 				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
 			}
 
 			return &resolved.AssignNameStmt{
-				Token:  astStmtTyped.Token,
+				Token:  astStmtTyped.Tok(),
 				Target: target.String(),
 				Value:  value,
 				T:      binding.T,
@@ -130,13 +130,13 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 		case *ast.MemberAccessExpr:
 			identExpr, ok := target.Object.(*ast.IdentExpr)
 			if !ok {
-				r.addInvalidAssignTarget(astStmtTyped.Token)
-				return &resolved.BadStmt{Token: astStmtTyped.Token}
+				r.addInvalidAssignTarget(astStmtTyped.Tok())
+				return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 			}
 
-			if identExpr.Token.Type != token.STATE {
-				r.addInvalidAssignTarget(astStmtTyped.Token)
-				return &resolved.BadStmt{Token: astStmtTyped.Token}
+			if identExpr.Tok().Type != token.STATE {
+				r.addInvalidAssignTarget(astStmtTyped.Tok())
+				return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 			}
 
 			fieldName := target.Member.String()
@@ -149,29 +149,29 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			}
 
 			if fieldDecl == nil {
-				r.addStateUndeclared(target.Member.Token)
-				return &resolved.BadStmt{Token: astStmtTyped.Token}
+				r.addStateUndeclared(target.Member.Tok())
+				return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 			}
 
 			if !isErrorType(value.Type(), fieldDecl.T) && fieldDecl.T != value.Type() {
 				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), fieldDecl.T)
 				if !coerceExists {
-					r.addTypeMissmatch(astStmtTyped.Token, fieldDecl.T, value.Type())
-					return &resolved.BadStmt{Token: astStmtTyped.Token}
+					r.addTypeMissmatch(astStmtTyped.Tok(), fieldDecl.T, value.Type())
+					return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 				}
 				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
 			}
 
 			return &resolved.AssignStateStmt{
-				Token:  astStmtTyped.Token,
+				Token:  astStmtTyped.Tok(),
 				Target: fieldDecl,
 				Value:  value,
 				T:      fieldDecl.T,
 			}
 
 		default:
-			r.addInvalidAssignTarget(astStmtTyped.Token)
-			return &resolved.BadStmt{Token: astStmtTyped.Token}
+			r.addInvalidAssignTarget(astStmtTyped.Tok())
+			return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 		}
 	case *ast.BlockStmt:
 		return r.resolveBlock(astStmtTyped, NewEnclosedEnv(env))
@@ -192,30 +192,30 @@ func isEmitCall(call *ast.CallExpr) bool {
 
 func (r *Resolver) resolveEmit(call *ast.CallExpr, env *Env) resolved.Statement {
 	if len(call.Args) == 0 {
-		r.addInvalidEmitTarget(call.Token)
-		return &resolved.BadStmt{Token: call.Token}
+		r.addInvalidEmitTarget(call.Tok())
+		return &resolved.BadStmt{Token: call.Tok()}
 	}
 	target, ok := call.Args[0].(*ast.IdentExpr)
 	if !ok {
-		r.addInvalidEmitTarget(call.Token)
-		return &resolved.BadStmt{Token: call.Token}
+		r.addInvalidEmitTarget(call.Tok())
+		return &resolved.BadStmt{Token: call.Tok()}
 	}
 	binding, exists := env.Get(Symbol(target.String()))
 	if !exists {
-		r.addUndefinedIdent(target.Token)
-		return &resolved.BadStmt{Token: target.Token}
+		r.addUndefinedIdent(target.Tok())
+		return &resolved.BadStmt{Token: target.Tok()}
 	}
 	if binding.Kind != KindOutput {
-		r.addInvalidEmitTarget(target.Token)
-		return &resolved.BadStmt{Token: target.Token}
+		r.addInvalidEmitTarget(target.Tok())
+		return &resolved.BadStmt{Token: target.Tok()}
 	}
 
-	args, valid := r.resolveArgs(call.Token, call.Args[1:], call.Kwargs, r.reg.EmitRule(binding.T), env)
+	args, valid := r.resolveArgs(call.Tok(), call.Args[1:], call.Kwargs, r.reg.EmitRule(binding.T), env)
 	if !valid {
-		return &resolved.BadStmt{Token: call.Token}
+		return &resolved.BadStmt{Token: call.Tok()}
 	}
 	return &resolved.EmitStmt{
-		Token:  call.Token,
+		Token:  call.Tok(),
 		Output: target.String(),
 		Args:   args,
 		T:      binding.T,
@@ -236,7 +236,7 @@ func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Stateme
 	}
 
 	return &resolved.IfStmt{
-		Token:       astStmt.Token,
+		Token:       astStmt.Tok(),
 		Condition:   condition,
 		Consequence: consequence,
 		Else:        elseStmt,
@@ -246,10 +246,10 @@ func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Stateme
 func (r *Resolver) resolveLogical(expr *ast.InfixExpr, left, right resolved.Expression) resolved.Expression {
 	for _, operand := range []resolved.Expression{left, right} {
 		if !isErrorType(operand.Type()) && operand.Type() != registry.BoolID {
-			r.addTypeMissmatch(expr.Token, registry.BoolID, operand.Type())
+			r.addTypeMissmatch(expr.Tok(), registry.BoolID, operand.Type())
 		}
 	}
-	return &resolved.LogicalExpr{Token: expr.Token, Left: left, Right: right}
+	return &resolved.LogicalExpr{Token: expr.Tok(), Left: left, Right: right}
 }
 
 func (r *Resolver) resolveInputs(inputs []*ast.InputDecl, env *Env) []*resolved.InputDecl {
@@ -257,13 +257,13 @@ func (r *Resolver) resolveInputs(inputs []*ast.InputDecl, env *Env) []*resolved.
 	for _, in := range inputs {
 		sym := Symbol(in.Identifier.String())
 		if _, exists := env.Get(sym); exists {
-			r.addDuplicateDeclaration(in.Token, in.Identifier.Token)
+			r.addDuplicateDeclaration(in.Tok(), in.Identifier.Tok())
 			continue
 		}
 		typeID, _ := r.resolveTypeDecl(in.Type, "input", in.Identifier.String())
 		env.Set(sym, Binding{T: typeID, Kind: KindInput})
 		resolvedInputs = append(resolvedInputs, &resolved.InputDecl{
-			Token: in.Token,
+			Token: in.Tok(),
 			Name:  in.Identifier.String(),
 			T:     typeID,
 		})
@@ -276,13 +276,13 @@ func (r *Resolver) resolveOutputs(outputs []*ast.OutputDecl, env *Env) []*resolv
 	for _, out := range outputs {
 		sym := Symbol(out.Identifier.String())
 		if _, exists := env.Get(sym); exists {
-			r.addDuplicateDeclaration(out.Token, out.Identifier.Token)
+			r.addDuplicateDeclaration(out.Tok(), out.Identifier.Tok())
 			continue
 		}
 		typeID, _ := r.resolveTypeDecl(out.Type, "output", out.Identifier.String())
 		env.Set(sym, Binding{T: typeID, Kind: KindOutput})
 		resolvedOutputs = append(resolvedOutputs, &resolved.OutputDecl{
-			Token: out.Token,
+			Token: out.Tok(),
 			Name:  out.Identifier.String(),
 			T:     typeID,
 		})
@@ -295,7 +295,7 @@ func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName st
 	case *ast.IdentExpr:
 		typeID, exists := r.reg.LookupType(typed.String())
 		if !exists {
-			r.addUndefinedType(typed.Token)
+			r.addUndefinedType(typed.Tok())
 			return registry.ErrorTypeID, false
 		}
 		return typeID, true
@@ -305,14 +305,14 @@ func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName st
 		ok := true
 		for _, field := range typed.Fields {
 			if seen[field.Name.String()] {
-				r.addDuplicateDeclaration(typed.Token, field.Name.Token)
+				r.addDuplicateDeclaration(typed.Tok(), field.Name.Tok())
 				ok = false
 				continue
 			}
 			seen[field.Name.String()] = true
 			fieldType, exists := r.reg.LookupType(field.Type.String())
 			if !exists {
-				r.addUndefinedType(field.Type.Token)
+				r.addUndefinedType(field.Type.Tok())
 				ok = false
 				continue
 			}
@@ -337,13 +337,13 @@ func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.C
 	for _, c := range consts {
 		sym := Symbol(c.Identifier.String())
 		if _, exists := env.Get(sym); exists {
-			r.addDuplicateDeclaration(c.Token, c.Identifier.Token) // How to add existing
+			r.addDuplicateDeclaration(c.Tok(), c.Identifier.Tok()) // How to add existing
 			continue
 		}
 		constValue := r.resolveExpr(c.Value, env)
 		env.Set(sym, Binding{T: constValue.Type(), Kind: KindConst})
 		resolvedConsts = append(resolvedConsts, &resolved.ConstDecl{
-			Token: c.Token,
+			Token: c.Tok(),
 			Name:  c.Identifier.String(),
 			Value: constValue,
 			T:     constValue.Type(),
@@ -358,22 +358,22 @@ func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
 	for _, fieldEntry := range fieldEntries {
 		name := fieldEntry.Identifier.String()
 		if seen[name] {
-			r.addDuplicateDeclaration(fieldEntry.Token, fieldEntry.Identifier.Token)
+			r.addDuplicateDeclaration(fieldEntry.Tok(), fieldEntry.Identifier.Tok())
 			continue
 		}
 		seen[name] = true
 
 		typeID, exists := r.reg.LookupType(fieldEntry.Type.String())
 		if !exists {
-			typeToken := fieldEntry.Token
+			typeToken := fieldEntry.Tok()
 			if typeIdent, ok := fieldEntry.Type.(*ast.IdentExpr); ok {
-				typeToken = typeIdent.Token
+				typeToken = typeIdent.Tok()
 			}
 			r.addUndefinedType(typeToken)
 			typeID = registry.ErrorTypeID
 		}
 		field := &resolved.StateField{
-			Token: fieldEntry.Identifier.Token,
+			Token: fieldEntry.Identifier.Tok(),
 			Name:  name,
 			T:     typeID,
 		}
@@ -382,7 +382,7 @@ func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
 			if !isErrorType(initValue.Type(), typeID) && initValue.Type() != typeID {
 				coerceRule, coerceExists := r.reg.LookupCoerce(initValue.Type(), typeID)
 				if !coerceExists {
-					r.addTypeMissmatch(fieldEntry.Identifier.Token, typeID, initValue.Type())
+					r.addTypeMissmatch(fieldEntry.Identifier.Tok(), typeID, initValue.Type())
 					continue
 				}
 				initValue = &resolved.CoerceExpr{Inner: initValue, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
@@ -455,61 +455,61 @@ func (r *Resolver) newErrorExpr(tok token.Token) resolved.Expression {
 func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expression {
 	switch typedExpr := expr.(type) {
 	case *ast.IntegerExpr:
-		return &resolved.IntegerExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.IntegerID}
+		return &resolved.IntegerExpr{Token: typedExpr.Tok(), Value: typedExpr.Value, T: registry.IntegerID}
 	case *ast.FloatExpr:
-		return &resolved.FloatExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.FloatID}
+		return &resolved.FloatExpr{Token: typedExpr.Tok(), Value: typedExpr.Value, T: registry.FloatID}
 	case *ast.StringExpr:
-		return &resolved.StringExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.StringID}
+		return &resolved.StringExpr{Token: typedExpr.Tok(), Value: typedExpr.Value, T: registry.StringID}
 	case *ast.BooleanExpr:
-		return &resolved.BooleanExpr{Token: typedExpr.Token, Value: typedExpr.Value, T: registry.BoolID}
+		return &resolved.BooleanExpr{Token: typedExpr.Tok(), Value: typedExpr.Value, T: registry.BoolID}
 	case *ast.IdentExpr:
 		binding, exists := env.Get(Symbol(typedExpr.String()))
 		if !exists {
-			r.addUndefinedIdent(typedExpr.Token)
-			return &resolved.BadExpr{Token: typedExpr.Token}
+			r.addUndefinedIdent(typedExpr.Tok())
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
 		if binding.Kind == KindOutput {
-			r.addOutputNotReadable(typedExpr.Token)
-			return &resolved.BadExpr{Token: typedExpr.Token}
+			r.addOutputNotReadable(typedExpr.Tok())
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
-		return &resolved.IdentExpr{Token: typedExpr.Token, T: binding.T}
+		return &resolved.IdentExpr{Token: typedExpr.Tok(), T: binding.T}
 	case *ast.InfixExpr:
 		errsBefore := len(r.errs)
 		left := r.resolveExpr(typedExpr.Left, env)
 		right := r.resolveExpr(typedExpr.Right, env)
-		if typedExpr.Token.Type == token.AND || typedExpr.Token.Type == token.OR {
+		if typedExpr.Tok().Type == token.AND || typedExpr.Tok().Type == token.OR {
 			return r.resolveLogical(typedExpr, left, right)
 		}
 		if isErrorType(left.Type(), right.Type()) {
-			return r.newErrorExpr(typedExpr.Token)
+			return r.newErrorExpr(typedExpr.Tok())
 		}
-		binaryRule, exists := r.reg.LookupBinary(typedExpr.Token.Type, left.Type(), right.Type())
+		binaryRule, exists := r.reg.LookupBinary(typedExpr.Tok().Type, left.Type(), right.Type())
 		if !exists {
 			if len(r.errs) == errsBefore {
-				r.addInvalidBinaryOp(typedExpr.Token, left.Type(), right.Type())
+				r.addInvalidBinaryOp(typedExpr.Tok(), left.Type(), right.Type())
 			}
-			return &resolved.BadExpr{Token: typedExpr.Token}
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
-		return &resolved.InfixExpr{Token: typedExpr.Token, Left: left, Right: right, T: binaryRule.EvalType, EvalFn: binaryRule.EvalFn}
+		return &resolved.InfixExpr{Token: typedExpr.Tok(), Left: left, Right: right, T: binaryRule.EvalType, EvalFn: binaryRule.EvalFn}
 	case *ast.PrefixExpr:
 		errsBefore := len(r.errs)
 		right := r.resolveExpr(typedExpr.Right, env)
 		if isErrorType(right.Type()) {
-			return r.newErrorExpr(typedExpr.Token)
+			return r.newErrorExpr(typedExpr.Tok())
 		}
-		unaryRule, exists := r.reg.LookupUnary(typedExpr.Token.Type, right.Type())
+		unaryRule, exists := r.reg.LookupUnary(typedExpr.Tok().Type, right.Type())
 		if !exists {
 			if len(r.errs) == errsBefore {
-				r.addInvalidUnaryOp(typedExpr.Token, right.Type())
+				r.addInvalidUnaryOp(typedExpr.Tok(), right.Type())
 			}
-			return &resolved.BadExpr{Token: typedExpr.Token}
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
-		return &resolved.PrefixExpr{Token: typedExpr.Token, Right: right, T: unaryRule.EvalType, EvalFn: unaryRule.EvalFn}
+		return &resolved.PrefixExpr{Token: typedExpr.Tok(), Right: right, T: unaryRule.EvalType, EvalFn: unaryRule.EvalFn}
 
 	case *ast.MemberAccessExpr:
 		errsBefore := len(r.errs)
 		identExpr, isIdent := typedExpr.Object.(*ast.IdentExpr)
-		if isIdent && identExpr.Token.Type == token.STATE {
+		if isIdent && identExpr.Tok().Type == token.STATE {
 			fieldName := typedExpr.Member.String()
 			var fieldDecl *resolved.StateField
 
@@ -521,12 +521,12 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 			}
 
 			if fieldDecl == nil {
-				r.addStateUndeclared(typedExpr.Member.Token)
-				return &resolved.BadExpr{Token: typedExpr.Token}
+				r.addStateUndeclared(typedExpr.Member.Tok())
+				return &resolved.BadExpr{Token: typedExpr.Tok()}
 			}
 
 			return &resolved.StateAccessExpr{
-				Token: typedExpr.Token,
+				Token: typedExpr.Tok(),
 				Field: fieldName,
 				T:     fieldDecl.T,
 			}
@@ -534,17 +534,17 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 
 		resolvedExpr := r.resolveExpr(typedExpr.Object, env)
 		if isErrorType(resolvedExpr.Type()) {
-			return r.newErrorExpr(typedExpr.Token)
+			return r.newErrorExpr(typedExpr.Tok())
 		}
 		rule, exists := r.reg.LookupMemberAccess(resolvedExpr.Type(), typedExpr.Member.String())
 		if !exists {
 			if len(r.errs) == errsBefore {
-				r.addUndefinedAttribute(typedExpr.Member.Token)
+				r.addUndefinedAttribute(typedExpr.Member.Tok())
 			}
-			return &resolved.BadExpr{Token: typedExpr.Token}
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
 		return &resolved.MemberAccessExpr{
-			Token:     typedExpr.Token,
+			Token:     typedExpr.Tok(),
 			Object:    resolvedExpr,
 			Attribute: typedExpr.Member.String(),
 			T:         rule.EvalType,
@@ -555,33 +555,33 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		left := r.resolveExpr(typedExpr.Left, env)
 		r.resolveExpr(typedExpr.Index, env)
 		if isErrorType(left.Type()) {
-			return r.newErrorExpr(typedExpr.Token)
+			return r.newErrorExpr(typedExpr.Tok())
 		}
 		if len(r.errs) == errsBefore {
-			r.addNotIndexable(typedExpr.Token, left.Type())
+			r.addNotIndexable(typedExpr.Tok(), left.Type())
 		}
-		return &resolved.BadExpr{Token: typedExpr.Token}
+		return &resolved.BadExpr{Token: typedExpr.Tok()}
 	case *ast.CallExpr:
 		switch callee := typedExpr.Callee.(type) {
 		case *ast.MemberAccessExpr:
 			errsBefore := len(r.errs)
 			resolvedExpr := r.resolveExpr(callee.Object, env)
 			if isErrorType(resolvedExpr.Type()) {
-				return r.newErrorExpr(typedExpr.Token)
+				return r.newErrorExpr(typedExpr.Tok())
 			}
 
 			rule, callExists := r.reg.LookupCall(resolvedExpr.Type(), callee.Member.String())
 			if !callExists {
 				if len(r.errs) == errsBefore {
-					r.addUndefinedMethod(callee.Member.Token)
+					r.addUndefinedMethod(callee.Member.Tok())
 				}
-				return &resolved.BadExpr{Token: typedExpr.Token}
+				return &resolved.BadExpr{Token: typedExpr.Tok()}
 			}
 
-			args, valid := r.resolveArgs(typedExpr.Token, typedExpr.Args, typedExpr.Kwargs, rule, env)
+			args, valid := r.resolveArgs(typedExpr.Tok(), typedExpr.Args, typedExpr.Kwargs, rule, env)
 			if valid {
 				return &resolved.MethodCallExpr{
-					Token:    typedExpr.Token,
+					Token:    typedExpr.Tok(),
 					Receiver: resolvedExpr,
 					Method:   callee.Member.String(),
 					Args:     args,
@@ -589,18 +589,18 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 					EvalFn:   rule.EvalFn,
 				}
 			}
-			return &resolved.BadExpr{Token: typedExpr.Token}
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		case *ast.IdentExpr:
 			if isEmitCall(typedExpr) {
 				// if we got here - emit was used inside Expression. otherwise it will be parsed by separate case branch
-				r.addEmitNotExpression(callee.Token)
+				r.addEmitNotExpression(callee.Tok())
 			} else {
-				r.addUndefinedFunc(callee.Token)
+				r.addUndefinedFunc(callee.Tok())
 			}
-			return &resolved.BadExpr{Token: typedExpr.Token}
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		default:
-			r.addNotCallable(typedExpr.Token)
-			return &resolved.BadExpr{Token: typedExpr.Token}
+			r.addNotCallable(typedExpr.Tok())
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
 
 	default:
@@ -654,13 +654,13 @@ func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwa
 		}
 
 		if argRule == nil {
-			r.addUnknownKwarg(kwArg.Token, kwArg.Key.String())
+			r.addUnknownKwarg(kwArg.Tok(), kwArg.Key.String())
 			hasErrs = true
 			continue
 		}
 
 		if resolvedIdx[argRuleIdx] {
-			r.addDuplicateArg(kwArg.Token, argRule.Name)
+			r.addDuplicateArg(kwArg.Tok(), argRule.Name)
 			hasErrs = true
 			continue
 		}

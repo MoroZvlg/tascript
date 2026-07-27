@@ -117,7 +117,7 @@ func (p *Parser) Parse() *ast.Program {
 					if prog.InitFn != nil {
 						// NOTE: this is incorrect phase for such an error. But otherwise we will replace func and that's it
 						// Will see in the future if there will be a better way to handle it
-						p.addDuplicateDecl(decl.Token, decl.Identifier.Token)
+						p.addDuplicateDecl(decl.Tok(), decl.Identifier.Tok())
 					} else {
 						prog.InitFn = decl
 					}
@@ -125,7 +125,7 @@ func (p *Parser) Parse() *ast.Program {
 					if prog.RunFn != nil {
 						// NOTE: this is incorrect phase for such an error. But otherwise we will replace func and that's it
 						// Will see in the future if there will be a better way to handle it
-						p.addDuplicateDecl(decl.Token, decl.Identifier.Token)
+						p.addDuplicateDecl(decl.Tok(), decl.Identifier.Tok())
 					} else {
 						prog.RunFn = decl
 					}
@@ -334,7 +334,7 @@ func (p *Parser) parseInlineTypeExpr() *ast.TypeExpr {
 
 	if p.peekTokenIs(token.RBRACE) {
 		p.nextToken()
-		p.addEmptyCustomType(decl.Token.Pos)
+		p.addEmptyCustomType(decl.Tok().Pos)
 		return decl
 	}
 
