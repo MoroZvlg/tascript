@@ -19,6 +19,7 @@ type Program struct {
 
 type Node interface {
 	String() string
+	Tok() token.Token
 }
 
 type Statement interface {
@@ -64,6 +65,8 @@ func (id *InputDecl) String() string {
 	return out.String()
 }
 
+func (id *InputDecl) Tok() token.Token { return id.Token }
+
 // OutputDecl
 // - output alert: String
 // - output alert: { field: Type }
@@ -92,6 +95,8 @@ func (od *OutputDecl) String() string {
 	return out.String()
 }
 
+func (od *OutputDecl) Tok() token.Token { return od.Token }
+
 // ConstDecl - const FOO = "BAR" + "ZOO"
 type ConstDecl struct {
 	Token      token.Token
@@ -115,6 +120,8 @@ func (cd *ConstDecl) String() string {
 	}
 	return out.String()
 }
+
+func (cd *ConstDecl) Tok() token.Token { return cd.Token }
 
 type StateFieldDecl struct {
 	Token      token.Token
@@ -145,6 +152,8 @@ func (sfd *StateFieldDecl) String() string {
 	return out.String()
 }
 
+func (sfd *StateFieldDecl) Tok() token.Token { return sfd.Token }
+
 // FunctionDecl
 // - function Init() {}
 type FunctionDecl struct {
@@ -169,6 +178,8 @@ func (fd *FunctionDecl) String() string {
 	return out.String()
 }
 
+func (fd *FunctionDecl) Tok() token.Token { return fd.Token }
+
 type BadExpr struct {
 	Token token.Token
 }
@@ -176,6 +187,8 @@ type BadExpr struct {
 func (be *BadExpr) String() string {
 	return "<error>"
 }
+
+func (be *BadExpr) Tok() token.Token { return be.Token }
 
 func (be *BadExpr) expressionNode() {}
 
@@ -186,6 +199,8 @@ type IdentExpr struct {
 func (ie *IdentExpr) String() string {
 	return ie.Token.Literal
 }
+
+func (ie *IdentExpr) Tok() token.Token { return ie.Token }
 
 func (ie *IdentExpr) expressionNode() {}
 
@@ -200,6 +215,8 @@ func (ie *IntegerExpr) String() string {
 	return fmt.Sprintf("%d", ie.Value)
 }
 
+func (ie *IntegerExpr) Tok() token.Token { return ie.Token }
+
 func (ie *IntegerExpr) expressionNode() {}
 
 type FloatExpr struct {
@@ -210,6 +227,8 @@ type FloatExpr struct {
 func (fe *FloatExpr) String() string {
 	return fmt.Sprintf("%g", fe.Value)
 }
+
+func (fe *FloatExpr) Tok() token.Token { return fe.Token }
 
 func (fe *FloatExpr) expressionNode() {}
 
@@ -223,6 +242,8 @@ func (se *StringExpr) String() string {
 	return fmt.Sprintf("%q", se.Value)
 }
 
+func (se *StringExpr) Tok() token.Token { return se.Token }
+
 func (se *StringExpr) expressionNode() {}
 
 type BooleanExpr struct {
@@ -233,6 +254,8 @@ type BooleanExpr struct {
 func (be *BooleanExpr) String() string {
 	return fmt.Sprintf("%t", be.Value)
 }
+
+func (be *BooleanExpr) Tok() token.Token { return be.Token }
 
 func (be *BooleanExpr) expressionNode() {}
 
@@ -254,6 +277,8 @@ func (ie *InfixExpr) String() string {
 	return out.String()
 }
 
+func (ie *InfixExpr) Tok() token.Token { return ie.Token }
+
 func (ie *InfixExpr) expressionNode() {}
 
 type PrefixExpr struct {
@@ -267,6 +292,8 @@ func (pe *PrefixExpr) String() string {
 	out.WriteString(pe.Right.String())
 	return out.String()
 }
+
+func (pe *PrefixExpr) Tok() token.Token { return pe.Token }
 
 func (pe *PrefixExpr) expressionNode() {}
 
@@ -284,6 +311,8 @@ func (ma *MemberAccessExpr) String() string {
 	return out.String()
 }
 
+func (ma *MemberAccessExpr) Tok() token.Token { return ma.Token }
+
 func (ma *MemberAccessExpr) expressionNode() {}
 
 type IndexExpr struct {
@@ -300,6 +329,8 @@ func (ie *IndexExpr) String() string {
 	out.WriteString("]")
 	return out.String()
 }
+
+func (ie *IndexExpr) Tok() token.Token { return ie.Token }
 
 func (ie *IndexExpr) expressionNode() {}
 
@@ -330,6 +361,8 @@ func (ce *CallExpr) String() string {
 	return out.String()
 }
 
+func (ce *CallExpr) Tok() token.Token { return ce.Token }
+
 func (ce *CallExpr) expressionNode() {}
 
 type KwargsExpr struct {
@@ -349,6 +382,8 @@ func (ke *KwargsExpr) String() string {
 	}
 	return out.String()
 }
+
+func (ke *KwargsExpr) Tok() token.Token { return ke.Token }
 
 func (ke *KwargsExpr) expressionNode() {}
 
@@ -370,6 +405,8 @@ func (te *TypeExpr) String() string {
 	return out.String()
 }
 
+func (te *TypeExpr) Tok() token.Token { return te.Token }
+
 func (te *TypeExpr) typeDeclNode() {}
 
 type FieldExpr struct {
@@ -385,6 +422,8 @@ func (fe *FieldExpr) String() string {
 	out.WriteString(fe.Type.String())
 	return out.String()
 }
+
+func (fe *FieldExpr) Tok() token.Token { return fe.Token }
 
 type LetStmt struct {
 	Token token.Token
@@ -408,6 +447,8 @@ func (ls *LetStmt) String() string {
 	}
 	return out.String()
 }
+
+func (ls *LetStmt) Tok() token.Token { return ls.Token }
 
 func (ls *LetStmt) statementNode() {}
 
@@ -433,18 +474,21 @@ func (as *AssignStmt) String() string {
 	return out.String()
 }
 
+func (as *AssignStmt) Tok() token.Token { return as.Token }
+
 func (as *AssignStmt) statementNode() {}
 
 // BadStmt is a placeholder kept in the tree when a statement is too broken to
 // form a meaningful partial node. It preserves the source span so later passes
-// (tooling, analyzer) keep working over recovered code. See [IsBadExpr] for the
-// expression-level analogue.
+// (tooling, analyzer) keep working over recovered code.
 type BadStmt struct {
 	From token.Pos
 	To   token.Pos
 }
 
 func (bs *BadStmt) String() string { return "<bad statement>" }
+
+func (bs *BadStmt) Tok() token.Token { return token.Token{Pos: bs.From} }
 
 func (bs *BadStmt) statementNode() {}
 
@@ -459,6 +503,8 @@ func (es *ExprStmt) String() string {
 	}
 	return "<missing expression>"
 }
+
+func (es *ExprStmt) Tok() token.Token { return es.Token }
 
 func (es *ExprStmt) statementNode() {}
 
@@ -485,6 +531,8 @@ func (bs *BlockStmt) String() string {
 	out.WriteString("}")
 	return out.String()
 }
+
+func (bs *BlockStmt) Tok() token.Token { return bs.Token }
 
 func (bs *BlockStmt) statementNode() {}
 
@@ -515,6 +563,8 @@ func (is *IfStmt) String() string {
 	}
 	return out.String()
 }
+
+func (is *IfStmt) Tok() token.Token { return is.Token }
 
 func (is *IfStmt) statementNode() {}
 

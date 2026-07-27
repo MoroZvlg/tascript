@@ -158,8 +158,7 @@ shared-handle invariant, see the input-wiring section).
 | 11 | P2 | resolver | No reserved-name / shadowing rules | All verified accepted-without-diag: `let math = 5` shadows the module inside a function (spec: RESERVED_REASSIGN); `let m = math` then `m.sqrt(9.0)` — modules are first-class, aliasable values (spec §5.4: passive syntactic prefixes, not values — a bare module ident in value position should diag); `const Init = 5` coexists with `function Init()` — function names never enter the top-level env (spec §3.3: one namespace). Decision needed alongside: same-scope `let x` redeclaration currently silently rebinds, even with a new type (JS errors on it; spec silent) |
 | 12 | P2 | resolver | `emit` semantic checks: placement, payload shape, reserved kwargs | Verified gaps: (a) emit inside `Init()` resolves + evals clean — spec §5.2 wants EMIT_OUTSIDE_RUN (`resolveFunc` is identical for both fns; needs a context flag); (b) positional args fill *structured* outputs — `emit(sig, "down", 0.5)` — spec says kwargs-only, and `TestResolver_ResolveEmit` blesses the behavior: decide, then fix test or spec; (c) `emit(logs, value="hi")` — the synthetic `value` param name from `Registry.EmitRule` leaks into the surface language (kwargs on value outputs should be rejected); (d) reserved kwargs `ts`/`output` (spec: EMIT_RESERVED_KWARG) unenforced — cheap to reject at output-decl resolution before host wiring lands |
 | 13 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the shipped `EvalRun(frame map[string]Value)` map stopgap (#7 — migrate to a slot `[]Value` frame) | Includes registry purge-on-reuse: `resolveTypeDecl` writes synthesized inline port types (`input.x`/`output.sig`) into the host-owned registry, but the duplicate guard reads the per-pass env — so a second `Compile()` on one Engine, or two scripts sharing one registry, collides. Scope the synthesized types per compile (or purge on reuse) rather than papering over the collision with a diagnostic. Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" below — that section now also carries the resolver-contract and registry-encapsulation notes from the review |
-| 14 | P2 | diag | Diagnostics quality pass: machine-readable interface, code reconciliation, message hygiene | `diag.Diagnostic` is just `Error() string` — spec §6.2/§6.4 promises tooling phase/code/pos without parsing messages; add `Phase()`/`Code()`/`Pos()` accessors while the type count is small. Fix misspelled external-contract codes **before** tooling matches on them: `TYPE_MISSMATCH`/`ARGS_NUMBER_MISSMATCH` (spec: `TYPE_MISMATCH`), `UNDEFINED_MEETHOD`. Stop leaking `Token.String()` debug format into messages ("unknown identifier [IDENTIFIER] -> sig") — use `.Literal`; affects ~9 diag types. Reconcile the code set with spec §6.4: UNEXPECTED_TOP_DECL vs TOP_LEVEL_FORM, DUPLICATE_DECLARATION vs PORT_DUPLICATE, INVALID_OPERATION shared by two diag types, EMPTY_FUNCTION absent from spec (also decide whether an empty `Run` is even illegal — spec never says so). Phases: spec defines two, impl has three (`PhaseCheck`), and `DuplicateDeclaration` ships with PhaseParse from the parser but PhaseCheck from the resolver (the NOTE at parser.go:100 already doubts it) |
-| 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
+| 14 | P2 | diag | Diagnostics quality pass: machine-readable interface, code reconciliation, message hygiene | `diag.Diagnostic` is just `Error() string` — spec §6.2/§6.4 promises tooling phase/code/pos without parsing messages; add `Phase()`/`Code()`/`Pos()` accessors while the type count is small. Fix misspelled external-contract codes **before** tooling matches on them: `TYPE_MISSMATCH`/`ARGS_NUMBER_MISSMATCH` (spec: `TYPE_MISMATCH`), `UNDEFINED_MEETHOD`. Stop leaking `Token.String()` debug format into messages ("unknown identifier [IDENTIFIER] -> sig") — use `.Literal`; affects ~9 diag types. Reconcile the code set with spec §6.4: UNEXPECTED_TOP_DECL vs TOP_LEVEL_FORM, DUPLICATE_DECLARATION vs PORT_DUPLICATE, INVALID_OPERATION shared by two diag types, EMPTY_FUNCTION absent from spec (also decide whether an empty `Run` is even illegal — spec never says so). Phases: spec defines two, impl has three (`PhaseCheck`), and `DuplicateDeclaration` ships with PhaseParse from the parser but PhaseCheck from the resolver (the NOTE at parser.go:100 already doubts it). Inherited from #21 (positions are done, wording is not): the emit arity diag counts the rule's params against `call.Args[1:]`, so `emit(sig, "up")` reports "expected 2 args but got 1" — correct arithmetic, misleading against what the user typed |
 
 Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
 **No P1 rows remain**, and the D-batch smalls (#15/#18/#19/#24/#25) shipped 2026-07-25:
@@ -177,9 +176,22 @@ single token source and never has to look past a separator it may still need; a 
 before `)` in a call closes the arg list instead of reporting 2 errors. #20 followed: an unknown
 kwarg is now `ARG_UNKNOWN_KEYWORD` instead of being silently dropped, and a parameter filled
 twice is `ARG_DUPLICATE` instead of surfacing as "missing <the other> arg"; both point at the
-kwarg's own token, unlike the positional diagnostics still blocked on #21. Still open from that
-row: the emit count diag says "expected 2 args but got 1" without counting the target — wording
-belongs with #21.
+kwarg's own token, unlike the positional diagnostics that were still blocked on #21 at the time.
+
+**#21 closed 2026-07-28, and the "blocked" premise in its own row was wrong.** The row said it
+needed `Tok()` on `ast.Expression` and should fold into #14's position work; neither held. Every
+`ast` node already carried a `Token`, so the interface method was mechanical, and the three
+consumer sites only wanted *a better token to hand an existing diag constructor* — they never
+touched how `diag.Diagnostic` carries position, which is the actual #14 question. Doing it first
+keeps #14 to interface + code set + message hygiene. Shipped: `Tok() token.Token` on the `Node`
+interface (so statements and type decls get it too, not just expressions); `ast.BadStmt` is the
+only node without a `Token` field and synthesizes from `From`, which is what `resolveStmt` used
+to open-code. Positional args and `CallArgExpr.Token` now use `arg.Tok()`, kwargs use the key
+token, and the `if` condition points at the condition instead of the `if` keyword — that last one
+was a separate TODO not even listed under the row. Arity and missing-arg diags deliberately keep
+the call token: there is no arg to point at. The ~124 concrete-type `.Token` reads in the
+resolver were left alone — `Tok()` earns its place only where the static type is an interface;
+converting the rest trades a compile-time-checked field for a method returning the same value.
 
 **Rows #26–#30 (added 2026-07-25) are the smalls that were only ever prose bullets** in the
 sections below — promoted so the table is the single work queue. Each is mechanical or one
@@ -283,7 +295,7 @@ file is organized by construct, not by feature — plus `TestRegistry_ErrorTypeI
 When items A/B land, short-circuit the error type *before* capability lookups so `typeReplaceable(ErrorTypeID)`
 never reports while `slotWritable(kind)` still can.
 
-**No smalls remain: the table is now #11, #12, #13, #14, #21 — all design work.**
+**No smalls remain: the table is now #11, #12, #13, #14 — all design work.**
 
 Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is

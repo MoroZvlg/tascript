@@ -210,8 +210,6 @@ func (r *Resolver) resolveEmit(call *ast.CallExpr, env *Env) resolved.Statement 
 		return &resolved.BadStmt{Token: target.Token}
 	}
 
-	// TODO: resolveArgs wants the arg's own token; ast.Expression exposes no Tok(), so arg-level
-	// diagnostics point at `(` until it does
 	args, valid := r.resolveArgs(call.Token, call.Args[1:], call.Kwargs, r.reg.EmitRule(binding.T), env)
 	if !valid {
 		return &resolved.BadStmt{Token: call.Token}
@@ -227,8 +225,7 @@ func (r *Resolver) resolveEmit(call *ast.CallExpr, env *Env) resolved.Statement 
 func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Statement {
 	condition := r.resolveExpr(astStmt.Condition, env)
 	if !isErrorType(condition.Type()) && condition.Type() != registry.BoolID {
-		// TODO: point at the condition, not the `if` keyword. Needs Tok() on ast.Expression.
-		r.addTypeMissmatch(astStmt.Token, registry.BoolID, condition.Type())
+		r.addTypeMissmatch(astStmt.Condition.Tok(), registry.BoolID, condition.Type())
 	}
 
 	consequence := r.resolveBlock(astStmt.Consequence, NewEnclosedEnv(env))
@@ -581,8 +578,6 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 				return &resolved.BadExpr{Token: typedExpr.Token}
 			}
 
-			// TODO: resolveArgs wants the arg's own token; ast.Expression exposes no Tok(), so
-			// arg-level diagnostics point at `(` until it does
 			args, valid := r.resolveArgs(typedExpr.Token, typedExpr.Args, typedExpr.Kwargs, rule, env)
 			if valid {
 				return &resolved.MethodCallExpr{
@@ -613,9 +608,9 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 	}
 }
 
-func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, env *Env) ([]*resolved.CallArgExpr, bool) {
+func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, env *Env) ([]*resolved.CallArgExpr, bool) {
 	if len(args)+len(kwargs) != len(rule.Args) {
-		r.addArgsNumberMismatch(argToken, len(rule.Args), len(args)+len(kwargs))
+		r.addArgsNumberMismatch(callToken, len(rule.Args), len(args)+len(kwargs))
 		return nil, false
 	}
 	resolvedIdx := make([]bool, len(rule.Args))
@@ -636,11 +631,11 @@ func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwar
 
 		if !typeMatches && !isErrorType(resolvedArg.Type(), argRule.Type) {
 			hasErrs = true
-			r.addTypeMissmatch(argToken, argRule.Type, resolvedArg.Type())
+			r.addTypeMissmatch(arg.Tok(), argRule.Type, resolvedArg.Type())
 		}
 
 		resolvedArgs[i] = &resolved.CallArgExpr{
-			Token: argToken,
+			Token: arg.Tok(),
 			Name:  argRule.Name,
 			Value: resolvedArg,
 		}
@@ -682,11 +677,11 @@ func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwar
 
 		if !typeMatches && !isErrorType(resolvedArg.Type(), argRule.Type) {
 			hasErrs = true
-			r.addTypeMissmatch(argToken, argRule.Type, resolvedArg.Type())
+			r.addTypeMissmatch(kwArg.Tok(), argRule.Type, resolvedArg.Type())
 		}
 
 		resolvedArgs[argRuleIdx] = &resolved.CallArgExpr{
-			Token: argToken,
+			Token: kwArg.Tok(),
 			Name:  argRule.Name,
 			Value: resolvedArg,
 		}
@@ -695,7 +690,7 @@ func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwar
 	for i, isResolved := range resolvedIdx {
 		if !isResolved {
 			unresolvedRule := rule.Args[i]
-			r.addArgsMissing(argToken, unresolvedRule.Name)
+			r.addArgsMissing(callToken, unresolvedRule.Name)
 			hasErrs = true
 		}
 	}

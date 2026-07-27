@@ -384,10 +384,10 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 		},
 		{
 			"arg type missmatch",
-			`const FOO = math.sqrt^("foo")`,
+			`const FOO = math.sqrt(^"foo")`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, registry.FloatID, registry.StringID),
+					addTypeMissmatch(token.Token{Type: token.STRING, Pos: ps[0], Literal: "foo"}, registry.FloatID, registry.StringID),
 				}
 			},
 		},
@@ -514,10 +514,10 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 		},
 		{
 			"if condition must be bool",
-			"function Run() {\n^if (1) {}\n}",
+			"function Run() {\nif (^1) {}\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.IF, Pos: ps[0], Literal: "if"}, registry.BoolID, registry.IntegerID),
+					addTypeMissmatch(token.Token{Type: token.INTEGER, Pos: ps[0], Literal: "1"}, registry.BoolID, registry.IntegerID),
 				}
 			},
 		},
@@ -806,10 +806,10 @@ func TestResolver_ResolveEmitErrors(t *testing.T) {
 		},
 		{
 			"emit value type missmatch",
-			"output alert: String\nfunction Run() {\nemit^(alert, 3)\n}",
+			"output alert: String\nfunction Run() {\nemit(alert, ^3)\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, registry.StringID, registry.IntegerID),
+					addTypeMissmatch(token.Token{Type: token.INTEGER, Pos: ps[0], Literal: "3"}, registry.StringID, registry.IntegerID),
 				}
 			},
 		},
