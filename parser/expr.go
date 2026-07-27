@@ -130,7 +130,7 @@ func (p *Parser) parseCallExpr(callee ast.Expression) ast.Expression {
 			}
 		} else {
 			if kwargSeen {
-				p.addArgsOrder(p.currentToken.Pos)
+				p.addArgOrderInvalid(p.currentToken.Pos)
 				break
 			}
 			arg := p.parseExpression(LowestPrec)
@@ -165,7 +165,7 @@ func (p *Parser) parseIdentExpr() ast.Expression {
 func (p *Parser) parseIntegerExpr() ast.Expression {
 	val, err := strconv.Atoi(p.currentToken.Literal)
 	if err != nil {
-		p.addParseFailed(p.currentToken.Pos, p.currentToken.Type, err)
+		p.addNumberOutOfRange(p.currentToken)
 		return &ast.BadExpr{Token: p.currentToken}
 	}
 	return &ast.IntegerExpr{Token: p.currentToken, Value: val}
@@ -174,7 +174,7 @@ func (p *Parser) parseIntegerExpr() ast.Expression {
 func (p *Parser) parseFloatExpr() ast.Expression {
 	val, err := strconv.ParseFloat(p.currentToken.Literal, 64)
 	if err != nil {
-		p.addParseFailed(p.currentToken.Pos, p.currentToken.Type, err)
+		p.addNumberOutOfRange(p.currentToken)
 		return &ast.BadExpr{Token: p.currentToken}
 	}
 	return &ast.FloatExpr{Token: p.currentToken, Value: val}

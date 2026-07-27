@@ -321,11 +321,8 @@ func TestEvaluator_TrapDivisionByZero(t *testing.T) {
 			if failure.Kind != registry.DivisionByZero {
 				t.Errorf("kind = %s, want %s", failure.Kind, registry.DivisionByZero)
 			}
-			if failure.Pos.Line != 2 {
-				t.Errorf("position = %s, want line 2", failure.Pos.String())
-			}
-			if failure.EntryFn != "Run" {
-				t.Errorf("entry fn = %s, want Run", failure.EntryFn)
+			if failure.At.Line != 2 {
+				t.Errorf("position = %s, want line 2", failure.At.String())
 			}
 		})
 	}
@@ -639,16 +636,36 @@ func TestEvaluator_InputBinding(t *testing.T) {
 	t.Run("missing input errors", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
 		_, err := ev.EvalRun(nil)
-		if err == nil || !strings.Contains(err.Error(), "missing input") {
-			t.Fatalf("want missing-input error, got: %v", err)
+		var missing diag.InputMissing
+		if !errors.As(err, &missing) {
+			t.Fatalf("expected diag.InputMissing, got %T: %v", err, err)
+		}
+		if missing.Name != "price" {
+			t.Errorf("name = %s, want price", missing.Name)
 		}
 	})
 
 	t.Run("type mismatch errors", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
 		_, err := ev.EvalRun(map[string]registry.Value{"price": registry.String("x")})
-		if err == nil || !strings.Contains(err.Error(), "expected") {
-			t.Fatalf("want type-mismatch error, got: %v", err)
+		var mismatch diag.InputTypeMismatch
+		if !errors.As(err, &mismatch) {
+			t.Fatalf("expected diag.InputTypeMismatch, got %T: %v", err, err)
+		}
+		if mismatch.Expected != registry.FloatID || mismatch.Got != registry.StringID {
+			t.Errorf("expected %s got %s, want Float/String", mismatch.Expected, mismatch.Got)
+		}
+	})
+
+	t.Run("undeclared input errors even when the frame is the declared size", func(t *testing.T) {
+		ev := initedEval(t, src, nil)
+		_, err := ev.EvalRun(map[string]registry.Value{"volume": registry.Float(2)})
+		var unknown diag.InputUnknown
+		if !errors.As(err, &unknown) {
+			t.Fatalf("expected diag.InputUnknown, got %T: %v", err, err)
+		}
+		if unknown.Name != "volume" {
+			t.Errorf("name = %s, want volume", unknown.Name)
 		}
 	})
 
@@ -658,8 +675,12 @@ func TestEvaluator_InputBinding(t *testing.T) {
 			"price":  registry.Float(1),
 			"volume": registry.Float(2),
 		})
-		if err == nil || !strings.Contains(err.Error(), "unknown input") {
-			t.Fatalf("want unknown-input error, got: %v", err)
+		var unknown diag.InputUnknown
+		if !errors.As(err, &unknown) {
+			t.Fatalf("expected diag.InputUnknown, got %T: %v", err, err)
+		}
+		if unknown.Name != "volume" {
+			t.Errorf("name = %s, want volume", unknown.Name)
 		}
 	})
 }

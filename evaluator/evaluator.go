@@ -99,27 +99,33 @@ func (e *Evaluator) EvalRun(frame map[string]registry.Value) (result registry.Va
 }
 
 func (e *Evaluator) bindInputs(env *Env, frame map[string]registry.Value) error {
-	if len(frame) > len(e.prog.Inputs) {
-		declared := make(map[string]struct{}, len(e.prog.Inputs))
+	for name := range frame {
+		declared := false
 		for _, decl := range e.prog.Inputs {
-			declared[decl.Name] = struct{}{}
-		}
-		for name := range frame {
-			if _, ok := declared[name]; !ok {
-				return fmt.Errorf("unknown input %q: not declared", name)
+			if decl.Name == name {
+				declared = true
+				break
 			}
+		}
+		if !declared {
+			return diag.InputUnknown{Name: name}
 		}
 	}
 
 	for _, decl := range e.prog.Inputs {
 		value, ok := frame[decl.Name]
 		if !ok {
-			return fmt.Errorf("missing input %q", decl.Name)
+			return diag.InputMissing{At: decl.Token.Pos, Name: decl.Name}
 		}
 		if value.TypeID() != decl.T {
 			rule, canCoerce := e.registry.LookupCoerce(value.TypeID(), decl.T)
 			if !canCoerce {
-				return fmt.Errorf("input %q: expected %s, got %s", decl.Name, decl.T, value.TypeID())
+				return diag.InputTypeMismatch{
+					At:       decl.Token.Pos,
+					Name:     decl.Name,
+					Expected: decl.T,
+					Got:      value.TypeID(),
+				}
 			}
 			value = rule.EvalFn(value)
 		}
@@ -131,7 +137,6 @@ func (e *Evaluator) bindInputs(env *Env, frame map[string]registry.Value) error 
 
 func (e *Evaluator) internalFailure(panicValue any) error {
 	return diag.InternalFailure{
-		Phase:   diag.PhaseRuntime,
 		EntryFn: e.currFn,
 		Panic:   panicValue,
 		Stack:   debug.Stack(),
@@ -145,11 +150,9 @@ func (e *Evaluator) runtimeFailure(ruleErr error, tok token.Token) error {
 		regErr = registry.Error{Kind: registry.UnknownKind, Message: ruleErr.Error()}
 	}
 	return diag.RuntimeFailure{
-		Phase:   diag.PhaseRuntime,
-		Pos:     tok.Pos,
+		At:      tok.Pos,
 		Kind:    regErr.Kind,
 		Message: regErr.Message,
-		EntryFn: e.currFn,
 	}
 }
 
@@ -191,7 +194,7 @@ func (e *Evaluator) evalStmt(stmt resolved.Statement, env *Env) (registry.Value,
 	case *resolved.AssignStateStmt:
 		return e.evalAssignState(n, env)
 	default:
-		return nil, fmt.Errorf("unsupported statement %T", stmt)
+		panic(fmt.Sprintf("unhandled resolved statement %T: the resolver produced a node the evaluator never wired up", stmt))
 	}
 }
 
@@ -301,7 +304,7 @@ func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value
 	case *resolved.StateAccessExpr:
 		return e.evalStateAccess(n)
 	default:
-		return nil, fmt.Errorf("not implemented expression %T", expr)
+		panic(fmt.Sprintf("unhandled resolved expression %T: the resolver produced a node the evaluator never wired up", expr))
 	}
 }
 

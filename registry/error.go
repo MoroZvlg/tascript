@@ -11,7 +11,7 @@ const (
 	OutOfRange      ErrorKind = "OUT_OF_RANGE"
 	UnassignedState ErrorKind = "UNASSIGNED_STATE"
 	// UnknownKind marks a non-registry error. host-written rules may return arbitrary errors.
-	UnknownKind ErrorKind = "UNKNOWN"
+	UnknownKind ErrorKind = "UNKNOWN_FAILURE"
 )
 
 // Error is what rule EvalFns return to trap the current tick.

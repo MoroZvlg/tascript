@@ -207,8 +207,10 @@ They are valid only as the first argument to `emit(...)` inside `Run()`.
 - An input binding is **read-only**; reassignment inside a function is a parse-time error
   (this is a *slot policy*, §4.5).
 - An output name is **emit-only**; reading or assigning it is a parse-time error.
-- A declared input or output that the launcher did not wire is a **launch-time error
-  before any data is processed**.
+- A declared input the host does not supply on an activation is a **runtime error**, and the
+  activation is rejected before the body runs. The same holds for a value whose type does not
+  match the declaration and cannot be coerced to it, and for a supplied name the script never
+  declared.
 - An `emit(...)` call targeting an undeclared output is a parse-time error.
 
 **Out of scope for the current revision** (may be added later): user-tunable config inputs
@@ -720,10 +722,24 @@ reserved.
 
 ### 6.2 Every error carries
 
-- **Phase** — `parse` or `runtime`.
+- **Phase** — `parse` or `runtime`. Structured metadata only; not rendered.
 - **Category code** — stable machine-readable identifier (§6.4).
-- **Source location** — file, line, column.
+- **Source location** — line, column. *Which* script is the host's identity to supply,
+  not the diagnostic's.
 - **Human-readable message** — may include a hint.
+
+Rendered shape:
+
+```
+error[TYPE_MISMATCH] 2:19: expected Float, found String
+error[DIVISION_BY_ZERO] 3:9: integer division by zero
+```
+
+Type mismatches read `expected X, found Y`. Runtime traps borrow their category code from
+the runtime error kind, so both namespaces share the bracket. Two diagnostics render with no
+source location: a recovered internal panic (no node is in hand once the stack has unwound)
+and an undeclared input port (the offending key is supplied by the host and appears nowhere
+in the script).
 
 ### 6.3 Parse-time policy
 
@@ -744,8 +760,10 @@ their specs):
 | `STATE_UNDECLARED` | parse | Read/write of a `state.*` entry with no top-level declaration. |
 | `STATE_UNINITIALIZED` | parse | A `state` entry has no initializer and is not definitely assigned in `Init()`. |
 | `HISTORY_OUT_OF_RANGE` | runtime | `x[n]` where insufficient history. |
-| `INPUT_NOT_WIRED` | launch | A declared input port has no source block. |
-| `OUTPUT_NOT_WIRED` | launch | A declared output port has no destination block. |
+| `INPUT_MISSING` | runtime | A declared input port was not supplied for this activation. |
+| `INPUT_UNKNOWN` | runtime | The host supplied a name the script does not declare. Renders with no source location: the name appears nowhere in the script. |
+| `INPUT_TYPE_MISMATCH` | runtime | A supplied input value does not match the declared port type and cannot be coerced to it. |
+| `OUTPUT_NOT_WIRED` | runtime | A declared output port has no destination block. |
 | `PORT_DUPLICATE` | parse | Two top-level ports/bindings declare the same name. |
 | `UNKNOWN_OUTPUT` | parse | `emit(...)` targets a non-declared output. |
 | `EMIT_OUTSIDE_RUN` | parse | `emit(...)` outside `function Run()`. |
@@ -756,10 +774,10 @@ their specs):
 | `NOT_CALLABLE` | parse | Call on an expression that is not a callable form. |
 | `NOT_INDEXABLE` | parse | `a[i]` on a type with no index rule (today: every type). |
 | `ARG_DUPLICATE` | parse | One parameter filled twice — positionally and by keyword, or by two keywords. |
-| `ARG_UNKNOWN_KEYWORD` | parse | Keyword argument that names no parameter of the callee. |
+| `ARG_UNKNOWN` | parse | Keyword argument that names no parameter of the callee. |
 | `TOP_LEVEL_FORM` | parse | A construct not permitted at the top level (e.g. a `state.*` assignment, `if`). |
-| `TOP_DECL_IN_BODY` | parse | A top-level declaration used inside a function body. |
-| `MISSING_REQUIRED_FN` | parse | Program does not declare `function Run()`. |
+| `TOP_DECL_MISPLACED` | parse | A top-level declaration used inside a function body. |
+| `MISSING_RUN` | parse | Program does not declare `function Run()`. |
 
 Future categories are additive; existing codes never change meaning.
 
@@ -772,8 +790,7 @@ Runtime errors come in two kinds, distinguished by whether the **program** or th
 
 A script trap is a failure a correct interpreter hits on otherwise legal input — division
 by zero, an invalid `Time.truncate(...)` bucket, history index out of range. A trap carries
-a stable machine-readable **kind**, a source position, the entry function (`Init` or `Run`),
-and a message:
+a stable machine-readable **kind**, a source position, and a message:
 
 | Kind | When |
 |------|------|
@@ -781,7 +798,7 @@ and a message:
 | `INVALID_ARGUMENT` | A rule rejected a well-typed argument (e.g. a bad `Time.truncate` bucket). |
 | `OUT_OF_RANGE` | Index outside the valid range (history `x[n]`, future tuple `t[i]`). |
 | `UNASSIGNED_STATE` | Read of a `state.*` field that reached `Run()` unset. Unreachable in a program that passes definite-assignment analysis; retained as a fail-loud backstop. |
-| `UNKNOWN` | A host-registered rule returned a non-registry error; wrapped verbatim. |
+| `UNKNOWN_FAILURE` | A host-registered rule returned a non-registry error; wrapped verbatim. |
 
 **Tick transactionality.** A script trap aborts the current invocation atomically:
 
@@ -801,9 +818,9 @@ rejected at load.
 
 An internal failure is a recovered panic below the two public entry points (`EvalInit`,
 `EvalRun`): core code reaching a state the resolver was supposed to prevent, or a registered
-rule that panicked. It surfaces with kind `INTERNAL`, the entry function, and a stack trace,
+rule that panicked. It surfaces with kind `INTERNAL_FAILURE`, the entry function, and a stack trace,
 but **no source position** — it signals an interpreter or host-rule bug, not a program
-fault, and is the one exception to §6.2's source-location rule.
+fault.
 
 ## 7. Resource Limits
 
@@ -818,7 +835,7 @@ tighten but not relax them above the ceilings.
 | Max `emit(...)` kwargs per call | 32 | parse | Parse error. |
 | Max identifier length | 128 | parse | Parse error. |
 | Max nested expression depth | 64 | parse | Parse error. |
-| Max source file size | 256 KB | parse | Parse error. |
+| Max source size | 256 KB | parse | Parse error. |
 | Max parse errors collected | 100 | parse | Parser aborts the collection pass (§6.3). |
 
 Host libraries may add their own limits (e.g. indicator-driven window sizing) in their specs.
@@ -833,8 +850,8 @@ the language.
 | `STRING_LIMIT` | parse / runtime | String literal or runtime string value exceeded the cap. |
 | `KWARG_LIMIT` | parse | `emit(...)` with more than the allowed kwargs. |
 | `IDENT_LIMIT` | parse | Identifier longer than the cap. |
-| `DEPTH_LIMIT` | parse | Expression nested deeper than the cap. |
-| `SOURCE_SIZE_LIMIT` | parse | Source file larger than the cap. |
+| `NESTING_TOO_DEEP` | parse | Expression nested deeper than the cap. |
+| `SOURCE_SIZE_LIMIT` | parse | Source larger than the cap. |
 
 ## 8. Examples (core, domain-free)
 

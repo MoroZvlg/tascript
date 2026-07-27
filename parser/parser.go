@@ -133,7 +133,7 @@ func (p *Parser) Parse() *ast.Program {
 				}
 			}
 		default:
-			p.addUnexpectedTopDecl(p.currentToken.Pos)
+			p.addTopDeclUnexpected(p.currentToken.Pos)
 		}
 		if p.errCount == errsBefore &&
 			!p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) {
@@ -152,7 +152,7 @@ func (p *Parser) Parse() *ast.Program {
 
 	if prog.RunFn == nil && p.errCount == 0 {
 		prog.Valid = false
-		p.addMissingRunFn(p.currentToken.Pos)
+		p.addMissingRun(p.currentToken.Pos)
 	}
 
 	return prog
@@ -192,7 +192,7 @@ func (p *Parser) parsePortDecl() portDecl {
 	case token.LBRACE:
 		decl.Type = p.parseInlineTypeExpr()
 	default:
-		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
+		p.addTypeExpected(p.currentToken.Pos)
 	}
 	return decl
 }
@@ -236,7 +236,7 @@ func (p *Parser) parseStateFieldDecl() *ast.StateFieldDecl {
 	//case token.LBRACE:
 	//	decl.Type = p.parseInlineTypeExpr()
 	default:
-		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
+		p.addTypeExpected(p.currentToken.Pos)
 	}
 
 	if p.peekTokenIs(token.ASSIGN) {
@@ -282,7 +282,7 @@ func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 	errsBeforeDecl := p.errCount
 	if p.currTokenIs(token.IDENT) {
 		if p.currentToken.Literal != InitFnIdent && p.currentToken.Literal != RunFnIdent {
-			p.addForbiddenFunc(p.currentToken.Pos)
+			p.addForbiddenFunction(p.currentToken.Pos)
 		}
 
 		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
@@ -319,7 +319,7 @@ func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 	// only Run (and the unreachable unnamed case) reject a genuinely empty body
 	notInitFn := decl.Identifier == nil || decl.Identifier.String() == RunFnIdent
 	if len(decl.Body.Stmts) == 0 && p.errCount == errsBeforeDecl && notInitFn {
-		p.addEmptyFunctionBody(p.currentToken.Pos)
+		p.addEmptyFunction(p.currentToken.Pos)
 	}
 
 	return decl

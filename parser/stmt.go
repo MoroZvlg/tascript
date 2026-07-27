@@ -45,12 +45,12 @@ func (p *Parser) parseStatement() ast.Statement {
 	case token.IF:
 		return p.parseIfStmt()
 	case token.CONST, token.INPUT, token.OUTPUT:
-		p.addTopDeclInBody(p.currentToken)
+		p.addTopDeclMisplaced(p.currentToken)
 		return &ast.BadStmt{From: p.currentToken.Pos, To: p.currentToken.Pos}
 	case token.STATE:
 		// `state.foo = 1` is a legal statement; `state foo: ...` is a decl attempt
 		if p.peekTokenIs(token.IDENT) {
-			p.addTopDeclInBody(p.currentToken)
+			p.addTopDeclMisplaced(p.currentToken)
 			return &ast.BadStmt{From: p.currentToken.Pos, To: p.currentToken.Pos}
 		}
 		return p.parseExprOrAssignStmt()

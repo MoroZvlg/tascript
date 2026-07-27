@@ -200,7 +200,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 			"const FOO = ^" + strings.Repeat("9", 100),
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					parseFailedErr(ps[0], token.INTEGER),
+					numberOutOfRangeErr(ps[0], token.INTEGER, strings.Repeat("9", 100)),
 				}
 			},
 		},
@@ -209,7 +209,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 			"const FOO = ^" + strings.Repeat("9", 400) + ".0",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					parseFailedErr(ps[0], token.FLOAT),
+					numberOutOfRangeErr(ps[0], token.FLOAT, strings.Repeat("9", 400)+".0"),
 				}
 			},
 		},
@@ -1322,43 +1322,43 @@ func TestParser_ParseFuncBody(t *testing.T) {
 }
 
 func unexpectedErr(pos token.Pos, expected, got token.TokenType) *diag.UnexpectedToken {
-	return &diag.UnexpectedToken{Phase: diag.PhaseParse, Pos: pos, Expected: expected, Got: got}
+	return &diag.UnexpectedToken{At: pos, Expected: expected, Got: got}
 }
 
-func expectedTypeOrCustomType(pos token.Pos) *diag.TypeOrCustomTypeExpected {
-	return &diag.TypeOrCustomTypeExpected{Phase: diag.PhaseParse, Pos: pos}
+func expectedTypeOrCustomType(pos token.Pos) *diag.TypeExpected {
+	return &diag.TypeExpected{At: pos}
 }
 
 func emptyCustomType(pos token.Pos) *diag.EmptyCustomType {
-	return &diag.EmptyCustomType{Phase: diag.PhaseParse, Pos: pos}
+	return &diag.EmptyCustomType{At: pos}
 }
 
 func exprExpectedErr(pos token.Pos, got token.TokenType) *diag.ExpressionExpected {
-	return &diag.ExpressionExpected{Phase: diag.PhaseParse, Pos: pos, Got: got}
+	return &diag.ExpressionExpected{At: pos, Got: got}
 }
 
-func parseFailedErr(pos token.Pos, target token.TokenType) *diag.ParseFailed {
-	return &diag.ParseFailed{Phase: diag.PhaseParse, Pos: pos, Target: target}
+func numberOutOfRangeErr(pos token.Pos, target token.TokenType, literal string) *diag.NumberOutOfRange {
+	return &diag.NumberOutOfRange{At: pos, Target: target, Literal: literal}
 }
 
-func emptyFuncErr(pos token.Pos) *diag.EmptyFunctionBody {
-	return &diag.EmptyFunctionBody{Phase: diag.PhaseParse, Pos: pos}
+func emptyFuncErr(pos token.Pos) *diag.EmptyFunction {
+	return &diag.EmptyFunction{At: pos}
 }
 
-func forbiddenFuncErr(pos token.Pos) *diag.ForbiddenFunc {
-	return &diag.ForbiddenFunc{Phase: diag.PhaseParse, Pos: pos}
+func forbiddenFuncErr(pos token.Pos) *diag.ForbiddenFunction {
+	return &diag.ForbiddenFunction{At: pos}
 }
 
-func missingRunErr(pos token.Pos) *diag.MissingRunFunc {
-	return &diag.MissingRunFunc{Phase: diag.PhaseParse, Pos: pos}
+func missingRunErr(pos token.Pos) *diag.MissingRun {
+	return &diag.MissingRun{At: pos}
 }
 
-func topDeclInBodyErr(pos token.Pos, keyword token.TokenType) *diag.TopDeclInBody {
-	return &diag.TopDeclInBody{Phase: diag.PhaseParse, Pos: pos, Keyword: keyword}
+func topDeclInBodyErr(pos token.Pos, keyword token.TokenType) *diag.TopDeclMisplaced {
+	return &diag.TopDeclMisplaced{At: pos, Keyword: keyword}
 }
 
-func unexpectedTopDeclErr(pos token.Pos) *diag.UnexpectedTopDecl {
-	return &diag.UnexpectedTopDecl{Phase: diag.PhaseParse, Pos: pos}
+func unexpectedTopDeclErr(pos token.Pos) *diag.TopDeclUnexpected {
+	return &diag.TopDeclUnexpected{At: pos}
 }
 
 func extractErrorsPos(input string) (string, []token.Pos) {
@@ -1462,7 +1462,7 @@ func TestParser_ErrorModeLeak(t *testing.T) {
 	})
 }
 
-func TestParser_UnexpectedTopDecl(t *testing.T) {
+func TestParser_TopDeclUnexpected(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string

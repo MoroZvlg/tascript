@@ -115,7 +115,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			if binding.T != value.Type() {
 				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), binding.T)
 				if !coerceExists {
-					r.addTypeMissmatch(astStmtTyped.Tok(), binding.T, value.Type())
+					r.addTypeMismatch(astStmtTyped.Tok(), binding.T, value.Type())
 					return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 				}
 				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
@@ -156,7 +156,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			if !isErrorType(value.Type(), fieldDecl.T) && fieldDecl.T != value.Type() {
 				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), fieldDecl.T)
 				if !coerceExists {
-					r.addTypeMissmatch(astStmtTyped.Tok(), fieldDecl.T, value.Type())
+					r.addTypeMismatch(astStmtTyped.Tok(), fieldDecl.T, value.Type())
 					return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 				}
 				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
@@ -225,7 +225,7 @@ func (r *Resolver) resolveEmit(call *ast.CallExpr, env *Env) resolved.Statement 
 func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Statement {
 	condition := r.resolveExpr(astStmt.Condition, env)
 	if !isErrorType(condition.Type()) && condition.Type() != registry.BoolID {
-		r.addTypeMissmatch(astStmt.Condition.Tok(), registry.BoolID, condition.Type())
+		r.addTypeMismatch(astStmt.Condition.Tok(), registry.BoolID, condition.Type())
 	}
 
 	consequence := r.resolveBlock(astStmt.Consequence, NewEnclosedEnv(env))
@@ -246,7 +246,7 @@ func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Stateme
 func (r *Resolver) resolveLogical(expr *ast.InfixExpr, left, right resolved.Expression) resolved.Expression {
 	for _, operand := range []resolved.Expression{left, right} {
 		if !isErrorType(operand.Type()) && operand.Type() != registry.BoolID {
-			r.addTypeMissmatch(expr.Tok(), registry.BoolID, operand.Type())
+			r.addTypeMismatch(expr.Tok(), registry.BoolID, operand.Type())
 		}
 	}
 	return &resolved.LogicalExpr{Token: expr.Tok(), Left: left, Right: right}
@@ -382,7 +382,7 @@ func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
 			if !isErrorType(initValue.Type(), typeID) && initValue.Type() != typeID {
 				coerceRule, coerceExists := r.reg.LookupCoerce(initValue.Type(), typeID)
 				if !coerceExists {
-					r.addTypeMissmatch(fieldEntry.Identifier.Tok(), typeID, initValue.Type())
+					r.addTypeMismatch(fieldEntry.Identifier.Tok(), typeID, initValue.Type())
 					continue
 				}
 				initValue = &resolved.CoerceExpr{Inner: initValue, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
@@ -610,7 +610,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 
 func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, env *Env) ([]*resolved.CallArgExpr, bool) {
 	if len(args)+len(kwargs) != len(rule.Args) {
-		r.addArgsNumberMismatch(callToken, len(rule.Args), len(args)+len(kwargs))
+		r.addArgCountMismatch(callToken, len(rule.Args), len(args)+len(kwargs))
 		return nil, false
 	}
 	resolvedIdx := make([]bool, len(rule.Args))
@@ -631,7 +631,7 @@ func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwa
 
 		if !typeMatches && !isErrorType(resolvedArg.Type(), argRule.Type) {
 			hasErrs = true
-			r.addTypeMissmatch(arg.Tok(), argRule.Type, resolvedArg.Type())
+			r.addTypeMismatch(arg.Tok(), argRule.Type, resolvedArg.Type())
 		}
 
 		resolvedArgs[i] = &resolved.CallArgExpr{
@@ -677,7 +677,7 @@ func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwa
 
 		if !typeMatches && !isErrorType(resolvedArg.Type(), argRule.Type) {
 			hasErrs = true
-			r.addTypeMissmatch(kwArg.Tok(), argRule.Type, resolvedArg.Type())
+			r.addTypeMismatch(kwArg.Tok(), argRule.Type, resolvedArg.Type())
 		}
 
 		resolvedArgs[argRuleIdx] = &resolved.CallArgExpr{
@@ -700,159 +700,149 @@ func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwa
 
 func (r *Resolver) addDuplicateDeclaration(kwToken, identToken token.Token) {
 	r.errs = append(r.errs, &diag.DuplicateDeclaration{
-		Phase:        diag.PhaseCheck,
-		KeywordToken: kwToken,
-		IdentToken:   identToken,
+		At:      kwToken.Pos,
+		Keyword: kwToken.Literal,
+		Name:    identToken.Literal,
 	})
 }
 
 func (r *Resolver) addInvalidBinaryOp(cmpToken token.Token, left, right registry.TypeID) {
 	r.errs = append(r.errs, &diag.InvalidBinaryOperation{
-		Phase: diag.PhaseCheck,
-		Token: cmpToken,
+		At:    cmpToken.Pos,
+		Op:    cmpToken.Literal,
 		Left:  left,
 		Right: right,
 	})
 }
 
 func (r *Resolver) addInvalidUnaryOp(opToken token.Token, right registry.TypeID) {
-	r.errs = append(r.errs, &diag.UnaryBinaryOperation{
-		Phase: diag.PhaseCheck,
-		Token: opToken,
+	r.errs = append(r.errs, &diag.InvalidUnaryOperation{
+		At:    opToken.Pos,
+		Op:    opToken.Literal,
 		Right: right,
 	})
 }
 
 func (r *Resolver) addUndefinedIdent(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedIdent{
-		Phase: diag.PhaseCheck,
-		Token: opToken,
+		At:   opToken.Pos,
+		Name: opToken.Literal,
 	})
 }
 
 func (r *Resolver) addUndefinedVar(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedVar{
-		Phase: diag.PhaseCheck,
-		Token: opToken,
+		At:   opToken.Pos,
+		Name: opToken.Literal,
 	})
 }
 
 func (r *Resolver) addInvalidAssignTarget(opToken token.Token) {
 	r.errs = append(r.errs, &diag.InvalidAssignTarget{
-		Phase: diag.PhaseCheck,
-		Token: opToken,
+		At: opToken.Pos,
 	})
 }
 
 func (r *Resolver) addOutputNotReadable(opToken token.Token) {
 	r.errs = append(r.errs, &diag.OutputNotReadable{
-		Phase: diag.PhaseCheck,
-		Token: opToken,
+		At:   opToken.Pos,
+		Name: opToken.Literal,
 	})
 }
 
 func (r *Resolver) addInvalidEmitTarget(opToken token.Token) {
 	r.errs = append(r.errs, &diag.InvalidEmitTarget{
-		Phase: diag.PhaseCheck,
-		Token: opToken,
+		At: opToken.Pos,
 	})
 }
 
 func (r *Resolver) addNotAssignable(opToken token.Token, kind BindingKind) {
 	r.errs = append(r.errs, &diag.NotAssignable{
-		Phase: diag.PhaseCheck,
-		Token: opToken,
-		Kind:  string(kind),
+		At:   opToken.Pos,
+		Name: opToken.Literal,
+		Kind: string(kind),
 	})
 }
 
 func (r *Resolver) addUndefinedType(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedType{
-		Phase: diag.PhaseCheck,
-		Token: opToken,
+		At:   opToken.Pos,
+		Name: opToken.Literal,
 	})
 }
 
 func (r *Resolver) addUndefinedAttribute(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedAttribute{
-		Phase:  diag.PhaseCheck,
-		Member: opToken,
+		At:   opToken.Pos,
+		Name: opToken.Literal,
 	})
 }
 
 func (r *Resolver) addUndefinedMethod(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedMethod{
-		Phase:  diag.PhaseCheck,
-		Method: opToken,
+		At:   opToken.Pos,
+		Name: opToken.Literal,
 	})
 }
 
 func (r *Resolver) addNotIndexable(bracketToken token.Token, left registry.TypeID) {
 	r.errs = append(r.errs, &diag.NotIndexable{
-		Phase: diag.PhaseCheck,
-		Pos:   bracketToken.Pos,
-		Left:  left,
+		At:   bracketToken.Pos,
+		Left: left,
 	})
 }
 
 func (r *Resolver) addUndefinedFunc(calleeToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedFunc{
-		Phase: diag.PhaseCheck,
-		Token: calleeToken,
+		At:   calleeToken.Pos,
+		Name: calleeToken.Literal,
 	})
 }
 
 func (r *Resolver) addNotCallable(callToken token.Token) {
 	r.errs = append(r.errs, &diag.NotCallable{
-		Phase: diag.PhaseCheck,
-		Pos:   callToken.Pos,
+		At: callToken.Pos,
 	})
 }
 
 func (r *Resolver) addEmitNotExpression(calleeToken token.Token) {
 	r.errs = append(r.errs, &diag.EmitNotExpression{
-		Phase: diag.PhaseCheck,
-		Token: calleeToken,
+		At: calleeToken.Pos,
 	})
 }
 
-func (r *Resolver) addArgsNumberMismatch(opToken token.Token, expected, got int) {
-	r.errs = append(r.errs, &diag.ArgsNumberMissmatch{
-		Phase:    diag.PhaseCheck,
-		Token:    opToken,
+func (r *Resolver) addArgCountMismatch(opToken token.Token, expected, got int) {
+	r.errs = append(r.errs, &diag.ArgCountMismatch{
+		At:       opToken.Pos,
 		Expected: expected,
 		Got:      got,
 	})
 }
 
 func (r *Resolver) addArgsMissing(opToken token.Token, expected string) {
-	r.errs = append(r.errs, &diag.MissingArg{
-		Phase:    diag.PhaseCheck,
-		Token:    opToken,
+	r.errs = append(r.errs, &diag.ArgMissing{
+		At:       opToken.Pos,
 		Expected: expected,
 	})
 }
 
 func (r *Resolver) addDuplicateArg(kwToken token.Token, name string) {
-	r.errs = append(r.errs, &diag.DuplicateArg{
-		Phase: diag.PhaseCheck,
-		Token: kwToken,
-		Name:  name,
+	r.errs = append(r.errs, &diag.ArgDuplicate{
+		At:   kwToken.Pos,
+		Name: name,
 	})
 }
 
 func (r *Resolver) addUnknownKwarg(kwToken token.Token, name string) {
-	r.errs = append(r.errs, &diag.UnknownKwarg{
-		Phase: diag.PhaseCheck,
-		Token: kwToken,
-		Name:  name,
+	r.errs = append(r.errs, &diag.ArgUnknown{
+		At:   kwToken.Pos,
+		Name: name,
 	})
 }
 
-func (r *Resolver) addTypeMissmatch(opToken token.Token, expected, got registry.TypeID) {
-	r.errs = append(r.errs, &diag.TypeMissmatch{
-		Phase:    diag.PhaseCheck,
-		Token:    opToken,
+func (r *Resolver) addTypeMismatch(opToken token.Token, expected, got registry.TypeID) {
+	r.errs = append(r.errs, &diag.TypeMismatch{
+		At:       opToken.Pos,
 		Expected: expected,
 		Got:      got,
 	})
@@ -860,14 +850,14 @@ func (r *Resolver) addTypeMissmatch(opToken token.Token, expected, got registry.
 
 func (r *Resolver) addStateUndeclared(fieldToken token.Token) {
 	r.errs = append(r.errs, &diag.StateUndeclared{
-		Phase: diag.PhaseCheck,
-		Token: fieldToken,
+		At:    fieldToken.Pos,
+		Field: fieldToken.Literal,
 	})
 }
 
 func (r *Resolver) addStateUninitialized(fieldToken token.Token) {
 	r.errs = append(r.errs, &diag.StateUninitialized{
-		Phase: diag.PhaseCheck,
-		Token: fieldToken,
+		At:    fieldToken.Pos,
+		Field: fieldToken.Literal,
 	})
 }

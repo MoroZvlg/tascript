@@ -378,7 +378,7 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 			`const FOO = math.sqrt^(1, 2)`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addArgsNumberMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, 1, 2),
+					addArgCountMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, 1, 2),
 				}
 			},
 		},
@@ -387,7 +387,7 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 			`const FOO = math.sqrt(^"foo")`,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.STRING, Pos: ps[0], Literal: "foo"}, registry.FloatID, registry.StringID),
+					addTypeMismatch(token.Token{Type: token.STRING, Pos: ps[0], Literal: "foo"}, registry.FloatID, registry.StringID),
 				}
 			},
 		},
@@ -444,7 +444,7 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			"function Run() {\nlet x = 1\nx ^= \"foo\"\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.ASSIGN, Pos: ps[0], Literal: "="}, registry.IntegerID, registry.StringID),
+					addTypeMismatch(token.Token{Type: token.ASSIGN, Pos: ps[0], Literal: "="}, registry.IntegerID, registry.StringID),
 				}
 			},
 		},
@@ -517,7 +517,7 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			"function Run() {\nif (^1) {}\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.INTEGER, Pos: ps[0], Literal: "1"}, registry.BoolID, registry.IntegerID),
+					addTypeMismatch(token.Token{Type: token.INTEGER, Pos: ps[0], Literal: "1"}, registry.BoolID, registry.IntegerID),
 				}
 			},
 		},
@@ -553,7 +553,7 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			"function Run() {\n1 ^&& true\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.AND, Pos: ps[0], Literal: "&&"}, registry.BoolID, registry.IntegerID),
+					addTypeMismatch(token.Token{Type: token.AND, Pos: ps[0], Literal: "&&"}, registry.BoolID, registry.IntegerID),
 				}
 			},
 		},
@@ -562,7 +562,7 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			"function Run() {\ntrue ^|| 2\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.OR, Pos: ps[0], Literal: "||"}, registry.BoolID, registry.IntegerID),
+					addTypeMismatch(token.Token{Type: token.OR, Pos: ps[0], Literal: "||"}, registry.BoolID, registry.IntegerID),
 				}
 			},
 		},
@@ -809,7 +809,7 @@ func TestResolver_ResolveEmitErrors(t *testing.T) {
 			"output alert: String\nfunction Run() {\nemit(alert, ^3)\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.INTEGER, Pos: ps[0], Literal: "3"}, registry.StringID, registry.IntegerID),
+					addTypeMismatch(token.Token{Type: token.INTEGER, Pos: ps[0], Literal: "3"}, registry.StringID, registry.IntegerID),
 				}
 			},
 		},
@@ -818,7 +818,7 @@ func TestResolver_ResolveEmitErrors(t *testing.T) {
 			"output sig: {dir: String, price: Float}\nfunction Run() {\nemit^(sig, dir=\"up\")\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addArgsNumberMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, 2, 1),
+					addArgCountMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, 2, 1),
 				}
 			},
 		},
@@ -942,7 +942,7 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			"state ^x: Integer = true" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}, registry.IntegerID, registry.BoolID),
+					addTypeMismatch(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}, registry.IntegerID, registry.BoolID),
 				}
 			},
 		},
@@ -1063,7 +1063,7 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			"state x: Integer = 0\nfunction Run() {\nstate.x ^= true\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addTypeMissmatch(token.Token{Type: token.ASSIGN, Pos: ps[0], Literal: "="}, registry.IntegerID, registry.BoolID),
+					addTypeMismatch(token.Token{Type: token.ASSIGN, Pos: ps[0], Literal: "="}, registry.IntegerID, registry.BoolID),
 				}
 			},
 		},
@@ -1206,93 +1206,93 @@ func extractErrorsPos(input string) (string, []token.Pos) {
 }
 
 func addDuplicateDecl(kwToken, identToken token.Token) *diag.DuplicateDeclaration {
-	return &diag.DuplicateDeclaration{Phase: diag.PhaseCheck, KeywordToken: kwToken, IdentToken: identToken}
+	return &diag.DuplicateDeclaration{At: kwToken.Pos, Keyword: kwToken.Literal, Name: identToken.Literal}
 }
 
 func addInvalidBinaryOp(tok token.Token, left, right registry.TypeID) *diag.InvalidBinaryOperation {
-	return &diag.InvalidBinaryOperation{Phase: diag.PhaseCheck, Token: tok, Left: left, Right: right}
+	return &diag.InvalidBinaryOperation{At: tok.Pos, Op: tok.Literal, Left: left, Right: right}
 }
 
-func addInvalidUnaryOp(tok token.Token, right registry.TypeID) *diag.UnaryBinaryOperation {
-	return &diag.UnaryBinaryOperation{Phase: diag.PhaseCheck, Token: tok, Right: right}
+func addInvalidUnaryOp(tok token.Token, right registry.TypeID) *diag.InvalidUnaryOperation {
+	return &diag.InvalidUnaryOperation{At: tok.Pos, Op: tok.Literal, Right: right}
 }
 
 func addUndefinedIdent(tok token.Token) *diag.UndefinedIdent {
-	return &diag.UndefinedIdent{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.UndefinedIdent{At: tok.Pos, Name: tok.Literal}
 }
 
 func addUndefinedAttribute(member token.Token) *diag.UndefinedAttribute {
-	return &diag.UndefinedAttribute{Phase: diag.PhaseCheck, Member: member}
+	return &diag.UndefinedAttribute{At: member.Pos, Name: member.Literal}
 }
 
 func addUndefinedMethod(method token.Token) *diag.UndefinedMethod {
-	return &diag.UndefinedMethod{Phase: diag.PhaseCheck, Method: method}
+	return &diag.UndefinedMethod{At: method.Pos, Name: method.Literal}
 }
 
 func addNotIndexable(pos token.Pos, left registry.TypeID) *diag.NotIndexable {
-	return &diag.NotIndexable{Phase: diag.PhaseCheck, Pos: pos, Left: left}
+	return &diag.NotIndexable{At: pos, Left: left}
 }
 
 func addUndefinedFunc(tok token.Token) *diag.UndefinedFunc {
-	return &diag.UndefinedFunc{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.UndefinedFunc{At: tok.Pos, Name: tok.Literal}
 }
 
 func addNotCallable(pos token.Pos) *diag.NotCallable {
-	return &diag.NotCallable{Phase: diag.PhaseCheck, Pos: pos}
+	return &diag.NotCallable{At: pos}
 }
 
 func addEmitNotExpression(tok token.Token) *diag.EmitNotExpression {
-	return &diag.EmitNotExpression{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.EmitNotExpression{At: tok.Pos}
 }
 
-func addArgsNumberMismatch(tok token.Token, expected, got int) *diag.ArgsNumberMissmatch {
-	return &diag.ArgsNumberMissmatch{Phase: diag.PhaseCheck, Token: tok, Expected: expected, Got: got}
+func addArgCountMismatch(tok token.Token, expected, got int) *diag.ArgCountMismatch {
+	return &diag.ArgCountMismatch{At: tok.Pos, Expected: expected, Got: got}
 }
 
-func addMissingArg(tok token.Token, expected string) *diag.MissingArg {
-	return &diag.MissingArg{Phase: diag.PhaseCheck, Token: tok, Expected: expected}
+func addMissingArg(tok token.Token, expected string) *diag.ArgMissing {
+	return &diag.ArgMissing{At: tok.Pos, Expected: expected}
 }
 
-func addDuplicateArg(tok token.Token, name string) *diag.DuplicateArg {
-	return &diag.DuplicateArg{Phase: diag.PhaseCheck, Token: tok, Name: name}
+func addDuplicateArg(tok token.Token, name string) *diag.ArgDuplicate {
+	return &diag.ArgDuplicate{At: tok.Pos, Name: name}
 }
 
-func addUnknownKwarg(tok token.Token, name string) *diag.UnknownKwarg {
-	return &diag.UnknownKwarg{Phase: diag.PhaseCheck, Token: tok, Name: name}
+func addUnknownKwarg(tok token.Token, name string) *diag.ArgUnknown {
+	return &diag.ArgUnknown{At: tok.Pos, Name: name}
 }
 
-func addTypeMissmatch(tok token.Token, expected, got registry.TypeID) *diag.TypeMissmatch {
-	return &diag.TypeMissmatch{Phase: diag.PhaseCheck, Token: tok, Expected: expected, Got: got}
+func addTypeMismatch(tok token.Token, expected, got registry.TypeID) *diag.TypeMismatch {
+	return &diag.TypeMismatch{At: tok.Pos, Expected: expected, Got: got}
 }
 
 func addUndefinedVar(tok token.Token) *diag.UndefinedVar {
-	return &diag.UndefinedVar{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.UndefinedVar{At: tok.Pos, Name: tok.Literal}
 }
 
 func addUndefinedType(tok token.Token) *diag.UndefinedType {
-	return &diag.UndefinedType{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.UndefinedType{At: tok.Pos, Name: tok.Literal}
 }
 
 func addInvalidAssignTarget(tok token.Token) *diag.InvalidAssignTarget {
-	return &diag.InvalidAssignTarget{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.InvalidAssignTarget{At: tok.Pos}
 }
 
 func addNotAssignable(tok token.Token, kind string) *diag.NotAssignable {
-	return &diag.NotAssignable{Phase: diag.PhaseCheck, Token: tok, Kind: kind}
+	return &diag.NotAssignable{At: tok.Pos, Name: tok.Literal, Kind: kind}
 }
 
 func addInvalidEmitTarget(tok token.Token) *diag.InvalidEmitTarget {
-	return &diag.InvalidEmitTarget{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.InvalidEmitTarget{At: tok.Pos}
 }
 
 func addOutputNotReadable(tok token.Token) *diag.OutputNotReadable {
-	return &diag.OutputNotReadable{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.OutputNotReadable{At: tok.Pos, Name: tok.Literal}
 }
 
 func addStateUndeclared(tok token.Token) *diag.StateUndeclared {
-	return &diag.StateUndeclared{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.StateUndeclared{At: tok.Pos, Field: tok.Literal}
 }
 
 func addStateUninitialized(tok token.Token) *diag.StateUninitialized {
-	return &diag.StateUninitialized{Phase: diag.PhaseCheck, Token: tok}
+	return &diag.StateUninitialized{At: tok.Pos, Field: tok.Literal}
 }
