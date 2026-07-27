@@ -109,7 +109,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 				r.addNotAssignable(target.Token, binding.Kind)
 				return &resolved.BadStmt{Token: target.Token}
 			}
-			if resolved.IsBadExpr(value) {
+			if isErrorType(value.Type(), binding.T) {
 				return &resolved.BadStmt{Token: astStmtTyped.Token}
 			}
 			if binding.T != value.Type() {
@@ -153,7 +153,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 				return &resolved.BadStmt{Token: astStmtTyped.Token}
 			}
 
-			if fieldDecl.T != value.Type() {
+			if !isErrorType(value.Type(), fieldDecl.T) && fieldDecl.T != value.Type() {
 				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), fieldDecl.T)
 				if !coerceExists {
 					r.addTypeMissmatch(astStmtTyped.Token, fieldDecl.T, value.Type())
@@ -226,7 +226,7 @@ func (r *Resolver) resolveEmit(call *ast.CallExpr, env *Env) resolved.Statement 
 
 func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Statement {
 	condition := r.resolveExpr(astStmt.Condition, env)
-	if !resolved.IsBadExpr(condition) && condition.Type() != registry.BoolID {
+	if !isErrorType(condition.Type()) && condition.Type() != registry.BoolID {
 		// TODO: point at the condition, not the `if` keyword. Needs Tok() on ast.Expression.
 		r.addTypeMissmatch(astStmt.Token, registry.BoolID, condition.Type())
 	}
@@ -248,7 +248,7 @@ func (r *Resolver) resolveIfStmt(astStmt *ast.IfStmt, env *Env) resolved.Stateme
 
 func (r *Resolver) resolveLogical(expr *ast.InfixExpr, left, right resolved.Expression) resolved.Expression {
 	for _, operand := range []resolved.Expression{left, right} {
-		if !resolved.IsBadExpr(operand) && operand.Type() != registry.BoolID {
+		if !isErrorType(operand.Type()) && operand.Type() != registry.BoolID {
 			r.addTypeMissmatch(expr.Token, registry.BoolID, operand.Type())
 		}
 	}
@@ -263,10 +263,7 @@ func (r *Resolver) resolveInputs(inputs []*ast.InputDecl, env *Env) []*resolved.
 			r.addDuplicateDeclaration(in.Token, in.Identifier.Token)
 			continue
 		}
-		typeID, ok := r.resolveTypeDecl(in.Type, "input", in.Identifier.String())
-		if !ok {
-			continue
-		}
+		typeID, _ := r.resolveTypeDecl(in.Type, "input", in.Identifier.String())
 		env.Set(sym, Binding{T: typeID, Kind: KindInput})
 		resolvedInputs = append(resolvedInputs, &resolved.InputDecl{
 			Token: in.Token,
@@ -285,10 +282,7 @@ func (r *Resolver) resolveOutputs(outputs []*ast.OutputDecl, env *Env) []*resolv
 			r.addDuplicateDeclaration(out.Token, out.Identifier.Token)
 			continue
 		}
-		typeID, ok := r.resolveTypeDecl(out.Type, "output", out.Identifier.String())
-		if !ok {
-			continue
-		}
+		typeID, _ := r.resolveTypeDecl(out.Type, "output", out.Identifier.String())
 		env.Set(sym, Binding{T: typeID, Kind: KindOutput})
 		resolvedOutputs = append(resolvedOutputs, &resolved.OutputDecl{
 			Token: out.Token,
@@ -305,7 +299,7 @@ func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName st
 		typeID, exists := r.reg.LookupType(typed.String())
 		if !exists {
 			r.addUndefinedType(typed.Token)
-			return registry.UnknownTypeID, false
+			return registry.ErrorTypeID, false
 		}
 		return typeID, true
 	case *ast.TypeExpr:
@@ -328,16 +322,16 @@ func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName st
 			fields = append(fields, registry.FieldDef{Name: field.Name.String(), Type: fieldType})
 		}
 		if !ok {
-			return registry.UnknownTypeID, false
+			return registry.ErrorTypeID, false
 		}
 		typeID, err := r.reg.RegisterScriptType(namespace+"."+declName, fields)
 		if err != nil {
 			// unreachable: duplicate decl names are caught by the env check first
-			return registry.UnknownTypeID, false
+			return registry.ErrorTypeID, false
 		}
 		return typeID, true
 	default:
-		return registry.UnknownTypeID, false
+		return registry.ErrorTypeID, false
 	}
 }
 
@@ -379,7 +373,7 @@ func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
 				typeToken = typeIdent.Token
 			}
 			r.addUndefinedType(typeToken)
-			continue
+			typeID = registry.ErrorTypeID
 		}
 		field := &resolved.StateField{
 			Token: fieldEntry.Identifier.Token,
@@ -388,10 +382,7 @@ func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
 		}
 		if fieldEntry.Value != nil {
 			initValue := r.resolveExpr(fieldEntry.Value, env)
-			if resolved.IsBadExpr(initValue) {
-				continue // already reported
-			}
-			if initValue.Type() != typeID {
+			if !isErrorType(initValue.Type(), typeID) && initValue.Type() != typeID {
 				coerceRule, coerceExists := r.reg.LookupCoerce(initValue.Type(), typeID)
 				if !coerceExists {
 					r.addTypeMissmatch(fieldEntry.Identifier.Token, typeID, initValue.Type())
@@ -448,6 +439,22 @@ func definitelyAssignedState(stmt resolved.Statement) map[*resolved.StateField]b
 	return assigned
 }
 
+func isErrorType(types ...registry.TypeID) bool {
+	for _, t := range types {
+		if t == registry.ErrorTypeID {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Resolver) newErrorExpr(tok token.Token) resolved.Expression {
+	if len(r.errs) == 0 {
+		panic("error type with no diagnostic behind it: the type is reserved, so the resolver minted one instead of recovering from a reported error")
+	}
+	return &resolved.BadExpr{Token: tok}
+}
+
 func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expression {
 	switch typedExpr := expr.(type) {
 	case *ast.IntegerExpr:
@@ -476,6 +483,9 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		if typedExpr.Token.Type == token.AND || typedExpr.Token.Type == token.OR {
 			return r.resolveLogical(typedExpr, left, right)
 		}
+		if isErrorType(left.Type(), right.Type()) {
+			return r.newErrorExpr(typedExpr.Token)
+		}
 		binaryRule, exists := r.reg.LookupBinary(typedExpr.Token.Type, left.Type(), right.Type())
 		if !exists {
 			if len(r.errs) == errsBefore {
@@ -487,6 +497,9 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 	case *ast.PrefixExpr:
 		errsBefore := len(r.errs)
 		right := r.resolveExpr(typedExpr.Right, env)
+		if isErrorType(right.Type()) {
+			return r.newErrorExpr(typedExpr.Token)
+		}
 		unaryRule, exists := r.reg.LookupUnary(typedExpr.Token.Type, right.Type())
 		if !exists {
 			if len(r.errs) == errsBefore {
@@ -523,6 +536,9 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		}
 
 		resolvedExpr := r.resolveExpr(typedExpr.Object, env)
+		if isErrorType(resolvedExpr.Type()) {
+			return r.newErrorExpr(typedExpr.Token)
+		}
 		rule, exists := r.reg.LookupMemberAccess(resolvedExpr.Type(), typedExpr.Member.String())
 		if !exists {
 			if len(r.errs) == errsBefore {
@@ -541,6 +557,9 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		errsBefore := len(r.errs)
 		left := r.resolveExpr(typedExpr.Left, env)
 		r.resolveExpr(typedExpr.Index, env)
+		if isErrorType(left.Type()) {
+			return r.newErrorExpr(typedExpr.Token)
+		}
 		if len(r.errs) == errsBefore {
 			r.addNotIndexable(typedExpr.Token, left.Type())
 		}
@@ -550,6 +569,9 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		case *ast.MemberAccessExpr:
 			errsBefore := len(r.errs)
 			resolvedExpr := r.resolveExpr(callee.Object, env)
+			if isErrorType(resolvedExpr.Type()) {
+				return r.newErrorExpr(typedExpr.Token)
+			}
 
 			rule, callExists := r.reg.LookupCall(resolvedExpr.Type(), callee.Member.String())
 			if !callExists {
@@ -604,15 +626,15 @@ func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwar
 		argRule := rule.Args[i]
 		resolvedIdx[i] = true
 		resolvedArg := r.resolveExpr(arg, env)
-		ok := resolvedArg.Type() == argRule.Type
-		if !ok && !argRule.Exact {
+		typeMatches := resolvedArg.Type() == argRule.Type
+		if !typeMatches && !argRule.Exact {
 			if coerceRule, canCoerce := r.reg.LookupCoerce(resolvedArg.Type(), argRule.Type); canCoerce {
 				resolvedArg = &resolved.CoerceExpr{Inner: resolvedArg, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
-				ok = true
+				typeMatches = true
 			}
 		}
 
-		if !ok {
+		if !typeMatches && !isErrorType(resolvedArg.Type(), argRule.Type) {
 			hasErrs = true
 			r.addTypeMissmatch(argToken, argRule.Type, resolvedArg.Type())
 		}
@@ -650,15 +672,15 @@ func (r *Resolver) resolveArgs(argToken token.Token, args []ast.Expression, kwar
 
 		resolvedIdx[argRuleIdx] = true
 		resolvedArg := r.resolveExpr(kwArg.Value, env)
-		ok := resolvedArg.Type() == argRule.Type
-		if !ok && !argRule.Exact {
+		typeMatches := resolvedArg.Type() == argRule.Type
+		if !typeMatches && !argRule.Exact {
 			if coerceRule, canCoerce := r.reg.LookupCoerce(resolvedArg.Type(), argRule.Type); canCoerce {
 				resolvedArg = &resolved.CoerceExpr{Inner: resolvedArg, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
-				ok = true
+				typeMatches = true
 			}
 		}
 
-		if !ok {
+		if !typeMatches && !isErrorType(resolvedArg.Type(), argRule.Type) {
 			hasErrs = true
 			r.addTypeMissmatch(argToken, argRule.Type, resolvedArg.Type())
 		}

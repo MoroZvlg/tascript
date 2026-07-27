@@ -216,6 +216,24 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 				}
 			},
 		},
+		{
+			"a failed input type still binds the name",
+			"input price: ^Nope\nfunction Run() {\nprice + 1\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Nope"}),
+				}
+			},
+		},
+		{
+			"a failed output type still binds the name",
+			"output sig: ^Nope\nfunction Run() {\nemit(sig, 1)\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Nope"}),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -629,6 +647,52 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 				}
 			},
 		},
+		{
+			"arithmetic chain reports once",
+			"function Run() {\nlet x = ^nope\nlet y = x + 1\nlet z = y * 2\nmath.sqrt(z)\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
+				}
+			},
+		},
+		{
+			"if condition and logical operands absorb",
+			"function Run() {\nlet x = ^nope\nif (x > 1) {\n1\n}\nlet b = x && true\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
+				}
+			},
+		},
+		{
+			"member access and method call absorb",
+			"function Run() {\nlet x = ^nope\nlet a = x.field\nlet b = x.method(1)\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
+				}
+			},
+		},
+		{
+			"index absorbs instead of reporting NOT_INDEXABLE",
+			"function Run() {\nlet x = ^nope\nx[0]\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
+				}
+			},
+		},
+		{
+			"a real error after an absorbed one is still reported",
+			"function Run() {\nlet x = ^nope\nlet y = x + 1\nlet z = ^also_missing\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[1], Literal: "also_missing"}),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1023,6 +1087,42 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addUndefinedIdent(token.Token{Type: token.STATE, Pos: ps[0], Literal: "state"}),
+				}
+			},
+		},
+		{
+			"failed initializer keeps the field declared",
+			"state s: Integer = ^nope\nfunction Run() {\nstate.s = 1\nstate.s\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
+				}
+			},
+		},
+		{
+			"failed state assignment still counts as initialization",
+			"state s: Integer\nfunction Init() {\nstate.s = ^nope\n}\nfunction Run() {\nstate.s\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
+				}
+			},
+		},
+		{
+			"a failed state type still declares the field",
+			"state s: ^Nope = 1\nfunction Run() {\nstate.s\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Nope"}),
+				}
+			},
+		},
+		{
+			"a failed state type seeded in Init reports once",
+			"state s: ^Nope\nfunction Init() {\nstate.s = 1\n}\nfunction Run() {\nstate.s\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Nope"}),
 				}
 			},
 		},

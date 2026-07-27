@@ -36,7 +36,7 @@ func (s *Env) Get(key Symbol) (Binding, bool) {
 		return binding, true
 	}
 	if s.isTopLevel() {
-		return Binding{T: registry.UnknownTypeID}, false
+		return Binding{T: registry.ErrorTypeID}, false
 	}
 	return s.parent.Get(key)
 }

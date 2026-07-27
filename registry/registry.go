@@ -104,7 +104,19 @@ func DefaultRegistry() *Registry {
 	return reg
 }
 
+func rejectReserved(ids ...TypeID) error {
+	for _, id := range ids {
+		if id == ErrorTypeID {
+			return fmt.Errorf("type %s is reserved for error recovery", ErrorTypeID)
+		}
+	}
+	return nil
+}
+
 func (r *Registry) RegisterType(id TypeID, shape TypeShape) error {
+	if err := rejectReserved(id); err != nil {
+		return err
+	}
 	if _, exists := r.Types[id]; exists {
 		return fmt.Errorf("type %s not registered. ID taken", id)
 	}
@@ -115,6 +127,14 @@ func (r *Registry) RegisterType(id TypeID, shape TypeShape) error {
 // RegisterScriptType registers structural type synthesized by the resolver from an inline `{field: Type}` declaration
 func (r *Registry) RegisterScriptType(name string, fields []FieldDef) (TypeID, error) {
 	id := TypeID{id: name}
+	if err := rejectReserved(id); err != nil {
+		return TypeID{}, err
+	}
+	for _, field := range fields {
+		if err := rejectReserved(field.Type); err != nil {
+			return TypeID{}, err
+		}
+	}
 	if _, exists := r.Types[id]; exists {
 		return TypeID{}, fmt.Errorf("script type %s not registered. ID taken", name)
 	}
@@ -163,10 +183,14 @@ func (r *Registry) EmitRule(outputType TypeID) CallRule {
 	return CallRule{Args: params, EvalType: outputType}
 }
 
-// TODO: Make check in every Register as we did in RegisterType
-
 func (r *Registry) RegisterCoercion(from, to TypeID, rule CoerceRule) error {
+	if err := rejectReserved(from, to, rule.EvalType); err != nil {
+		return err
+	}
 	key := CoerceKey{from: from, to: to}
+	if _, exists := r.Coerces[key]; exists {
+		return fmt.Errorf("coercion %s -> %s already registered", from, to)
+	}
 	r.Coerces[key] = rule
 	return nil
 }
@@ -188,10 +212,16 @@ func (r *Registry) RegisterModule(name string) (Value, error) {
 }
 
 func (r *Registry) RegisterBinary(tok token.TokenType, left, right TypeID, rule BinaryRule) error {
+	if err := rejectReserved(left, right, rule.EvalType); err != nil {
+		return err
+	}
 	key := BinaryKey{
 		token: tok,
 		left:  left,
 		right: right,
+	}
+	if _, exists := r.Binary[key]; exists {
+		return fmt.Errorf("binary rule %s(%s, %s) already registered", tok, left, right)
 	}
 	r.Binary[key] = rule
 	return nil
@@ -208,9 +238,15 @@ func (r *Registry) LookupBinary(tok token.TokenType, left, right TypeID) (Binary
 }
 
 func (r *Registry) RegisterUnary(tok token.TokenType, right TypeID, rule UnaryRule) error {
+	if err := rejectReserved(right, rule.EvalType); err != nil {
+		return err
+	}
 	key := UnaryKey{
 		token: tok,
 		right: right,
+	}
+	if _, exists := r.Unary[key]; exists {
+		return fmt.Errorf("unary rule %s(%s) already registered", tok, right)
 	}
 	r.Unary[key] = rule
 	return nil
@@ -226,9 +262,15 @@ func (r *Registry) LookupUnary(tok token.TokenType, right TypeID) (UnaryRule, bo
 }
 
 func (r *Registry) RegisterMemberAccess(owner TypeID, member string, rule MemberAccessRule) error {
+	if err := rejectReserved(owner, rule.EvalType); err != nil {
+		return err
+	}
 	key := MemberAccessKey{
 		owner:  owner,
 		method: member,
+	}
+	if _, exists := r.MemberAccess[key]; exists {
+		return fmt.Errorf("member access rule %s.%s already registered", owner, member)
 	}
 	r.MemberAccess[key] = rule
 	return nil
@@ -244,9 +286,20 @@ func (r *Registry) LookupMemberAccess(owner TypeID, member string) (MemberAccess
 }
 
 func (r *Registry) RegisterCall(owner TypeID, member string, rule CallRule) error {
+	if err := rejectReserved(owner, rule.EvalType); err != nil {
+		return err
+	}
+	for _, arg := range rule.Args {
+		if err := rejectReserved(arg.Type); err != nil {
+			return err
+		}
+	}
 	key := CallKey{
 		owner:  owner,
 		method: member,
+	}
+	if _, exists := r.Call[key]; exists {
+		return fmt.Errorf("call rule %s.%s already registered", owner, member)
 	}
 	r.Call[key] = rule
 	return nil

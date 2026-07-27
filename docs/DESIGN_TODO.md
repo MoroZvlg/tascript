@@ -44,6 +44,17 @@ frame (#7) and the P1 hole batch are stable:**
 - **A. Type capabilities** — add capability metadata fields to `registry.TypeDef`
   (`storable`, `replaceable`, `snapshot`: value-copy|host|none, `historyable`); populate
   the builtin scalars. Pure data, no behavior change; unblocks the gates.
+  **While you are in `TypeDef` anyway, consider folding type registration and the reserved
+  error-type guard into one mechanism** — e.g. a `Reserved bool` field: register `ErrorTypeID` like
+  any other type so the existing occupancy check protects it, have `LookupType` skip reserved
+  entries so scripts still cannot name it, and have rule registration reject reserved operands/
+  params/`EvalType`. Today those are two separate mechanisms: builtins are protected *by being
+  in* `Types`, the error type by deliberately staying *out* of it (see #23 — putting it in
+  the map makes `input x: Error` resolve again). Explicitly **not** done with #23: it does not shrink
+  the code (the same eight `rejectReserved` call sites remain, only the predicate changes), it
+  turns a comparison into a registry lookup with an ordering dependency, and it only pays off
+  once a second reserved type exists. If capabilities give `TypeDef` real structure — or if a
+  host ever needs internal types it can register but scripts cannot name — revisit it here.
 - **B. Slot-policy two-gate** — generalize `resolver.Binding.Assignable()` into
   `canWrite = slotWritable(kind) && typeReplaceable(T)`; route `input`/host-object
   assignment rejection through it. **Do NOT refactor `state` yet** — leave `resolved.State`
@@ -149,7 +160,6 @@ shared-handle invariant, see the input-wiring section).
 | 13 | P2 | both | Engine/host API rework — replaces BOTH temporary APIs: the `Emitted()` emission sink (TODO in evaluator.go) and the shipped `EvalRun(frame map[string]Value)` map stopgap (#7 — migrate to a slot `[]Value` frame) | Includes registry purge-on-reuse: `resolveTypeDecl` writes synthesized inline port types (`input.x`/`output.sig`) into the host-owned registry, but the duplicate guard reads the per-pass env — so a second `Compile()` on one Engine, or two scripts sharing one registry, collides. Scope the synthesized types per compile (or purge on reuse) rather than papering over the collision with a diagnostic. Design the API around the now-runnable end-to-end fixture: struct input → compute → emit. See also "Rethink the public API surface" below — that section now also carries the resolver-contract and registry-encapsulation notes from the review |
 | 14 | P2 | diag | Diagnostics quality pass: machine-readable interface, code reconciliation, message hygiene | `diag.Diagnostic` is just `Error() string` — spec §6.2/§6.4 promises tooling phase/code/pos without parsing messages; add `Phase()`/`Code()`/`Pos()` accessors while the type count is small. Fix misspelled external-contract codes **before** tooling matches on them: `TYPE_MISSMATCH`/`ARGS_NUMBER_MISSMATCH` (spec: `TYPE_MISMATCH`), `UNDEFINED_MEETHOD`. Stop leaking `Token.String()` debug format into messages ("unknown identifier [IDENTIFIER] -> sig") — use `.Literal`; affects ~9 diag types. Reconcile the code set with spec §6.4: UNEXPECTED_TOP_DECL vs TOP_LEVEL_FORM, DUPLICATE_DECLARATION vs PORT_DUPLICATE, INVALID_OPERATION shared by two diag types, EMPTY_FUNCTION absent from spec (also decide whether an empty `Run` is even illegal — spec never says so). Phases: spec defines two, impl has three (`PhaseCheck`), and `DuplicateDeclaration` ships with PhaseParse from the parser but PhaseCheck from the resolver (the NOTE at parser.go:100 already doubts it) |
 | 21 | P3 | resolver | `CallArgExpr.Token` is the call token (TODO at both `resolveArgs` callers) | Arg-level errors point at `(` instead of the arg. **Blocked on `Tok()` for `ast.Expression`** — same blocker as the `if`-condition TODO at resolver.go:225; fold into #14's position work |
-| 23 | P3 | resolver | No Unknown-type poisoning — one error cascades | `let x = <bad expr>` binds `x` as `UnknownTypeID`; every later use emits a fresh INVALID_OPERATION/TYPE_MISSMATCH (the `errsBefore` guard only dedups within one expression tree). Standard fix: lookups where an operand is Unknown succeed silently as Unknown |
 
 Suggested order (re-sequenced 2026-07-25 — #2/#3/#6/#7/#8/#9/#10 now shipped):
 **No P1 rows remain**, and the D-batch smalls (#15/#18/#19/#24/#25) shipped 2026-07-25:
@@ -202,7 +212,78 @@ error; revisit then, not before. Note these panics are not recovered — unlike 
 invalid program (see "Rethink the public API surface"). If `FuzzParse` is ever extended to resolve
 the programs it accepts, these become fuzz-visible.
 
-**No smalls remain: the table is now #11, #12, #13, #14, #21, #23 — all design work.**
+**#23 (error-type absorption, aka poisoning) shipped 2026-07-26**, design-reviewed against Codex first. Before:
+one undefined identifier produced four diagnostics (`let x = nope` → `INVALID_OPERATION` on `x + 1`,
+again on `y * 2`, then `TYPE_MISSMATCH` on `math.sqrt(z)`), three of them naming `Unknown`, a type
+that does not exist in the language. Now every one of those collapses to the single real error.
+What landed:
+
+- **`ErrorTypeID` is reserved** (`rejectReserved`, registry.go). It was never in `DefaultRegistry`
+  and `RegisterType` only checked map occupancy, so a host could do `RegisterType("Error")` and
+  get a legitimately-typed `input x: Error` binding with zero diagnostics. Now rejected from
+  `RegisterType`/`RegisterModule`/`RegisterScriptType` (name and field types)/`RegisterCoercion`/
+  `RegisterBinary`/`RegisterUnary`/`RegisterMemberAccess`/`RegisterCall` (owner, `EvalType`, params).
+  This is what makes the assertion below sound: the error type is now unforgeable, so every
+  occurrence traces to a resolver-reported error.
+- **The predicate is type-based, not structural.** `isErrorType(t) == (t == ErrorTypeID)`, never
+  `IsBadExpr`. In `x + 1` the `x` resolves to an ordinary `IdentExpr` carrying `T: Error` — it is
+  *not* a `BadExpr`, so a structural check misses the entire cascade. The pre-existing
+  `!resolved.IsBadExpr(...)` guards in `resolveIfStmt` and `resolveLogical` were exactly this bug
+  and are now type-based.
+- **Absorbing sites:** binary, unary, member access, index, method call, if-condition, logical
+  operands, both `resolveArgs` type checks, and the name-assign / state-assign / state-init coerce
+  checks.
+- **The error type does NOT propagate out of a call.** An error-typed argument still yields the rule's declared
+  `EvalType`, so `math.sqrt(<errored>)` stays a `Float` and downstream stays quiet. Codex argued the
+  call should be error-typed too; that manufactures cascade rather than stopping it, and assuming the
+  declared result type is what Go's own checker does. Wrong arg *count* still invalidates — that is
+  not a type question.
+- **`ErrorGuaranteed`-style assertion.** `Resolver.newErrorExpr()` panics if it fires with
+  `len(r.errs) == 0`. Weaker than rustc's provenance token (an unrelated earlier error can still mask
+  a fresh resolver bug), but full threading is not worth it at this size, and reserving the type
+  closed the hole that actually mattered.
+- **Two cascade sources fixed beyond the row's text**, both found by Codex: a failed state
+  *initializer* used to `continue` before appending the field, turning one bad initializer into a
+  later `STATE_UNDECLARED`; and a failed `state.x = ...` used to become a `BadStmt`, which
+  `definitelyAssignedState` does not count, adding `STATE_UNINITIALIZED` on top. Both now keep the
+  field/statement so the follow-on never fires. **Decision: an error-typed RHS counts as an
+  initialization attempt** — the program cannot run anyway, so the follow-on is pure noise.
+
+**Follow-up shipped the same day: failed port/state types now bind anyway.** A bad type on an
+`input`/`output`/`state` decl used to `continue` without creating the binding, so one
+`UNDEFINED_TYPE` was followed by `UNDEFINED_IDENT` / `STATE_UNDECLARED` at every use — the
+misleading kind of cascade, since the message tells you to declare a name you *did* declare.
+All three now bind with `ErrorTypeID` and report once. Two consequences worth knowing:
+
+- **Comparisons absorb when EITHER side is the error type**, not just the value side.
+  `isErrorType` is variadic and every actual-vs-expected check passes both
+  (`resolveArgs`, state init, state assign, name assign). Binding with `ErrorTypeID` alone would
+  have moved the cascade rather than removed it — `emit(sig, 1)` against an error-typed output
+  would have reported `expected Error type got Integer`.
+- **`EmitRule`'s discarded `LookupTypeDef` ok is now genuinely reachable** (it was dead before,
+  since `resolveOutputs` skipped the binding). An error-typed output falls through to the scalar
+  one-`value`-param shape, and `resolveArgs` absorbs it. That fall-through is now load-bearing,
+  not an oversight — pinned by `TestRegistry_EmitRule`.
+
+The motivating question — whether two diagnostics are *better* here — was considered and rejected:
+the follow-on names a symbol the user did declare, so it misdirects. The stronger reason to bind is
+independent of diagnostic count: a skipped binding leaves a hole in the symbol table, and #14's
+tooling goals (go-to-definition, completion, hover) need the symbol to exist even when its type
+does not. Go, Rust and TypeScript all bind-and-report-once here.
+
+Residual, deliberately not fixed: a *genuine* type mismatch (not an error type) in a state initializer still
+`continue`s and drops the field, and in a state assignment still returns `BadStmt` — so those two
+cascades remain. Appending the field anyway would put a value in the tree whose type contradicts the
+field's declared `T`, which the error type does not (it is transparently "an error happened here"). Fix it only
+alongside a decision about whether `resolved` may hold deliberately ill-typed recovery nodes.
+
+Pinned by 7 cases folded into the existing `TestResolver_ResolveRunErrors` (5) and
+`TestResolver_ResolveStateErrors` (2) tables — deliberately not a separate test func, since that
+file is organized by construct, not by feature — plus `TestRegistry_ErrorTypeIsReserved` (13).
+When items A/B land, short-circuit the error type *before* capability lookups so `typeReplaceable(ErrorTypeID)`
+never reports while `slotWritable(kind)` still can.
+
+**No smalls remain: the table is now #11, #12, #13, #14, #21 — all design work.**
 
 Next: #14 before any external tooling consumes
 diagnostics. Then the CORE architecture-rework items A/B/C (top of doc) once the P1 batch is
@@ -475,10 +556,19 @@ Review additions:
   best-effort resolution over invalid programs will need nil-tolerance anyway.
 - **Registry is half-encapsulated**: exported maps (`Binary`, `Types`, `Modules`, …)
   coexist with Register/Lookup methods, and resolver + evaluator reach into `reg.Modules`
-  directly. All `Register*` except `RegisterType` return always-nil errors (existing TODO
-  in registry.go) — callers ignore them today, so when dup checks land they'll be silently
-  swallowed; make registration failures loud. `CoerceRule.EvalType` duplicates its key's
-  `to` — unchecked redundancy.
+  directly. `CoerceRule.EvalType` duplicates its key's `to` — unchecked redundancy.
+- **Registration errors are real now, but `stdlib` still discards them.** The always-nil returns
+  are gone (2026-07-26): every `Register*` rejects a duplicate and the reserved error type, and
+  `TestRegistry_DuplicateRegistrationRejected` covers all eight entry points. But ~37 call sites
+  ignore the returned error, all of them inside `stdlib`/`registry`. **Decision: leave them, do
+  not add a `must()` helper.** stdlib registers into a fresh registry before any host type, so its
+  only possible failure is a duplicate we authored; and since duplicates are now *rejected* rather
+  than overwritten, the first registration wins — an internal duplicate would silently drop a rule
+  and fail the pipeline tests. Verified clean at the time: the checks were temporarily converted to
+  panics and the whole suite run, since every test builds a registry. **Revisit if that ordering
+  guarantee breaks** — if hosts can register before stdlib, or stdlib registration becomes
+  conditional, these must be checked. That ordering is exactly what #13's API design should pin
+  down, which is why the note lives here rather than in `stdlib.go`.
 
 ## Reconcile naming between `ast` and `resolved`
 
@@ -531,6 +621,12 @@ Cleared 2026-07-25: `ast.Declaration` + its five `declarationNode()` markers (th
 four — `StateFieldDecl` implemented it too), `resolved.KwargsExpr`, the `ast.FunctionDecl`
 commented-out `Parameters` block, and `registry.ParamRule.Default`. All were unreferenced
 outside their own definitions.
+
+Cleared 2026-07-26: `resolved.IsBadExpr`, orphaned by #23 — its four callers all became
+`isErrorType`. Deleting it is deliberate, not just tidying: `IsBadExpr ⊂ isErrorType` (a `BadExpr`
+always types as `ErrorTypeID`, but a propagated `IdentExpr{T: ErrorTypeID}` carries the error type
+without being one), so leaving the narrower predicate in reach invites exactly the bug #23 fixed.
+`ast.IsBadExpr` is a different function, still used three times in `parser/expr.go` — keep it.
 
 - Deliberately kept, still unconstructed after #3 shipped diag-always (do not delete): both
   `registry.VectorShape` and `resolved.IndexExpr` wait for the *historyable* capability

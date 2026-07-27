@@ -16,7 +16,7 @@ var IntegerID = NewTypeID("Integer")
 var FloatID = NewTypeID("Float")
 var StringID = NewTypeID("String")
 var BoolID = NewTypeID("Bool")
-var UnknownTypeID = NewTypeID("Unknown")
+var ErrorTypeID = NewTypeID("Error")
 
 type TypeShape string
 

@@ -34,7 +34,7 @@ func (be *BadExpr) String() string {
 func (be *BadExpr) expressionNode() {}
 
 func (be *BadExpr) Type() registry.TypeID {
-	return registry.UnknownTypeID
+	return registry.ErrorTypeID
 }
 
 type IdentExpr struct {
@@ -564,9 +564,4 @@ func (cd *ConstDecl) String() string {
 		out.WriteString(cd.Value.String())
 	}
 	return out.String()
-}
-
-func IsBadExpr(expr Expression) bool {
-	_, ok := expr.(*BadExpr)
-	return ok
 }
