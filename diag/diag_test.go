@@ -139,6 +139,10 @@ func TestDiagnostic_Render(t *testing.T) {
 			"error[EMIT_NOT_EXPRESSION] 2:9: emit is a statement and cannot be used as a value",
 		},
 		{
+			diag.EmitOutsideRun{At: pos(2, 5)},
+			"error[EMIT_OUTSIDE_RUN] 2:5: emit is only allowed inside Run()",
+		},
+		{
 			diag.ArgCountMismatch{At: pos(2, 18), Expected: 1, Got: 2},
 			"error[ARG_COUNT_MISMATCH] 2:18: expected 1 args, found 2",
 		},

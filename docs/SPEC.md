@@ -632,19 +632,26 @@ block host's vocabulary — see `SPEC_SIGNAL_HOST.md`.
 ### 5.2 emit(...) — signal emission
 
 ```
-emit(OUTPUT, value_expr)
-emit(OUTPUT, ident=expr [, ident=expr]*)
+emit(OUTPUT, arg [, arg]* [, ident=expr]*)
 ```
 
 - `OUTPUT` is a declared output identifier, not a string literal.
 - `emit(...)` is a built-in runtime action, valid **only inside `Run()`**. Use in `Init()`
-  or at top level is a parse-time error.
-- For a **structured** output (`{ … }`), the payload is keyword arguments only.
-- For a **value** output, the second argument is the value and must match the declared
-  type; keyword arguments are not accepted.
+  or at top level is `EMIT_OUTSIDE_RUN`.
+- The payload obeys the **ordinary call-argument rules** — positional args bind in
+  declaration order, keyword args bind by name, each parameter is filled exactly once, and
+  positional args may not follow keyword args (`ARG_ORDER_INVALID`, `ARG_DUPLICATE`,
+  `ARG_MISSING`, `ARG_UNKNOWN`, `ARG_COUNT_MISMATCH`). `emit` is not a special form here — a
+  **structured** output takes one parameter per declared field, a **value** output takes a
+  single parameter named `value`.
 - `expr` must evaluate to a serialisable value: `Integer`, `Float`, `Bool`, `String`,
   `Null`, `Time`, or `Duration`. Passing a non-serialisable host value (collection, stream,
   opaque object) is a runtime error.
+
+> **Positional payloads bind by field order.** Reordering the fields of a structured
+> output's `{ … }` schema silently changes the meaning of every positional `emit` against
+> it, with no diagnostic when the reordered types still match. Keyword form is immune;
+> prefer it for schemas with more than one field of the same type.
 
 ```js
 input metric: Float
@@ -661,17 +668,18 @@ output alert: { message: String, value: Float }
 
 function Run() {
   emit(alert, message="threshold crossed", value=metric)
+  emit(alert, "threshold crossed", metric)  // equivalent, binds by field order
 }
 ```
 
-There is no in-language string interpolation in v1.
+A value output's single argument is likewise addressable either way — `emit(logs, "hi")`
+and `emit(logs, value="hi")` are the same call.
 
-**Reserved kwarg names** — runtime-injected, cannot be passed by the user (parse-time error):
-`ts` (activation timestamp), `output` (the port name). The set may grow.
+There is no in-language string interpolation in v1.
 
 **Schema enforcement.** A structured output's `{ … }` schema is **strict and closed**:
 every declared field must be supplied; no undeclared fields; each value must match the
-declared type. Violations are parse-time errors when statically detectable, else runtime
+declared type. Violations are check-time errors when statically detectable, else runtime
 errors before delivery.
 
 **Output discovery.** Tooling can enumerate outputs from top-level `output` declarations.
@@ -766,9 +774,8 @@ their specs):
 | `OUTPUT_NOT_WIRED` | runtime | A declared output port has no destination block. |
 | `PORT_DUPLICATE` | parse | Two top-level ports/bindings declare the same name. |
 | `UNKNOWN_OUTPUT` | parse | `emit(...)` targets a non-declared output. |
-| `EMIT_OUTSIDE_RUN` | parse | `emit(...)` outside `function Run()`. |
-| `EMIT_PAYLOAD` | parse / runtime | Emitted value/kwargs do not match the output declaration. |
-| `EMIT_RESERVED_KWARG` | parse | Reserved kwarg name passed to `emit(...)`. |
+| `EMIT_OUTSIDE_RUN` | check | `emit(...)` outside `function Run()`. |
+| `EMIT_PAYLOAD` | check / runtime | Emitted value/kwargs do not match the output declaration. |
 | `EMIT_NOT_EXPRESSION` | parse | `emit(...)` used in expression position — it is a statement. |
 | `UNDEFINED_FUNC` | parse | A bare call `foo(...)`; only module methods are callable. |
 | `NOT_CALLABLE` | parse | Call on an expression that is not a callable form. |

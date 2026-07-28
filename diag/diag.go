@@ -47,6 +47,7 @@ const (
 	CodeUndefinedFunc        Code = "UNDEFINED_FUNC"
 	CodeNotCallable          Code = "NOT_CALLABLE"
 	CodeEmitNotExpression    Code = "EMIT_NOT_EXPRESSION"
+	CodeEmitOutsideRun       Code = "EMIT_OUTSIDE_RUN"
 	CodeArgCountMismatch     Code = "ARG_COUNT_MISMATCH"
 	CodeArgMissing           Code = "ARG_MISSING"
 	CodeArgDuplicate         Code = "ARG_DUPLICATE"
@@ -452,6 +453,18 @@ func (en EmitNotExpression) Pos() token.Pos { return en.At }
 
 func (en EmitNotExpression) Error() string {
 	return render(en.Code(), en.At, "emit is a statement and cannot be used as a value")
+}
+
+type EmitOutsideRun struct {
+	At token.Pos
+}
+
+func (eo EmitOutsideRun) Code() Code     { return CodeEmitOutsideRun }
+func (eo EmitOutsideRun) Phase() Phase   { return PhaseCheck }
+func (eo EmitOutsideRun) Pos() token.Pos { return eo.At }
+
+func (eo EmitOutsideRun) Error() string {
+	return render(eo.Code(), eo.At, "emit is only allowed inside Run()")
 }
 
 type ArgCountMismatch struct {

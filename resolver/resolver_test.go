@@ -822,6 +822,15 @@ func TestResolver_ResolveEmitErrors(t *testing.T) {
 				}
 			},
 		},
+		{
+			"emit inside Init",
+			"output alert: String\nfunction Init() {\nemit^(alert, \"hi\")\n}\nfunction Run() {\nlet x = 1\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addEmitOutsideRun(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1283,6 +1292,10 @@ func addNotAssignable(tok token.Token, kind string) *diag.NotAssignable {
 
 func addInvalidEmitTarget(tok token.Token) *diag.InvalidEmitTarget {
 	return &diag.InvalidEmitTarget{At: tok.Pos}
+}
+
+func addEmitOutsideRun(tok token.Token) *diag.EmitOutsideRun {
+	return &diag.EmitOutsideRun{At: tok.Pos}
 }
 
 func addOutputNotReadable(tok token.Token) *diag.OutputNotReadable {

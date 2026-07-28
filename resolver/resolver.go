@@ -18,6 +18,7 @@ type Resolver struct {
 	resolvedProg *resolved.Program
 	reg          *registry.Registry
 	errs         []diag.Diagnostic
+	currFn       string
 }
 
 func New(prog *ast.Program, reg *registry.Registry) *Resolver {
@@ -50,10 +51,12 @@ func (r *Resolver) Resolve() *resolved.Program {
 	r.resolvedProg.Outputs = r.resolveOutputs(r.prog.Outputs, topLevelEnv)
 
 	if r.prog.InitFn != nil {
+		r.currFn = "Init"
 		r.resolvedProg.InitFn = r.resolveFunc(r.prog.InitFn, NewEnclosedEnv(topLevelEnv))
 	}
 	r.checkStateInitialized()
 
+	r.currFn = "Run"
 	r.resolvedProg.RunFn = r.resolveFunc(r.prog.RunFn, NewEnclosedEnv(topLevelEnv))
 
 	return r.resolvedProg
@@ -208,6 +211,10 @@ func (r *Resolver) resolveEmit(call *ast.CallExpr, env *Env) resolved.Statement 
 	if binding.Kind != KindOutput {
 		r.addInvalidEmitTarget(target.Tok())
 		return &resolved.BadStmt{Token: target.Tok()}
+	}
+
+	if r.currFn != "Run" {
+		r.addEmitOutsideRun(call.Tok())
 	}
 
 	args, valid := r.resolveArgs(call.Tok(), call.Args[1:], call.Kwargs, r.reg.EmitRule(binding.T), env)
@@ -807,6 +814,12 @@ func (r *Resolver) addNotCallable(callToken token.Token) {
 
 func (r *Resolver) addEmitNotExpression(calleeToken token.Token) {
 	r.errs = append(r.errs, &diag.EmitNotExpression{
+		At: calleeToken.Pos,
+	})
+}
+
+func (r *Resolver) addEmitOutsideRun(calleeToken token.Token) {
+	r.errs = append(r.errs, &diag.EmitOutsideRun{
 		At: calleeToken.Pos,
 	})
 }
