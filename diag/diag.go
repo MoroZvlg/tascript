@@ -32,6 +32,7 @@ const (
 	CodeStateUninitialized   Code = "STATE_UNINITIALIZED"
 	CodeTopDeclMisplaced     Code = "TOP_DECL_MISPLACED"
 	CodeDuplicateDeclaration Code = "DUPLICATE_DECLARATION"
+	CodeReservedName         Code = "RESERVED_NAME"
 	CodeNestingTooDeep       Code = "NESTING_TOO_DEEP"
 	CodeInvalidOperation     Code = "INVALID_OPERATION"
 	CodeUndefinedIdent       Code = "UNDEFINED_IDENT"
@@ -232,6 +233,20 @@ func (dd DuplicateDeclaration) Pos() token.Pos { return dd.At }
 
 func (dd DuplicateDeclaration) Error() string {
 	return render(dd.Code(), dd.At, "duplicate declaration of %s %s", dd.Keyword, dd.Name)
+}
+
+type ReservedName struct {
+	At   token.Pos
+	Name string
+	Kind string
+}
+
+func (rn ReservedName) Code() Code     { return CodeReservedName }
+func (rn ReservedName) Phase() Phase   { return PhaseCheck }
+func (rn ReservedName) Pos() token.Pos { return rn.At }
+
+func (rn ReservedName) Error() string {
+	return render(rn.Code(), rn.At, "%s is a reserved %s name", rn.Name, rn.Kind)
 }
 
 type StateUndeclared struct {

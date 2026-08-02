@@ -152,37 +152,73 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 		},
 		{
 			"duplicate input",
-			"input btc: Float\n^input ^btc: Integer" + runSuffix,
+			"input btc: Float\ninput ^btc: Integer" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
-						token.Token{Type: token.INPUT, Pos: ps[0], Literal: "input"},
-						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "btc"},
+						token.Token{Type: token.INPUT, Literal: "input"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "btc"},
 					),
 				}
 			},
 		},
 		{
 			"output colliding with input",
-			"input foo: Float\n^output ^foo: String" + runSuffix,
+			"input foo: Float\noutput ^foo: String" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
-						token.Token{Type: token.OUTPUT, Pos: ps[0], Literal: "output"},
-						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "foo"},
+						token.Token{Type: token.OUTPUT, Literal: "output"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "foo"},
 					),
 				}
 			},
 		},
 		{
 			"input colliding with const",
-			"const FOO = 1\n^input ^FOO: Float" + runSuffix,
+			"const FOO = 1\ninput ^FOO: Float" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
-						token.Token{Type: token.INPUT, Pos: ps[0], Literal: "input"},
-						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "FOO"},
+						token.Token{Type: token.INPUT, Literal: "input"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "FOO"},
 					),
+				}
+			},
+		},
+		{
+			"input over a module name",
+			"input ^math: Float" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, resolver.KindModule),
+				}
+			},
+		},
+		{
+			"input over a function name",
+			"input ^Init: Float" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Init"}, resolver.KindFunction),
+				}
+			},
+		},
+		{
+			"output over a module name",
+			"output ^math: String" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, resolver.KindModule),
+				}
+			},
+		},
+		{
+			"output over emit",
+			"output ^emit: String" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "emit"}, resolver.KindFunction),
 				}
 			},
 		},
@@ -206,12 +242,12 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 		},
 		{
 			"duplicate field in inline type",
-			"input btc: ^{price: Float, ^price: Integer}" + runSuffix,
+			"input btc: {price: Float, ^price: Integer}" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
-						token.Token{Type: token.LBRACE, Pos: ps[0], Literal: "{"},
-						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "price"},
+						token.Token{Type: token.LBRACE, Literal: "{"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "price"},
 					),
 				}
 			},
@@ -239,6 +275,65 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runDiagCases(t, tt.input, tt.buildDiags)
+		})
+	}
+}
+
+func TestResolver_ResolveReservedTypeNames(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		setup      func(*registry.Registry)
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			name:  "const over a builtin type",
+			input: `const ^Integer = "foo"` + runSuffix,
+			buildDiags: func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Integer"}, resolver.KindType),
+				}
+			},
+		},
+		{
+			name:  "input over a builtin type",
+			input: "input ^Float: Integer" + runSuffix,
+			buildDiags: func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Float"}, resolver.KindType),
+				}
+			},
+		},
+		{
+			name:  "let over a builtin type",
+			input: "function Run() {\nlet ^String = 1\n}",
+			buildDiags: func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "String"}, resolver.KindType),
+				}
+			},
+		},
+		{
+			name:  "const over a host type",
+			input: "const ^Money = 5" + runSuffix,
+			setup: registerResolverTestType,
+			buildDiags: func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Money"}, resolver.KindType),
+				}
+			},
+		},
+		{
+			name:       "a host type is still usable in type position",
+			input:      "input price: Money\nfunction Run() {\nprice\n}",
+			setup:      registerResolverTestType,
+			buildDiags: func(ps []token.Pos) []diag.Diagnostic { return nil },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCasesWithRegistry(t, tt.input, tt.buildDiags, tt.setup)
 		})
 	}
 }
@@ -299,26 +394,72 @@ func TestResolver_ResolveConstErrors(t *testing.T) {
 	}{
 		{
 			"duplicate declaration",
-			"const FOO = 3\n ^const ^FOO = 4",
+			"const FOO = 3\n const ^FOO = 4",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
-						token.Token{Type: token.CONST, Pos: ps[0], Literal: "const"},
-						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "FOO"},
+						token.Token{Type: token.CONST, Literal: "const"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "FOO"},
 					),
 				}
 			},
 		},
 		{
+			"const over a module name",
+			"const ^math = 5",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, resolver.KindModule),
+				}
+			},
+		},
+		{
+			"const over a function name",
+			"const ^Run = 5",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Run"}, resolver.KindFunction),
+				}
+			},
+		},
+		{
+			"const over Init",
+			"const ^Init = 5",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Init"}, resolver.KindFunction),
+				}
+			},
+		},
+		{
+			"const over emit",
+			"const ^emit = 5",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "emit"}, resolver.KindFunction),
+				}
+			},
+		},
+		{
+			"reserved const does not hide later const errors",
+			"const ^math = 5\nconst C = ^bar",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, resolver.KindModule),
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[1], Literal: "bar"}),
+				}
+			},
+		},
+		{
 			"duplicate does not hide later const errors",
-			"const FOO = 3\n^const ^FOO = 4\nconst C = ^bar",
+			"const FOO = 3\nconst ^FOO = 4\nconst C = ^bar",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
-						token.Token{Type: token.CONST, Pos: ps[0], Literal: "const"},
-						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "FOO"},
+						token.Token{Type: token.CONST, Literal: "const"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "FOO"},
 					),
-					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[2], Literal: "bar"}),
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[1], Literal: "bar"}),
 				}
 			},
 		},
@@ -466,6 +607,78 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			"reassign let is allowed",
 			"function Run() {\nlet x = 1\nx = 2\n}",
 			func(ps []token.Pos) []diag.Diagnostic { return nil },
+		},
+		{
+			"let redeclared in the same scope",
+			"function Run() {\nlet x = 1\nlet ^x = 2\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.LET, Literal: "let"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"},
+					),
+				}
+			},
+		},
+		{
+			"let shadowing an outer scope",
+			"function Run() {\nlet x = 1\nif (true) {\nlet ^x = 2\n}\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.LET, Literal: "let"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"},
+					),
+				}
+			},
+		},
+		{
+			"let shadowing a const",
+			"const K = 1\nfunction Run() {\nlet ^K = 2\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.LET, Literal: "let"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "K"},
+					),
+				}
+			},
+		},
+		{
+			"sibling blocks may reuse a name",
+			"function Run() {\nif (true) {\nlet t = 1\n}\nif (true) {\nlet t = 2\n}\n}",
+			func(ps []token.Pos) []diag.Diagnostic { return nil },
+		},
+		{
+			"let over a module name",
+			"function Run() {\nlet ^math = 5\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, resolver.KindModule),
+				}
+			},
+		},
+		{
+			"let over emit",
+			"function Run() {\nlet ^emit = 5\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "emit"}, resolver.KindFunction),
+				}
+			},
+		},
+		{
+			"a rejected let still reports errors in its value",
+			"function Run() {\nlet x = 1\nlet ^x = ^bar\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.LET, Literal: "let"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"},
+					),
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[1], Literal: "bar"}),
+				}
+			},
 		},
 		{
 			"assign to const",
@@ -993,12 +1206,12 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 		},
 		{
 			"duplicate field",
-			"state a: Integer = 0\n^state ^a: Float = 1.0" + runSuffix,
+			"state a: Integer = 0\nstate ^a: Float = 1.0" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
-						token.Token{Type: token.STATE, Pos: ps[0], Literal: "state"},
-						token.Token{Type: token.IDENT, Pos: ps[1], Literal: "a"},
+						token.Token{Type: token.STATE, Literal: "state"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "a"},
 					),
 				}
 			},
@@ -1180,6 +1393,10 @@ func runDiagCasesWithRegistry(t *testing.T, input string, buildDiags func([]toke
 	}
 }
 
+func registerResolverTestType(reg *registry.Registry) {
+	reg.RegisterType(registry.NewTypeID("Money"), registry.ScalarShape)
+}
+
 func registerResolverTestModule(reg *registry.Registry) {
 	testModule, _ := reg.RegisterModule("test")
 	reg.RegisterCall(testModule.TypeID(), "fn", registry.CallRule{
@@ -1215,7 +1432,11 @@ func extractErrorsPos(input string) (string, []token.Pos) {
 }
 
 func addDuplicateDecl(kwToken, identToken token.Token) *diag.DuplicateDeclaration {
-	return &diag.DuplicateDeclaration{At: kwToken.Pos, Keyword: kwToken.Literal, Name: identToken.Literal}
+	return &diag.DuplicateDeclaration{At: identToken.Pos, Keyword: kwToken.Literal, Name: identToken.Literal}
+}
+
+func addReservedName(tok token.Token, kind resolver.BindingKind) *diag.ReservedName {
+	return &diag.ReservedName{At: tok.Pos, Name: tok.Literal, Kind: string(kind)}
 }
 
 func addInvalidBinaryOp(tok token.Token, left, right registry.TypeID) *diag.InvalidBinaryOperation {

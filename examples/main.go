@@ -6,7 +6,6 @@ import (
 	"github.com/MoroZvlg/tascript"
 	"github.com/MoroZvlg/tascript/diag"
 	"github.com/MoroZvlg/tascript/registry"
-	"github.com/MoroZvlg/tascript/token"
 )
 
 type Money struct {
@@ -34,27 +33,13 @@ func (tam TaScriptMoney) TypeShape() registry.TypeShape {
 }
 
 func main() {
-	src := `const foo = math.sqrt(5, number=9.0)
-function Run() { foo }
+	src := `const math = 5
+function Run() { math }
 `
 	engine, diags := tascript.NewEngine(src)
 	if len(diags) > 0 {
 		showDiags(diags)
 		return
-	}
-
-	// NOTE: test operations injection
-	err := engine.RegisterBinary(token.PLUS, registry.StringID, registry.StringID, registry.BinaryRule{
-		EvalFn: func(left, right registry.Value) (registry.Value, error) {
-			leftV := left.(registry.String)
-			rightV := right.(registry.String)
-			result := fmt.Sprintf("%s%s", leftV, rightV)
-			return registry.String(result), nil
-		},
-		EvalType: registry.StringID,
-	})
-	if err != nil {
-		panic(err)
 	}
 
 	//moneyID, err := engine.RegisterType("Money")
@@ -79,6 +64,10 @@ function Run() { foo }
 	if len(diags) > 0 {
 		showDiags(diags)
 		return
+	}
+	err := program.Init()
+	if err != nil {
+		panic(err)
 	}
 
 	result, err := program.Run(nil)

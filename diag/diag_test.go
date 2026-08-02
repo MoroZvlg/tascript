@@ -71,6 +71,10 @@ func TestDiagnostic_Render(t *testing.T) {
 			"error[DUPLICATE_DECLARATION] 2:1: duplicate declaration of input btc",
 		},
 		{
+			diag.ReservedName{At: pos(1, 7), Name: "math", Kind: "module"},
+			"error[RESERVED_NAME] 1:7: math is a reserved module name",
+		},
+		{
 			diag.StateUndeclared{At: pos(4, 7), Field: "cooldown"},
 			"error[STATE_UNDECLARED] 4:7: state field cooldown is not declared",
 		},

@@ -285,7 +285,7 @@ func TestEvaluator_IfStmt(t *testing.T) {
 		{"final else in chain", "let x = -1\nlet r = \"\"\nif (x > 0) {\nr = \"pos\"\n} else if (x == 0) {\nr = \"zero\"\n} else {\nr = \"neg\"\n}\nr", registry.String("neg")},
 		{"if yields branch value", "if (true) {\n42\n}", registry.Integer(42)},
 		{"untaken if yields nothing", "if (false) {\n42\n}", nil},
-		{"branch let shadows outer", "let x = 1\nif (true) {\nlet x = 2\nx = x + 1\n}\nx", registry.Integer(1)},
+		{"branch let stays in its scope", "let x = 1\nif (true) {\nlet y = 2\nx = x + y\n}\nx", registry.Integer(3)},
 	}
 
 	for _, tt := range tests {
