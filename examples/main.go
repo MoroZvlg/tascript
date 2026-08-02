@@ -36,13 +36,9 @@ func main() {
 	src := `const math = 5
 function Run() { math }
 `
-	engine, diags := tascript.NewEngine(src)
-	if len(diags) > 0 {
-		showDiags(diags)
-		return
-	}
+	builder := tascript.NewBuilder()
 
-	//moneyID, err := engine.RegisterType("Money")
+	//moneyID, err := builder.RegisterType("Money")
 	//if err != nil {
 	//	panic(err)
 	//}
@@ -60,13 +56,15 @@ function Run() { math }
 	//	panic(err)
 	//}
 
-	program, diags := engine.Compile()
+	program, diags, err := builder.Compile(src)
+	if err != nil {
+		panic(err)
+	}
 	if len(diags) > 0 {
 		showDiags(diags)
 		return
 	}
-	err := program.Init()
-	if err != nil {
+	if err := program.Init(); err != nil {
 		panic(err)
 	}
 

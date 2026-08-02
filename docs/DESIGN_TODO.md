@@ -1,9 +1,10 @@
 # Design TODO — work queue
 
 What is left to do, and nothing else. This file is not a record of what happened:
-what shipped is in git, the normative surface is `docs/SPEC.md` (core) +
-`docs/SPEC_SIGNAL_HOST.md` (signal-block host), and rationale / rejected alternatives
-live in `docs/DESIGN_STREAMING_INDICATORS.md`.
+what shipped is in git, and the normative surface is `docs/SPEC.md` (core language).
+Rationale and rejected alternatives live in commit messages and the "Deferred designs"
+section below — `SPEC_SIGNAL_HOST.md` and `DESIGN_STREAMING_INDICATORS.md` were deleted
+in `9d1de8b`, so the signal-block host has no spec yet.
 
 ## Ground rules any new work must respect
 
@@ -79,18 +80,34 @@ replay), clocks** — all on top of A–E.
 
 | # | Prio | Area | Work |
 |---|------|------|------|
-| 13 | P2 | both | Engine/host API rework |
+| 13 | P2 | both | Builder/host API rework |
 | 14 | P2 | diag | §6.4 spec/impl reconciliation + warnings |
 
-**#13 — Engine/host API rework.** Replaces both temporary APIs: the `Emitted()` emission
+**#13 — Builder/host API rework.** Replaces both temporary APIs: the `Emitted()` emission
 sink and the `EvalRun(frame map[string]Value)` map stopgap (→ slot `[]Value` frame).
 Design it around the end-to-end fixture: struct input → compute → emit. Also owns:
 
-- **Registry purge-on-reuse.** `resolveTypeDecl` writes synthesized inline port types
-  (`input.x` / `output.sig`) into the host-owned registry, but the duplicate guard reads
-  the per-pass env — so a second `Compile()` on one Engine, or two scripts sharing one
-  registry, collides. Scope synthesized types per compile (or purge on reuse) rather than
-  papering over it with a diagnostic.
+- **A Builder is single-use, unenforced.** `resolveTypeDecl` writes synthesized inline port
+  types (`input.x` / `output.sig`) into the registry, but the duplicate guard reads the
+  per-pass env — so a second `Compile()` on one Builder collides and reports it as a
+  *misleading script error* (`ARG_COUNT_MISMATCH: expected 1 args, found 2`, because the
+  structural type resolves with no fields). Decided: **one builder = one script = one
+  executable**, so this needs a guard on the `Compile` error return, not a design fix.
+  The same guard closes a second hole: builder and executable now share one registry, so
+  any `Register*` after `Compile` mutates the **live** executable's vocabulary. The host
+  never gets a `*Registry` (nothing exported returns one), but it keeps the builder, so it
+  does not need one. Harmless while `Clone()` existed; real now that it is gone.
+  A registry `Clone()` per compile was implemented and then reverted — it worked, but
+  `Clone` has to track every new `Registry` field with no compiler help, and it defended
+  against a mutation that should not happen at all. If reusable builders are ever wanted,
+  the fix is a resolver-local type table so the registry is never written to during resolve
+  (the evaluator needs script types for one thing only: `len(def.Fields) == 0` at
+  `evalEmit`, which the resolver already knows and could bake into `resolved.EmitStmt`).
+- **`resolveTypeDecl` swallows the `RegisterScriptType` error** (`resolver.go:347`) and
+  returns `ErrorTypeID` with no diagnostic. Its comment claims the branch is unreachable
+  because duplicate decl names are caught by the env check — true within one compile, false
+  across two, which is how the collision above stays silent. Either emit a real diagnostic
+  or use internal type IDs that cannot collide.
 - **The emit event envelope.** Prefer nesting (`event.ts`) over reserving bare names,
   which avoids the collision entirely.
 - **`Registry`'s maps are exported**, so every `Register*` guard is advisory — a host can
@@ -99,9 +116,10 @@ Design it around the end-to-end fixture: struct input → compute → emit. Also
   evaluator env is seeded from `Modules`). `RegisterType` now rejects `ModuleShape` so the
   methods cannot produce it, but that only closes the API path. Make the maps private when
   the registry becomes host-facing.
-- **`Compile()` returning an executable *and* diagnostics.** Today `len(diags) > 0` *is*
-  the failure predicate, in `NewEngine`, `Compile`, `prog.Valid` and the fuzz assertion.
-  Same seam the warnings work needs.
+- **`len(diags) > 0` is still the failure predicate** in `prog.Valid` and the fuzz assertion.
+  `Compile` now returns `(*Executable, []diag.Diagnostic, error)` — script problems in
+  `diags`, host/API misuse in `err` — so the seam exists, but nothing produces the error yet
+  and the internal callers still count diagnostics. Same seam the warnings work needs.
 - **Handle-escape decisions.** `function Run() { candles }` returns the live input handle,
   and `emit(out, candles)` emits it (structured emits allocate a fresh outer `Record`, but
   field values are still shared). If the host retains either past the tick it is no longer
@@ -262,20 +280,32 @@ reduction: it must not change what error reporting can point at, and value-domai
 stay the only checks in eval — do not let type re-checking creep back in. When this lands,
 honor that a decoded string `Literal` is not the same width as its source text.
 
-### Public API surface (`Engine` / `Executable` / `tascript.go`)
+### Public API surface (`Builder` / `Executable` / `tascript.go`)
 
-The top-level wiring needs a design pass:
+Lifecycle is now settled: `NewBuilder()` → `Register*` → `Compile(src)` → `Init()` → `Run()`
+per activation, with an `Executable.Stage` machine (`created → initialized | failed`) making
+"what is allowed right now" answerable. One builder, one script, one executable; the package
+is single-threaded by contract. What is left:
 
-- `Engine` re-exports registry methods one-by-one as passthroughs, so every new registry
-  capability means another forwarder. Consider exposing the registry directly, or a
-  dedicated builder, instead of mirroring it.
-- The `Engine` → `Compile()` → `Executable` split and lifecycle is unmotivated: when do you
-  register types vs compile vs run, and what is reusable across runs?
-- Settle a coherent vocabulary for the phases (parse → resolve/compile → execute per event).
-- Define the intended user flow end-to-end first (register custom types/funcs → compile →
-  feed events → read outputs), then shape the types around it.
+- `Builder` re-exports registry methods one-by-one as passthroughs, so every new registry
+  capability means another forwarder — and the example needed five added at once, stopping
+  only because it ran out of things to register. Consider exposing the registry directly, or
+  a real option/builder pattern, instead of mirroring it.
+- **`RegisterType` hardcodes `ScalarShape`**, so a host cannot register any other shape and
+  `VectorShape` is unreachable from outside. Blocks indexing and the item-A capabilities.
+- **Every host `Value` must carry a `TypeID` field** just to satisfy `TypeID()`, so the host
+  threads IDs from registration into every constructed value (the `hostTypes` struct in
+  `examples/signal`). Pure boilerplate — see if the interface can carry it instead.
+- **Stdlib modules are always registered.** `NewBuilder` unconditionally calls
+  `stdlib.Register`; make `math` / `time` opt-in (`WithMath()` / `WithTime()`). Note
+  `registry.RegisterStdMath` is a *different thing* despite the name — it registers the
+  arithmetic and comparison operators on builtin scalars, which must stay unconditional.
 - **Registry is half-encapsulated:** exported maps (`Binary`, `Types`, `Modules`, …) coexist
   with Register/Lookup methods, and resolver + evaluator reach into `reg.Modules` directly.
   `CoerceRule.EvalType` duplicates its key's `to`, unchecked.
+- **Registered values are shared, not copied.** `RegisterCall` stores `rule.Args` as-is and
+  `RegisterScriptType` stores `fields` as-is, so a host that mutates the slice it passed in
+  mutates the registry. Harmless while a registry serves one executable; defensive copies at
+  registration are the fix if that ever stops being true.
 - IDE-style best-effort resolution over invalid programs would need nil-tolerance in the
   resolver, against the clean-parse contract above. Decide if that is ever a goal.
