@@ -204,6 +204,11 @@ They are valid only as the first argument to `emit(...)` inside `Run()`.
 - Port names are normal identifiers, not string literals.
 - Input, output, constant, function, namespace, and reserved names occupy one top-level
   namespace. Duplicate `Init`/`Run` declarations are parse-time errors.
+- A declaration over a name the prelude already binds — a namespace, a registered type
+  name, `Init`, `Run`, `emit` — is `RESERVED_NAME`. A declaration over an earlier
+  *script* declaration is `DUPLICATE_DECLARATION`.
+- **Shadowing is not permitted.** A `let` may not reuse a name bound in any enclosing
+  scope, top level included. Sibling blocks may each bind the same name.
 - An input binding is **read-only**; reassignment inside a function is a parse-time error
   (this is a *slot policy*, §4.5).
 - An output name is **emit-only**; reading or assigning it is a parse-time error.
@@ -593,6 +598,11 @@ alone. **Safety invariant:** a script can never write *into* a host-owned value'
 host types must not either; host methods may mutate their own opaque internal state, but must
 never expose a script-side lvalue.
 
+**Readability** is the orthogonal axis, and a strictly smaller set: only `const`, `input`,
+and `let` bindings carry a readable value. An output is emit-only, and namespaces,
+registered type names, `Init`, `Run`, and `emit` occupy the namespace without denoting a
+value at all — naming one in value position is `NOT_READABLE`, not a type error.
+
 ### 4.6 Standard prelude, and the host extension mechanism
 
 **Irreducibly core** (never a registration): the syntax (literals, operators, `if`, `let`,
@@ -708,8 +718,9 @@ not first-class values — `math` cannot be assigned, passed, or reflected on.
 | `math.sign(x)` | sign of number |
 | `math.log(x)` | natural logarithm; `INVALID_ARGUMENT` if `x <= 0` |
 
-`math` and `time` are reserved namespace identifiers; reassigning either is a parse-time
-error. Host libraries add their own namespaces (e.g. `ta` — `SPEC_SIGNAL_HOST.md`).
+`math` and `time` are reserved namespace identifiers. Declaring over one is `RESERVED_NAME`;
+naming one in value position (`let m = math`) is `NOT_READABLE` — they resolve as prefixes
+only, never as values. Host libraries add their own namespaces (e.g. `ta` — `SPEC_SIGNAL_HOST.md`).
 
 ### 5.4 String formatting — deferred
 
@@ -763,8 +774,9 @@ their specs):
 |----------|-------|------|
 | `TYPE_MISMATCH` | parse / runtime | Operator or function applied to incompatible types. |
 | `BOOL_REQUIRED` | parse / runtime | Non-`Bool` used in `if`, `&&`, `\|\|`, `!`. |
-| `RESERVED_REASSIGN` | parse | Assignment to a reserved identifier or namespace. |
+| `RESERVED_NAME` | check | Declaration over a prelude name — namespace, registered type, `Init`, `Run`, `emit` (§3.3). |
 | `NOT_ASSIGNABLE` | parse | Write to a read-only or fixed slot, or a non-replaceable type (§4.5). |
+| `NOT_READABLE` | check | A name that carries no value used in value position — output, namespace, type name, function name (§4.5). |
 | `STATE_UNDECLARED` | parse | Read/write of a `state.*` entry with no top-level declaration. |
 | `STATE_UNINITIALIZED` | parse | A `state` entry has no initializer and is not definitely assigned in `Init()`. |
 | `HISTORY_OUT_OF_RANGE` | runtime | `x[n]` where insufficient history. |

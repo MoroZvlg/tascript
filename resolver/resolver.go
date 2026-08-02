@@ -496,8 +496,8 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 			r.addUndefinedIdent(typedExpr.Tok())
 			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
-		if binding.Kind == KindOutput {
-			r.addOutputNotReadable(typedExpr.Tok())
+		if !binding.Readable() {
+			r.addNotReadable(typedExpr.Tok(), binding.Kind)
 			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
 		return &resolved.IdentExpr{Token: typedExpr.Tok(), T: binding.T}
@@ -560,7 +560,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 			}
 		}
 
-		resolvedExpr := r.resolveExpr(typedExpr.Object, env)
+		resolvedExpr := r.resolveReceiver(typedExpr.Object, env)
 		if isErrorType(resolvedExpr.Type()) {
 			return r.newErrorExpr(typedExpr.Tok())
 		}
@@ -593,7 +593,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 		switch callee := typedExpr.Callee.(type) {
 		case *ast.MemberAccessExpr:
 			errsBefore := len(r.errs)
-			resolvedExpr := r.resolveExpr(callee.Object, env)
+			resolvedExpr := r.resolveReceiver(callee.Object, env)
 			if isErrorType(resolvedExpr.Type()) {
 				return r.newErrorExpr(typedExpr.Tok())
 			}
@@ -634,6 +634,18 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 	default:
 		panic(fmt.Sprintf("unhandled ast expression %T: ast grew a node the resolver never wired up", typedExpr))
 	}
+}
+
+func (r *Resolver) resolveReceiver(expr ast.Expression, env *Env) resolved.Expression {
+	identExpr, isIdent := expr.(*ast.IdentExpr)
+	if !isIdent {
+		return r.resolveExpr(expr, env)
+	}
+	binding, exists := env.Get(Symbol(identExpr.String()))
+	if !exists || binding.Kind != KindModule {
+		return r.resolveExpr(expr, env)
+	}
+	return &resolved.IdentExpr{Token: identExpr.Tok(), T: binding.T}
 }
 
 func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, env *Env) ([]*resolved.CallArgExpr, bool) {

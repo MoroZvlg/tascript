@@ -23,6 +23,10 @@ func (b Binding) Assignable() bool {
 	return b.Kind == KindLet
 }
 
+func (b Binding) Readable() bool {
+	return b.Kind == KindLet || b.Kind == KindConst || b.Kind == KindInput
+}
+
 func (b Binding) Reserved() bool {
 	// we have only builtin top level function and not allowing user to define its own funcs
 	// if we will allow to defin function, reserved func names should be reworked

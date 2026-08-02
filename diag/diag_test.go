@@ -99,8 +99,8 @@ func TestDiagnostic_Render(t *testing.T) {
 			"error[UNDEFINED_VAR] 2:1: unknown variable x",
 		},
 		{
-			diag.OutputNotReadable{At: pos(3, 9), Name: "alert"},
-			"error[OUTPUT_NOT_READABLE] 3:9: output alert is emit-only and cannot be read",
+			diag.NotReadable{At: pos(3, 9), Name: "alert", Kind: "output"},
+			"error[NOT_READABLE] 3:9: cannot read output alert",
 		},
 		{
 			diag.InvalidEmitTarget{At: pos(3, 5)},

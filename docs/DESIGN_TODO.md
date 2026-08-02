@@ -79,21 +79,8 @@ replay), clocks** — all on top of A–E.
 
 | # | Prio | Area | Work |
 |---|------|------|------|
-| 11 | P2 | resolver | Reserved-name / shadowing rules |
 | 13 | P2 | both | Engine/host API rework |
 | 14 | P2 | diag | §6.4 spec/impl reconciliation + warnings |
-
-**#11 — reserved-name / shadowing rules.** All of these are currently accepted with no
-diagnostic and each needs a decision:
-
-- `let math = 5` shadows the module inside a function (spec says `RESERVED_REASSIGN`).
-- `let m = math` then `m.sqrt(9.0)` — modules are first-class aliasable values, but spec
-  §5.4 calls them passive syntactic prefixes, so a bare module ident in value position
-  should diag.
-- `const Init = 5` coexists with `function Init()` — function names never enter the
-  top-level env, against spec §3.3's one namespace.
-- Same-scope `let x` redeclaration silently rebinds, even with a new type. JS errors on
-  this; the spec is silent.
 
 **#13 — Engine/host API rework.** Replaces both temporary APIs: the `Emitted()` emission
 sink and the `EvalRun(frame map[string]Value)` map stopgap (→ slot `[]Value` frame).
@@ -106,6 +93,12 @@ Design it around the end-to-end fixture: struct input → compute → emit. Also
   papering over it with a diagnostic.
 - **The emit event envelope.** Prefer nesting (`event.ts`) over reserving bare names,
   which avoids the collision entirely.
+- **`Registry`'s maps are exported**, so every `Register*` guard is advisory — a host can
+  write `reg.Types[id] = TypeDef{Shape: ModuleShape}` and desync `Types` from `Modules`,
+  which resolves clean and then panics in `evalIdent` (the resolver reads `Types`, the
+  evaluator env is seeded from `Modules`). `RegisterType` now rejects `ModuleShape` so the
+  methods cannot produce it, but that only closes the API path. Make the maps private when
+  the registry becomes host-facing.
 - **`Compile()` returning an executable *and* diagnostics.** Today `len(diags) > 0` *is*
   the failure predicate, in `NewEngine`, `Compile`, `prog.Valid` and the fuzz assertion.
   Same seam the warnings work needs.
@@ -124,11 +117,11 @@ Design it around the end-to-end fixture: struct input → compute → emit. Also
   engine-owned rolling series the script indexes backward (spec §4.2), not a per-tick input.
 - Absorbs item D and the `examples/` signal-host packaging. See also "Public API surface".
 
-**#14 — diagnostics: §6.4 reconciliation.** Blocked on #11/#12/#13, whose behaviours the
+**#14 — diagnostics: §6.4 reconciliation.** Blocked on #12/#13, whose behaviours the
 unwritten codes name.
 
-- **Reconcile spec against impl.** ~11 spec codes have no impl (`BOOL_REQUIRED`,
-  `EMIT_PAYLOAD`, `RESERVED_REASSIGN`, `OUTPUT_NOT_WIRED`, `HISTORY_*`, most of the
+- **Reconcile spec against impl.** ~10 spec codes have no impl (`BOOL_REQUIRED`,
+  `EMIT_PAYLOAD`, `OUTPUT_NOT_WIRED`, `HISTORY_*`, most of the
   `*_LIMIT` family); ~24 impl codes have no spec entry. Naming conflicts to settle:
   `PORT_DUPLICATE` vs `DUPLICATE_DECLARATION`, `UNKNOWN_OUTPUT` vs `INVALID_EMIT_TARGET`,
   `TOP_LEVEL_FORM` vs `TOP_DECL_UNEXPECTED`, `INTERNAL` vs `INTERNAL_FAILURE`.
@@ -147,7 +140,7 @@ unwritten codes name.
   them; (iii) `maxParseErrors` caps `len(p.errors)`, so warnings would eat the error
   budget. So warnings need their **own slice**, not a severity field filtered at the end —
   plus the `Compile()` seam above, and `render` taking severity from the diagnostic.
-  First real warning is probably `EMPTY_FUNCTION` or a #11 shadowing rule.
+  First real warning is probably `EMPTY_FUNCTION`.
 - The emit arity diag counts rule params against `call.Args[1:]`, so `emit(sig, "up")`
   says "expected 2 args, found 1" — right arithmetic, misleading against what was typed.
 

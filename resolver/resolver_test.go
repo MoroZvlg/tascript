@@ -223,24 +223,6 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 			},
 		},
 		{
-			"read output",
-			"output alert: String\nfunction Run() {\nlet x = ^alert\n}",
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addOutputNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "alert"}),
-				}
-			},
-		},
-		{
-			"output in expression reports only the read error",
-			"output alert: String\nfunction Run() {\n^alert + \"x\"\n}",
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addOutputNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "alert"}),
-				}
-			},
-		},
-		{
 			"duplicate field in inline type",
 			"input btc: {price: Float, ^price: Integer}" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
@@ -713,6 +695,74 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addNotAssignable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, "module"),
+				}
+			},
+		},
+		{
+			"read output",
+			"output alert: String\nfunction Run() {\nlet x = ^alert\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "alert"}, resolver.KindOutput),
+				}
+			},
+		},
+		{
+			"output in expression reports only the read error",
+			"output alert: String\nfunction Run() {\n^alert + \"x\"\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "alert"}, resolver.KindOutput),
+				}
+			},
+		},
+		{
+			"read a type name",
+			"function Run() {\nlet x = ^Float\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Float"}, resolver.KindType),
+				}
+			},
+		},
+		{
+			"assign a type name to a variable of that type",
+			"function Run() {\nlet price = 1.0\nprice = ^Float\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Float"}, resolver.KindType),
+				}
+			},
+		},
+		{
+			"read a module",
+			"function Run() {\nlet m = ^math\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, resolver.KindModule),
+				}
+			},
+		},
+		{
+			"a module is still readable as a prefix",
+			"function Run() {\nlet x = math.sqrt(9.0) + math.PI\nx\n}",
+			func(ps []token.Pos) []diag.Diagnostic { return nil },
+		},
+		{
+			"read emit",
+			"function Run() {\nlet x = ^emit\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "emit"}, resolver.KindFunction),
+				}
+			},
+		},
+		{
+			"read Run",
+			"function Run() {\nlet x = ^Run\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Run"}, resolver.KindFunction),
 				}
 			},
 		},
@@ -1519,8 +1569,8 @@ func addEmitOutsideRun(tok token.Token) *diag.EmitOutsideRun {
 	return &diag.EmitOutsideRun{At: tok.Pos}
 }
 
-func addOutputNotReadable(tok token.Token) *diag.OutputNotReadable {
-	return &diag.OutputNotReadable{At: tok.Pos, Name: tok.Literal}
+func addNotReadable(tok token.Token, kind resolver.BindingKind) *diag.NotReadable {
+	return &diag.NotReadable{At: tok.Pos, Name: tok.Literal, Kind: string(kind)}
 }
 
 func addStateUndeclared(tok token.Token) *diag.StateUndeclared {

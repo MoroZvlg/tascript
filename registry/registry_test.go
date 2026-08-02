@@ -77,6 +77,25 @@ func TestRegistry_ErrorTypeIsNotPreregistered(t *testing.T) {
 	}
 }
 
+func TestRegistry_ModuleShapeRejectedByRegisterType(t *testing.T) {
+	reg := registry.DefaultRegistry()
+	id := registry.NewTypeID("fakemod")
+
+	if err := reg.RegisterType(id, registry.ModuleShape); err == nil {
+		t.Fatal("expected RegisterType to reject ModuleShape, got nil error")
+	}
+	if _, exists := reg.LookupType("fakemod"); exists {
+		t.Error("the rejected module type must not be registered")
+	}
+
+	if _, err := reg.RegisterModule("realmod"); err != nil {
+		t.Fatalf("RegisterModule: %v", err)
+	}
+	if _, exists := reg.Modules["realmod"]; !exists {
+		t.Error("RegisterModule must record the module value")
+	}
+}
+
 func TestRegistry_DuplicateRegistrationRejected(t *testing.T) {
 	custom := registry.NewTypeID("Custom")
 

@@ -37,7 +37,7 @@ const (
 	CodeInvalidOperation     Code = "INVALID_OPERATION"
 	CodeUndefinedIdent       Code = "UNDEFINED_IDENT"
 	CodeUndefinedVar         Code = "UNDEFINED_VAR"
-	CodeOutputNotReadable    Code = "OUTPUT_NOT_READABLE"
+	CodeNotReadable          Code = "NOT_READABLE"
 	CodeInvalidEmitTarget    Code = "INVALID_EMIT_TARGET"
 	CodeNotAssignable        Code = "NOT_ASSIGNABLE"
 	CodeInvalidAssignTarget  Code = "INVALID_ASSIGN_TARGET"
@@ -330,17 +330,18 @@ func (uv UndefinedVar) Error() string {
 	return render(uv.Code(), uv.At, "unknown variable %s", uv.Name)
 }
 
-type OutputNotReadable struct {
+type NotReadable struct {
 	At   token.Pos
 	Name string
+	Kind string
 }
 
-func (onr OutputNotReadable) Code() Code     { return CodeOutputNotReadable }
-func (onr OutputNotReadable) Phase() Phase   { return PhaseCheck }
-func (onr OutputNotReadable) Pos() token.Pos { return onr.At }
+func (nr NotReadable) Code() Code     { return CodeNotReadable }
+func (nr NotReadable) Phase() Phase   { return PhaseCheck }
+func (nr NotReadable) Pos() token.Pos { return nr.At }
 
-func (onr OutputNotReadable) Error() string {
-	return render(onr.Code(), onr.At, "output %s is emit-only and cannot be read", onr.Name)
+func (nr NotReadable) Error() string {
+	return render(nr.Code(), nr.At, "cannot read %s %s", nr.Kind, nr.Name)
 }
 
 type InvalidEmitTarget struct {

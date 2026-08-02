@@ -114,6 +114,13 @@ func rejectReserved(ids ...TypeID) error {
 }
 
 func (r *Registry) RegisterType(id TypeID, shape TypeShape) error {
+	if shape == ModuleShape {
+		return fmt.Errorf("type %s not registered. modules must go through RegisterModule", id)
+	}
+	return r.registerType(id, shape)
+}
+
+func (r *Registry) registerType(id TypeID, shape TypeShape) error {
 	if err := rejectReserved(id); err != nil {
 		return err
 	}
@@ -203,7 +210,7 @@ func (r *Registry) LookupCoerce(from, to TypeID) (CoerceRule, bool) {
 
 func (r *Registry) RegisterModule(name string) (Value, error) {
 	moduleType := NewTypeID(name)
-	if err := r.RegisterType(moduleType, ModuleShape); err != nil {
+	if err := r.registerType(moduleType, ModuleShape); err != nil {
 		return nil, err
 	}
 	moduleValue := &PlainModule{typeID: moduleType}

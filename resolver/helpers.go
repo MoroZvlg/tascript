@@ -59,10 +59,11 @@ func (r *Resolver) addInvalidAssignTarget(opToken token.Token) {
 	})
 }
 
-func (r *Resolver) addOutputNotReadable(opToken token.Token) {
-	r.errs = append(r.errs, &diag.OutputNotReadable{
+func (r *Resolver) addNotReadable(opToken token.Token, kind BindingKind) {
+	r.errs = append(r.errs, &diag.NotReadable{
 		At:   opToken.Pos,
 		Name: opToken.Literal,
+		Kind: string(kind),
 	})
 }
 
