@@ -475,10 +475,10 @@ access is a runtime error (§6.5).
 tascript uses a **per-event** execution model. A program is a dataflow node with a mailbox:
 a message arriving on an input port is an **activation**. On each activation the runtime:
 
-1. Binds a coherent input **frame** — a snapshot of all declared inputs, consistent as-of
-   one instant (§4.4 references the frame handle; the host guarantees immutability for the
-   activation's duration).
-2. Executes `Run()` top-to-bottom in the context of that frame.
+1. Reads every declared input from its host binding, established once before `Init`. The
+   host guarantees the bound values are coherent — consistent as-of one instant — and
+   immutable for the activation's duration.
+2. Executes `Run()` top-to-bottom against those values.
 3. Collects any `emit(...)` calls into the output event stream.
 4. Commits state and emits on success; rolls both back on a runtime failure (§6.5).
 

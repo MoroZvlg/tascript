@@ -68,7 +68,7 @@ function Run() { math }
 		panic(err)
 	}
 
-	result, err := program.Run(nil)
+	result, err := program.Run()
 	if err != nil {
 		panic(err)
 	}

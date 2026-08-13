@@ -17,6 +17,7 @@ type Evaluator struct {
 	registry *registry.Registry
 	env      *Env
 	states   map[string]registry.Value
+	inputs   map[string]registry.Value
 	currFn   string // Entry point/function name, for runtime diagnostics
 	// TODO: temporary emission sink — collects emitted values until real
 	// output channels to the host are wired (Engine/host API rework).
@@ -29,7 +30,31 @@ func New(prog *resolved.Program, reg *registry.Registry) *Evaluator {
 		registry: reg,
 		env:      EnvFromRegistry(reg),
 		states:   make(map[string]registry.Value),
+		inputs:   make(map[string]registry.Value),
 	}
+}
+
+func (e *Evaluator) BindInput(name string, value registry.Value) error {
+	for _, decl := range e.prog.Inputs {
+		if decl.Name != name {
+			continue
+		}
+		if value.TypeID() != decl.T {
+			rule, canCoerce := e.registry.LookupCoerce(value.TypeID(), decl.T)
+			if !canCoerce {
+				return diag.InputTypeMismatch{
+					At:       decl.Token.Pos,
+					Name:     name,
+					Expected: decl.T,
+					Got:      value.TypeID(),
+				}
+			}
+			value = rule.EvalFn(value)
+		}
+		e.inputs[name] = value
+		return nil
+	}
+	return diag.InputUnknown{Name: name}
 }
 
 // Emitted returns the values emitted by the last EvalRun, in emission order.
@@ -73,9 +98,9 @@ func (e *Evaluator) EvalInit() (result registry.Value, err error) {
 
 // EvalRun executes one tick.
 // On error the tick is rolled back (state + emits); a later Run may still be called.
-// frame values must stay immutable for the call's duration (host-owned coherence).
+// Bound inputs must stay immutable for the call's duration (host-owned coherence).
 // TODO: result is temp for debug/tests.
-func (e *Evaluator) EvalRun(frame map[string]registry.Value) (result registry.Value, err error) {
+func (e *Evaluator) EvalRun() (result registry.Value, err error) {
 	e.currFn = "Run"
 	snapshot := maps.Clone(e.states)
 	defer func() {
@@ -91,43 +116,18 @@ func (e *Evaluator) EvalRun(frame map[string]registry.Value) (result registry.Va
 	e.emitted = nil
 
 	runEnv := NewEnclosedEnv(e.env)
-	if err := e.bindInputs(runEnv, frame); err != nil {
+	if err := e.bindInputs(runEnv); err != nil {
 		return nil, err
 	}
 
 	return e.evalBlock(e.prog.RunFn.Body, runEnv)
 }
 
-func (e *Evaluator) bindInputs(env *Env, frame map[string]registry.Value) error {
-	for name := range frame {
-		declared := false
-		for _, decl := range e.prog.Inputs {
-			if decl.Name == name {
-				declared = true
-				break
-			}
-		}
-		if !declared {
-			return diag.InputUnknown{Name: name}
-		}
-	}
-
+func (e *Evaluator) bindInputs(env *Env) error {
 	for _, decl := range e.prog.Inputs {
-		value, ok := frame[decl.Name]
+		value, ok := e.inputs[decl.Name]
 		if !ok {
 			return diag.InputMissing{At: decl.Token.Pos, Name: decl.Name}
-		}
-		if value.TypeID() != decl.T {
-			rule, canCoerce := e.registry.LookupCoerce(value.TypeID(), decl.T)
-			if !canCoerce {
-				return diag.InputTypeMismatch{
-					At:       decl.Token.Pos,
-					Name:     decl.Name,
-					Expected: decl.T,
-					Got:      value.TypeID(),
-				}
-			}
-			value = rule.EvalFn(value)
 		}
 		env.Set(decl.Name, value)
 	}

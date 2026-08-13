@@ -57,7 +57,7 @@ func evalSrc(t *testing.T, src string) registry.Value {
 	if _, err := ev.EvalInit(); err != nil {
 		t.Fatalf("init error: %v", err)
 	}
-	got, err := ev.EvalRun(nil)
+	got, err := ev.EvalRun()
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
@@ -91,7 +91,7 @@ emit(sig, dir="up", price=threshold + 0.2)
 	}
 
 	ev := evaluator.New(resolvedProg, reg)
-	if _, err := ev.EvalRun(nil); err != nil {
+	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
 
@@ -125,7 +125,7 @@ emit(sig, dir="up", price=threshold + 0.2)
 	}
 
 	// emissions must not accumulate across runs
-	if _, err := ev.EvalRun(nil); err != nil {
+	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("second eval error: %v", err)
 	}
 	if got := len(ev.Emitted()); got != 2 {
@@ -312,7 +312,7 @@ func TestEvaluator_TrapDivisionByZero(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ev := compileSrc(t, "function Run() {\n"+tt.expr+"\n}", nil)
-			_, err := ev.EvalRun(nil)
+			_, err := ev.EvalRun()
 
 			var failure diag.RuntimeFailure
 			if !errors.As(err, &failure) {
@@ -347,7 +347,7 @@ emit(out, state.n)
 	}
 
 	// tick 1 commits: n 0 -> 1, emits 0 and 1
-	if _, err := ev.EvalRun(nil); err != nil {
+	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("first run error: %v", err)
 	}
 	emitted := ev.Emitted()
@@ -356,7 +356,7 @@ emit(out, state.n)
 	}
 
 	// tick 2 traps mid-way: the emit before the trap must not leak
-	if _, err := ev.EvalRun(nil); err == nil {
+	if _, err := ev.EvalRun(); err == nil {
 		t.Fatal("second run: expected trap")
 	}
 	if emitted := ev.Emitted(); len(emitted) != 0 {
@@ -364,7 +364,7 @@ emit(out, state.n)
 	}
 
 	// tick 3 proves n rolled back to 1: it traps identically. Without rollback n would be 2 and this tick would commit.
-	if _, err := ev.EvalRun(nil); err == nil {
+	if _, err := ev.EvalRun(); err == nil {
 		t.Error("third run: expected trap again — state write leaked from the aborted tick")
 	}
 }
@@ -384,7 +384,7 @@ func TestEvaluator_PanicReportsInternalFailure(t *testing.T) {
 			},
 		})
 	})
-	_, err := ev.EvalRun(nil)
+	_, err := ev.EvalRun()
 
 	var internal diag.InternalFailure
 	if !errors.As(err, &internal) {
@@ -411,7 +411,7 @@ func TestEvaluator_HostRuleErrorBecomesTrap(t *testing.T) {
 			},
 		})
 	})
-	_, err := ev.EvalRun(nil)
+	_, err := ev.EvalRun()
 
 	var failure diag.RuntimeFailure
 	if !errors.As(err, &failure) {
@@ -485,7 +485,7 @@ emit(out, state.cooldown + state.seeded)
 	}
 
 	// bar 1: cooldown 3 -> 2, emits 2 + 10
-	if _, err := ev.EvalRun(nil); err != nil {
+	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("first eval error: %v", err)
 	}
 	emitted := ev.Emitted()
@@ -497,7 +497,7 @@ emit(out, state.cooldown + state.seeded)
 	}
 
 	// bar 2: cooldown persists, 2 -> 1, emits 1 + 10
-	if _, err := ev.EvalRun(nil); err != nil {
+	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("second eval error: %v", err)
 	}
 	emitted = ev.Emitted()
@@ -520,7 +520,7 @@ func initedEval(t *testing.T, src string, customize func(*registry.Registry)) *e
 
 func mustRun(t *testing.T, ev *evaluator.Evaluator) registry.Value {
 	t.Helper()
-	got, err := ev.EvalRun(nil)
+	got, err := ev.EvalRun()
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -599,43 +599,48 @@ func TestEvaluator_InputBinding(t *testing.T) {
 
 	t.Run("bound value reaches the body", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
-		got, err := ev.EvalRun(map[string]registry.Value{"price": registry.Float(1.5)})
-		if err != nil {
-			t.Fatalf("eval error: %v", err)
+		if err := ev.BindInput("price", registry.Float(1.5)); err != nil {
+			t.Fatalf("bind error: %v", err)
 		}
+		got := mustRun(t, ev)
 		if got != registry.Float(1.5) {
 			t.Errorf("got %v, want 1.5", got)
 		}
 	})
 
-	t.Run("fresh value per tick", func(t *testing.T) {
+	t.Run("a bound value holds across ticks until rebound", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
-		if _, err := ev.EvalRun(map[string]registry.Value{"price": registry.Float(1)}); err != nil {
+		if err := ev.BindInput("price", registry.Float(1)); err != nil {
 			t.Fatal(err)
 		}
-		got, err := ev.EvalRun(map[string]registry.Value{"price": registry.Float(2)})
-		if err != nil {
+		if got := mustRun(t, ev); got != registry.Float(1) {
+			t.Fatalf("first tick: got %v, want 1", got)
+		}
+		if got := mustRun(t, ev); got != registry.Float(1) {
+			t.Errorf("second tick without rebinding: got %v, want 1", got)
+		}
+
+		if err := ev.BindInput("price", registry.Float(2)); err != nil {
 			t.Fatal(err)
 		}
-		if got != registry.Float(2) {
-			t.Errorf("got %v, want 2", got)
+		if got := mustRun(t, ev); got != registry.Float(2) {
+			t.Errorf("after rebinding: got %v, want 2", got)
 		}
 	})
 
 	t.Run("Integer coerces to declared Float", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
-		got, err := ev.EvalRun(map[string]registry.Value{"price": registry.Integer(3)})
-		if err != nil {
-			t.Fatalf("eval error: %v", err)
+		if err := ev.BindInput("price", registry.Integer(3)); err != nil {
+			t.Fatalf("bind error: %v", err)
 		}
-		if got != registry.Float(3) {
+		if got := mustRun(t, ev); got != registry.Float(3) {
 			t.Errorf("got %v, want 3.0", got)
 		}
 	})
 
-	t.Run("missing input errors", func(t *testing.T) {
+	t.Run("unbound input errors on Run", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
-		_, err := ev.EvalRun(nil)
+		_, err := ev.EvalRun()
 		var missing diag.InputMissing
 		if !errors.As(err, &missing) {
 			t.Fatalf("expected diag.InputMissing, got %T: %v", err, err)
@@ -645,9 +650,9 @@ func TestEvaluator_InputBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("type mismatch errors", func(t *testing.T) {
+	t.Run("type mismatch errors on bind", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
-		_, err := ev.EvalRun(map[string]registry.Value{"price": registry.String("x")})
+		err := ev.BindInput("price", registry.String("x"))
 		var mismatch diag.InputTypeMismatch
 		if !errors.As(err, &mismatch) {
 			t.Fatalf("expected diag.InputTypeMismatch, got %T: %v", err, err)
@@ -657,9 +662,9 @@ func TestEvaluator_InputBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("undeclared input errors even when the frame is the declared size", func(t *testing.T) {
+	t.Run("undeclared input errors on bind", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
-		_, err := ev.EvalRun(map[string]registry.Value{"volume": registry.Float(2)})
+		err := ev.BindInput("volume", registry.Float(2))
 		var unknown diag.InputUnknown
 		if !errors.As(err, &unknown) {
 			t.Fatalf("expected diag.InputUnknown, got %T: %v", err, err)
@@ -669,18 +674,15 @@ func TestEvaluator_InputBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("undeclared input errors", func(t *testing.T) {
+	t.Run("a rejected bind leaves the input unbound", func(t *testing.T) {
 		ev := initedEval(t, src, nil)
-		_, err := ev.EvalRun(map[string]registry.Value{
-			"price":  registry.Float(1),
-			"volume": registry.Float(2),
-		})
-		var unknown diag.InputUnknown
-		if !errors.As(err, &unknown) {
-			t.Fatalf("expected diag.InputUnknown, got %T: %v", err, err)
+		if err := ev.BindInput("price", registry.String("x")); err == nil {
+			t.Fatal("expected a type mismatch")
 		}
-		if unknown.Name != "volume" {
-			t.Errorf("name = %s, want volume", unknown.Name)
+		_, err := ev.EvalRun()
+		var missing diag.InputMissing
+		if !errors.As(err, &missing) {
+			t.Fatalf("expected diag.InputMissing, got %T: %v", err, err)
 		}
 	})
 }

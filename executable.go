@@ -31,6 +31,7 @@ func (s Stage) String() string {
 var (
 	ErrNotInitialized = errors.New("Init must succeed before Run")
 	ErrInitRepeated   = errors.New("Init has already run")
+	ErrBindTooLate    = errors.New("inputs must be bound before Init")
 )
 
 type Executable struct {
@@ -39,6 +40,15 @@ type Executable struct {
 }
 
 func (e *Executable) Stage() Stage { return e.stage }
+
+// BindInput keeps a bound pointer live: the host may keep mutating it between ticks.
+// A bound value, and anything coerced on the way in, is the snapshot taken here.
+func (e *Executable) BindInput(name string, value registry.Value) error {
+	if e.stage != StageCreated {
+		return fmt.Errorf("%w (stage %s)", ErrBindTooLate, e.stage)
+	}
+	return e.eval.BindInput(name, value)
+}
 
 // Init runs the load phase.
 // An error is fatal: the program never reached a valid initial state and can not be run.
@@ -58,11 +68,11 @@ func (e *Executable) Init() error {
 // Run executes one tick.
 // Error stops execution but do not prevent calling Run once again. State will be rollback
 // TODO: result is temp for debug/tests
-func (e *Executable) Run(inputs map[string]registry.Value) (registry.Value, error) {
+func (e *Executable) Run() (registry.Value, error) {
 	if e.stage != StageInitialized {
 		return nil, fmt.Errorf("%w (stage %s)", ErrNotInitialized, e.stage)
 	}
-	result, err := e.eval.EvalRun(inputs)
+	result, err := e.eval.EvalRun()
 	return result, err
 }
 
