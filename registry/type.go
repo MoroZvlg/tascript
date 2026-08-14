@@ -37,13 +37,13 @@ type FieldDef struct {
 	Type TypeID
 }
 
-type NamedValue struct {
-	Name  string
-	Value Value
-}
-
 type Value interface {
 	TypeID() TypeID
+}
+
+// Sink runs inside the tick that emitted, so it must not call back into the executable
+type Sink interface {
+	Emit(Value)
 }
 
 type Integer int

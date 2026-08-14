@@ -50,6 +50,14 @@ func (e *Executable) BindInput(name string, value registry.Value) error {
 	return e.eval.BindInput(name, value)
 }
 
+// BindOutput must cover every declared output before Init, or Init fails.
+func (e *Executable) BindOutput(name string, sink registry.Sink) error {
+	if e.stage != StageCreated {
+		return fmt.Errorf("%w (stage %s)", ErrBindTooLate, e.stage)
+	}
+	return e.eval.BindOutput(name, sink)
+}
+
 // Init runs the load phase.
 // An error is fatal: the program never reached a valid initial state and can not be run.
 func (e *Executable) Init() error {
@@ -67,16 +75,10 @@ func (e *Executable) Init() error {
 
 // Run executes one tick.
 // Error stops execution but do not prevent calling Run once again. State will be rollback
-// TODO: result is temp for debug/tests
-func (e *Executable) Run() (registry.Value, error) {
+func (e *Executable) Run() error {
 	if e.stage != StageInitialized {
-		return nil, fmt.Errorf("%w (stage %s)", ErrNotInitialized, e.stage)
+		return fmt.Errorf("%w (stage %s)", ErrNotInitialized, e.stage)
 	}
-	result, err := e.eval.EvalRun()
-	return result, err
-}
-
-// TODO: temporary API, see Evaluator.Emitted
-func (e *Executable) Emitted() []registry.NamedValue {
-	return e.eval.Emitted()
+	_, err := e.eval.EvalRun()
+	return err
 }

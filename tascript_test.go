@@ -5,120 +5,104 @@ import (
 	"testing"
 
 	"github.com/MoroZvlg/tascript"
+	"github.com/MoroZvlg/tascript/diag"
 	"github.com/MoroZvlg/tascript/registry"
 )
 
-const counterSrc = "state n: Integer = 0\nfunction Run() {\nstate.n = state.n + 1\nstate.n\n}"
+func TestExecutable_Binding(t *testing.T) {
+	t.Run("a bound pointer stays live across ticks", func(t *testing.T) {
+		program, boxID, seen := boxProgram(t)
 
-func compile(t *testing.T, src string) *tascript.Executable {
-	t.Helper()
+		bound := &box{id: boxID, v: 1}
+		if err := program.BindInput("b", bound); err != nil {
+			t.Fatalf("bind: %v", err)
+		}
+		if err := program.Init(); err != nil {
+			t.Fatalf("init: %v", err)
+		}
 
-	program, diags, err := tascript.NewBuilder().Compile(src)
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	if len(diags) > 0 {
-		t.Fatalf("compile diagnostics: %v", diags)
-	}
-	return program
-}
+		if err := program.Run(); err != nil {
+			t.Fatalf("first tick: %v", err)
+		}
+		if seen.last() != registry.Float(1) {
+			t.Fatalf("first tick: got %v, want 1", seen.last())
+		}
 
-type box struct {
-	id registry.TypeID
-	v  float64
-}
-
-func (b *box) TypeID() registry.TypeID { return b.id }
-
-func boxProgram(t *testing.T) (*tascript.Executable, registry.TypeID) {
-	t.Helper()
-
-	builder := tascript.NewBuilder()
-	boxID, err := builder.RegisterType("Box")
-	if err != nil {
-		t.Fatalf("register type: %v", err)
-	}
-
-	err = builder.RegisterMemberAccess(boxID, "v", registry.MemberAccessRule{
-		EvalType: registry.FloatID,
-		EvalFn: func(receiver registry.Value) (registry.Value, error) {
-			return registry.Float(receiver.(*box).v), nil
-		},
+		bound.v = 2
+		if err := program.Run(); err != nil {
+			t.Fatalf("second tick: %v", err)
+		}
+		if seen.last() != registry.Float(2) {
+			t.Errorf("host mutation between ticks: got %v, want 2", seen.last())
+		}
 	})
-	if err != nil {
-		t.Fatalf("register member: %v", err)
-	}
 
-	program, diags, err := builder.Compile("input b: Box\nfunction Run() {\nb.v\n}")
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	if len(diags) > 0 {
-		t.Fatalf("compile diagnostics: %v", diags)
-	}
-	return program, boxID
-}
+	t.Run("binding after Init is rejected", func(t *testing.T) {
+		program, boxID, _ := boxProgram(t)
 
-func TestExecutable_BoundPointerStaysLive(t *testing.T) {
-	program, boxID := boxProgram(t)
+		if err := program.BindInput("b", &box{id: boxID}); err != nil {
+			t.Fatalf("bind: %v", err)
+		}
+		if err := program.Init(); err != nil {
+			t.Fatalf("init: %v", err)
+		}
 
-	bound := &box{id: boxID, v: 1}
-	if err := program.BindInput("b", bound); err != nil {
-		t.Fatalf("bind: %v", err)
-	}
-	if err := program.Init(); err != nil {
-		t.Fatalf("init: %v", err)
-	}
+		err := program.BindInput("b", &box{id: boxID, v: 9})
+		if !errors.Is(err, tascript.ErrBindTooLate) {
+			t.Errorf("bind input after Init: got %v, want ErrBindTooLate", err)
+		}
 
-	got, err := program.Run()
-	if err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
-	if got != registry.Float(1) {
-		t.Fatalf("first tick: got %v, want 1", got)
-	}
+		err = program.BindOutput("seen", &recorder{})
+		if !errors.Is(err, tascript.ErrBindTooLate) {
+			t.Errorf("bind output after Init: got %v, want ErrBindTooLate", err)
+		}
+	})
 
-	bound.v = 2
-	got, err = program.Run()
-	if err != nil {
-		t.Fatalf("second tick: %v", err)
-	}
-	if got != registry.Float(2) {
-		t.Errorf("host mutation between ticks: got %v, want 2", got)
-	}
-}
+	t.Run("binding an undeclared output errors", func(t *testing.T) {
+		program := compile(t, counterSrc)
 
-func TestExecutable_BindAfterInit(t *testing.T) {
-	program, boxID := boxProgram(t)
+		err := program.BindOutput("nope", &recorder{})
+		var unknown diag.OutputUnknown
+		if !errors.As(err, &unknown) {
+			t.Fatalf("got %T %v, want diag.OutputUnknown", err, err)
+		}
+		if unknown.Name != "nope" {
+			t.Errorf("name = %s, want nope", unknown.Name)
+		}
+	})
 
-	if err := program.BindInput("b", &box{id: boxID}); err != nil {
-		t.Fatalf("bind: %v", err)
-	}
-	if err := program.Init(); err != nil {
-		t.Fatalf("init: %v", err)
-	}
+	t.Run("an output left without a sink fails Init", func(t *testing.T) {
+		program := compile(t, counterSrc)
 
-	err := program.BindInput("b", &box{id: boxID, v: 9})
-	if !errors.Is(err, tascript.ErrBindTooLate) {
-		t.Fatalf("bind after Init: got %v, want ErrBindTooLate", err)
-	}
+		err := program.Init()
+		var missing diag.OutputMissing
+		if !errors.As(err, &missing) {
+			t.Fatalf("Init with no sink: got %T %v, want diag.OutputMissing", err, err)
+		}
+		if missing.Name != "tick" {
+			t.Errorf("name = %s, want tick", missing.Name)
+		}
+		if program.Stage() != tascript.StageFailed {
+			t.Errorf("stage: got %s, want failed", program.Stage())
+		}
+	})
 }
 
 func TestExecutable_RunBeforeInit(t *testing.T) {
-	program := compile(t, counterSrc)
+	program, _ := counterProgram(t)
 
 	if program.Stage() != tascript.StageCreated {
 		t.Errorf("fresh executable stage: got %s, want created", program.Stage())
 	}
 
-	_, err := program.Run()
+	err := program.Run()
 	if !errors.Is(err, tascript.ErrNotInitialized) {
 		t.Fatalf("Run before Init: got %v, want ErrNotInitialized", err)
 	}
 }
 
 func TestExecutable_InitIsSingleShot(t *testing.T) {
-	program := compile(t, counterSrc)
+	program, ticks := counterProgram(t)
 
 	if err := program.Init(); err != nil {
 		t.Fatalf("init: %v", err)
@@ -127,16 +111,13 @@ func TestExecutable_InitIsSingleShot(t *testing.T) {
 		t.Errorf("stage after Init: got %s, want initialized", program.Stage())
 	}
 
-	var last registry.Value
 	for tick := 1; tick <= 3; tick++ {
-		got, err := program.Run()
-		if err != nil {
+		if err := program.Run(); err != nil {
 			t.Fatalf("tick %d: %v", tick, err)
 		}
-		last = got
 	}
-	if last != registry.Integer(3) {
-		t.Fatalf("after 3 ticks: got %v, want 3", last)
+	if ticks.last() != registry.Integer(3) {
+		t.Fatalf("after 3 ticks: got %v, want 3", ticks.last())
 	}
 
 	err := program.Init()
@@ -144,12 +125,11 @@ func TestExecutable_InitIsSingleShot(t *testing.T) {
 		t.Fatalf("second Init: got %v, want ErrInitRepeated", err)
 	}
 
-	got, err := program.Run()
-	if err != nil {
+	if err := program.Run(); err != nil {
 		t.Fatalf("tick after rejected Init: %v", err)
 	}
-	if got != registry.Integer(4) {
-		t.Errorf("a rejected Init must not reseed state: got %v, want 4", got)
+	if ticks.last() != registry.Integer(4) {
+		t.Errorf("a rejected Init must not reseed state: got %v, want 4", ticks.last())
 	}
 }
 
@@ -163,7 +143,7 @@ func TestExecutable_FailedInitIsTerminal(t *testing.T) {
 		t.Errorf("stage after failed Init: got %s, want failed", program.Stage())
 	}
 
-	_, err := program.Run()
+	err := program.Run()
 	if !errors.Is(err, tascript.ErrNotInitialized) {
 		t.Errorf("Run after failed Init: got %v, want ErrNotInitialized", err)
 	}
@@ -171,5 +151,18 @@ func TestExecutable_FailedInitIsTerminal(t *testing.T) {
 	err = program.Init()
 	if !errors.Is(err, tascript.ErrInitRepeated) {
 		t.Errorf("retrying a failed Init: got %v, want ErrInitRepeated", err)
+	}
+}
+
+func TestBuilder_ScriptDiagnosticsAreNotErrors(t *testing.T) {
+	program, diags, err := tascript.NewBuilder().Compile("function Run() {\nnope\n}")
+	if err != nil {
+		t.Fatalf("a script problem must not be an error: %v", err)
+	}
+	if program != nil {
+		t.Error("expected no executable when the script does not compile")
+	}
+	if len(diags) == 0 {
+		t.Fatal("expected diagnostics for an undefined name")
 	}
 }

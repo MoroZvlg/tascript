@@ -18,10 +18,8 @@ type Evaluator struct {
 	env      *Env
 	states   map[string]registry.Value
 	inputs   map[string]registry.Value
+	outputs  map[string]registry.Sink
 	currFn   string // Entry point/function name, for runtime diagnostics
-	// TODO: temporary emission sink — collects emitted values until real
-	// output channels to the host are wired (Engine/host API rework).
-	emitted []registry.NamedValue
 }
 
 func New(prog *resolved.Program, reg *registry.Registry) *Evaluator {
@@ -31,6 +29,7 @@ func New(prog *resolved.Program, reg *registry.Registry) *Evaluator {
 		env:      EnvFromRegistry(reg),
 		states:   make(map[string]registry.Value),
 		inputs:   make(map[string]registry.Value),
+		outputs:  make(map[string]registry.Sink),
 	}
 }
 
@@ -57,10 +56,14 @@ func (e *Evaluator) BindInput(name string, value registry.Value) error {
 	return diag.InputUnknown{Name: name}
 }
 
-// Emitted returns the values emitted by the last EvalRun, in emission order.
-// TODO: temporary API, see the emitted field.
-func (e *Evaluator) Emitted() []registry.NamedValue {
-	return e.emitted
+func (e *Evaluator) BindOutput(name string, sink registry.Sink) error {
+	for _, decl := range e.prog.Outputs {
+		if decl.Name == name {
+			e.outputs[name] = sink
+			return nil
+		}
+	}
+	return diag.OutputUnknown{Name: name}
 }
 
 // EvalInit is the load phase and must be called once before the first EvalRun.
@@ -72,6 +75,12 @@ func (e *Evaluator) EvalInit() (result registry.Value, err error) {
 			result, err = nil, e.internalFailure(r)
 		}
 	}()
+
+	for _, decl := range e.prog.Outputs {
+		if _, bound := e.outputs[decl.Name]; !bound {
+			return nil, diag.OutputMissing{At: decl.Token.Pos, Name: decl.Name}
+		}
+	}
 
 	for _, decl := range e.prog.Consts {
 		if err := e.evalConst(decl, e.env); err != nil {
@@ -97,7 +106,7 @@ func (e *Evaluator) EvalInit() (result registry.Value, err error) {
 }
 
 // EvalRun executes one tick.
-// On error the tick is rolled back (state + emits); a later Run may still be called.
+// On error `state` is rolled back — emits already handed to a sink are not.
 // Bound inputs must stay immutable for the call's duration (host-owned coherence).
 // TODO: result is temp for debug/tests.
 func (e *Evaluator) EvalRun() (result registry.Value, err error) {
@@ -109,11 +118,8 @@ func (e *Evaluator) EvalRun() (result registry.Value, err error) {
 		}
 		if err != nil {
 			e.states = snapshot
-			e.emitted = nil
 		}
 	}()
-
-	e.emitted = nil
 
 	runEnv := NewEnclosedEnv(e.env)
 	if err := e.bindInputs(runEnv); err != nil {
@@ -248,7 +254,7 @@ func (e *Evaluator) evalEmit(stmt *resolved.EmitStmt, env *Env) (registry.Value,
 		value = registry.Record{T: stmt.T, Fields: fields}
 	}
 
-	e.emitted = append(e.emitted, registry.NamedValue{Name: stmt.Output, Value: value})
+	e.outputs[stmt.Output].Emit(value)
 	return nil, nil
 }
 

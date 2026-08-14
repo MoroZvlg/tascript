@@ -479,8 +479,10 @@ a message arriving on an input port is an **activation**. On each activation the
    host guarantees the bound values are coherent — consistent as-of one instant — and
    immutable for the activation's duration.
 2. Executes `Run()` top-to-bottom against those values.
-3. Collects any `emit(...)` calls into the output event stream.
-4. Commits state and emits on success; rolls both back on a runtime failure (§6.5).
+3. Delivers each `emit(...)` to that output's host sink as it is evaluated, in program
+   order, from inside the tick.
+4. Commits state on success; rolls it back on a runtime failure (§6.5). Delivered emits
+   are not recalled.
 
 A "candle tick" is simply the special case where a signal block's main input is a candle
 stream; the core has no candle concept.
@@ -819,19 +821,23 @@ a stable machine-readable **kind**, a source position, and a message:
 | `UNASSIGNED_STATE` | Read of a `state.*` field that reached `Run()` unset. Unreachable in a program that passes definite-assignment analysis; retained as a fail-loud backstop. |
 | `UNKNOWN_FAILURE` | A host-registered rule returned a non-registry error; wrapped verbatim. |
 
-**Tick transactionality.** A script trap aborts the current invocation atomically:
+**Tick transactionality.** A script trap aborts the current invocation:
 
-- A trapped `Run()` tick is **rolled back** — `state.*` and all snapshotable persistent
-  slots revert to their pre-tick snapshot, and that tick's emit buffer is discarded. The
-  aborted tick is observationally as if it never ran. The host decides whether to continue.
+- A trapped `Run()` tick **rolls back `state.*`** to its pre-tick snapshot. The host decides
+  whether to continue.
+- **Emits are not rolled back.** Each `emit` reaches its sink as it is evaluated, so a trap
+  cannot recall what already went out — a tick that traps halfway has emitted its first half.
+  Whether that is acceptable is the sink's policy: a `log` output wants every line
+  regardless of the outcome, an order router may prefer to buffer and flush only after
+  `Run` returns cleanly. The engine takes no position and does not buffer on the host's
+  behalf.
 - A trapped `Init()` means the program never reached a valid initial state; no partial state
   is retained and no `Run()` follows.
 
-Rollback is unconditional in v1 because every effect a program can produce (`state` writes,
-`emit`) is internal and reversible. Host functions with irreversible external effects are
-out of scope for v1; staged-effect semantics will be defined when they land. A persistent
-host object in a slot must be `snapshotable` (§4.4) to participate in rollback, or it is
-rejected at load.
+Rollback covers only what the engine owns. Host objects reached through registered rules are
+outside it: a host method that mutates its receiver mid-tick — an indicator advancing its
+window, say — is not undone by a later trap. Keeping such an object consistent across a
+failed tick is the host's business.
 
 #### Internal failures
 

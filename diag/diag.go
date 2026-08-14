@@ -56,6 +56,8 @@ const (
 	CodeTypeMismatch         Code = "TYPE_MISMATCH"
 	CodeInputUnknown         Code = "INPUT_UNKNOWN"
 	CodeInputMissing         Code = "INPUT_MISSING"
+	CodeOutputUnknown        Code = "OUTPUT_UNKNOWN"
+	CodeOutputMissing        Code = "OUTPUT_MISSING"
 	CodeInputTypeMismatch    Code = "INPUT_TYPE_MISMATCH"
 	CodeInternalFailure      Code = "INTERNAL_FAILURE"
 )
@@ -579,6 +581,31 @@ func (in InternalFailure) Pos() token.Pos { return token.Pos{} }
 
 func (in InternalFailure) Error() string {
 	return fmt.Sprintf("error[%s] unrecovered panic in %s: %v\n%s", in.Code(), in.EntryFn, in.Panic, in.Stack)
+}
+
+type OutputUnknown struct {
+	Name string
+}
+
+func (ou OutputUnknown) Code() Code     { return CodeOutputUnknown }
+func (ou OutputUnknown) Phase() Phase   { return PhaseRuntime }
+func (ou OutputUnknown) Pos() token.Pos { return token.Pos{} }
+
+func (ou OutputUnknown) Error() string {
+	return fmt.Sprintf("error[%s] output %q is not declared", ou.Code(), ou.Name)
+}
+
+type OutputMissing struct {
+	At   token.Pos
+	Name string
+}
+
+func (om OutputMissing) Code() Code     { return CodeOutputMissing }
+func (om OutputMissing) Phase() Phase   { return PhaseRuntime }
+func (om OutputMissing) Pos() token.Pos { return om.At }
+
+func (om OutputMissing) Error() string {
+	return render(om.Code(), om.At, "output %s has no bound sink", om.Name)
 }
 
 type InputUnknown struct {

@@ -68,11 +68,9 @@ function Run() { math }
 		panic(err)
 	}
 
-	result, err := program.Run()
-	if err != nil {
+	if err := program.Run(); err != nil {
 		panic(err)
 	}
-	fmt.Println(result)
 }
 
 func showDiags(diags []diag.Diagnostic) {

@@ -38,18 +38,22 @@ can do. See "Not in v0.1" for what moved and why.
 In order. 1–2 are the release; 3–4 are cheap and unblock the error seam; 5–7 are decisions
 that get expensive to change once hosts exist; 8 is the doc.
 
-**1. Output path — replace `Emitted()`.** The only API a live host touches every tick, and
-today it is a slice you poll that is silently cleared at the top of the next `Run`. Decided
-direction: **emits become the `Run` result**, which also retires the debug return value —
-two temporary APIs die together. Owns:
+**1. Output path — ~~replace `Emitted()`~~ done.** Outputs bind like inputs: the host calls
+`BindOutput(name, sink)` before `Init` (every declared output needs one, or `Init` fails
+with `OUTPUT_MISSING`), and `evalEmit` calls `Sink.Emit(Value)` as it evaluates. `Emitted()`
+and the emit buffer are gone; `Run() error` no longer returns a debug value. Delivery policy
+— buffer-and-flush, fire-and-forget, drop during warmup — is entirely the sink's, which is
+why a `log` output and an order router can coexist. Emits are therefore **outside tick
+rollback** (§6.5 rewritten). What is left here:
 
 - **The emit event envelope.** Prefer nesting (`event.ts`) over reserving bare names, which
   avoids the collision entirely.
 - The emit arity diag counts rule params against `call.Args[1:]`, so `emit(sig, "up")` says
   "expected 2 args, found 1" — right arithmetic, misleading against what was typed.
-- Whether host code may run *during* `Run` (an emit callback) stays undecided; `rsi.Next`
-  already does, so "no host code mid-tick" was never true. Returning emits from `Run` does
-  not close the question, it sidesteps it.
+- Sinks take no error return: the host owns the transport and already knows when it failed.
+  Revisit only if a sink failure needs to reach the script.
+- A sink runs inside the tick, so it must not call back into the executable — unenforced,
+  documented on `registry.Sink`.
 
 **2. Host-registerable declaration keywords** (was item D). Contextual keyword +
 declaration-form registry; a parser refactor. This is where `indicator rsi: Scalar =
@@ -100,10 +104,10 @@ key's `to`, unchecked.
 **6. Decide the sharing contract, then write it down.** Three facts that are currently
 invisible at the API:
 
-- **Handle escape.** `function Run() { candles }` returns the live input handle, and
-  `emit(out, candles)` emits it (structured emits allocate a fresh outer `Record`, but field
-  values are still shared). With a live feed appending between ticks, a host that retains
-  either is reading mutating data. Forbid, copy, or document.
+- **Handle escape.** `emit(out, candles)` hands the live input handle to the sink
+  (structured emits allocate a fresh outer `Record`, but field values are still shared).
+  The sink now sees it mid-tick, when it is still coherent — but a sink that *retains* it
+  past the tick is reading data the feed keeps mutating. Forbid, copy, or document.
 - **A bound pointer is live, a bound value is a snapshot**, decided by the host's Go type
   and invisible in `BindInput`'s signature.
 - The coherence window widened with binding: a bound value must hold still from bind until

@@ -13,62 +13,6 @@ import (
 	"github.com/MoroZvlg/tascript/resolver"
 )
 
-func testRegistry() *registry.Registry {
-	reg := registry.DefaultRegistry()
-	module, _ := reg.RegisterModule("t")
-	reg.RegisterMemberAccess(module.TypeID(), "answer", registry.MemberAccessRule{
-		EvalType: registry.IntegerID,
-		EvalFn:   func(registry.Value) (registry.Value, error) { return registry.Integer(42), nil },
-	})
-	reg.RegisterCall(module.TypeID(), "double", registry.CallRule{
-		Args:     []registry.ParamRule{{Type: registry.FloatID, Name: "n"}},
-		EvalType: registry.FloatID,
-		EvalFn: func(_ registry.Value, args map[string]registry.Value) (registry.Value, error) {
-			return args["n"].(registry.Float) * 2, nil
-		},
-	})
-	return reg
-}
-
-// compileSrc parses and resolves src into a fresh evaluator;
-// customize (may be nil) tweaks the registry before resolution, e.g. to add test modules.
-func compileSrc(t *testing.T, src string, customize func(*registry.Registry)) *evaluator.Evaluator {
-	t.Helper()
-	p := parser.New(lexer.New(src))
-	prog := p.Parse()
-	if len(p.Diagnostics()) > 0 {
-		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
-	}
-	reg := testRegistry()
-	if customize != nil {
-		customize(reg)
-	}
-	resolv := resolver.New(prog, reg)
-	resolvedProg := resolv.Resolve()
-	if len(resolv.Diagnostics()) > 0 {
-		t.Fatalf("resolver diagnostics: %v", resolv.Diagnostics())
-	}
-	return evaluator.New(resolvedProg, reg)
-}
-
-func evalSrc(t *testing.T, src string) registry.Value {
-	t.Helper()
-	ev := compileSrc(t, src, nil)
-	if _, err := ev.EvalInit(); err != nil {
-		t.Fatalf("init error: %v", err)
-	}
-	got, err := ev.EvalRun()
-	if err != nil {
-		t.Fatalf("eval error: %v", err)
-	}
-	return got
-}
-
-func evalRunBody(t *testing.T, body string) registry.Value {
-	t.Helper()
-	return evalSrc(t, "function Run() {\n"+body+"\n}")
-}
-
 func TestEvaluator_Emit(t *testing.T) {
 	src := `output alert: String
 output sig: {dir: String, price: Float}
@@ -91,45 +35,37 @@ emit(sig, dir="up", price=threshold + 0.2)
 	}
 
 	ev := evaluator.New(resolvedProg, reg)
+	alerts, sigs := bindRecorder(t, ev, "alert"), bindRecorder(t, ev, "sig")
 	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
 
-	emitted := ev.Emitted()
-	if len(emitted) != 2 {
-		t.Fatalf("expected 2 emissions, got %d: %v", len(emitted), emitted)
+	if len(alerts.values) != 1 || alerts.values[0] != registry.String("breakout") {
+		t.Errorf("alert: got %v, want [breakout]", alerts.values)
 	}
 
-	if emitted[0].Name != "alert" {
-		t.Errorf("emission[0]: expected output alert, got %s", emitted[0].Name)
+	if len(sigs.values) != 1 {
+		t.Fatalf("sig: expected 1 emission, got %v", sigs.values)
 	}
-	if emitted[0].Value != registry.String("breakout") {
-		t.Errorf("emission[0]: expected \"breakout\", got %v", emitted[0].Value)
-	}
-
-	if emitted[1].Name != "sig" {
-		t.Errorf("emission[1]: expected output sig, got %s", emitted[1].Name)
-	}
-	rec, ok := emitted[1].Value.(registry.Record)
+	rec, ok := sigs.values[0].(registry.Record)
 	if !ok {
-		t.Fatalf("emission[1]: expected registry.Record, got %T", emitted[1].Value)
+		t.Fatalf("sig: expected registry.Record, got %T", sigs.values[0])
 	}
 	if rec.TypeID().String() != "output.sig" {
-		t.Errorf("emission[1]: expected type output.sig, got %s", rec.TypeID())
+		t.Errorf("sig: expected type output.sig, got %s", rec.TypeID())
 	}
 	if rec.Fields["dir"] != registry.String("up") {
-		t.Errorf("emission[1]: expected dir \"up\", got %v", rec.Fields["dir"])
+		t.Errorf("sig: expected dir \"up\", got %v", rec.Fields["dir"])
 	}
 	if rec.Fields["price"] != registry.Float(1.2) {
-		t.Errorf("emission[1]: expected price 1.2, got %v", rec.Fields["price"])
+		t.Errorf("sig: expected price 1.2, got %v", rec.Fields["price"])
 	}
 
-	// emissions must not accumulate across runs
 	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("second eval error: %v", err)
 	}
-	if got := len(ev.Emitted()); got != 2 {
-		t.Errorf("expected 2 emissions after second run, got %d", got)
+	if len(alerts.values) != 2 || len(sigs.values) != 2 {
+		t.Errorf("second run: got %d alerts and %d sigs, want 2 each", len(alerts.values), len(sigs.values))
 	}
 }
 
@@ -328,8 +264,7 @@ func TestEvaluator_TrapDivisionByZero(t *testing.T) {
 	}
 }
 
-// A trapped tick never happened: its state writes roll back and its emits are discarded.
-func TestEvaluator_TrapRollsBackTick(t *testing.T) {
+func TestEvaluator_TrapRollsBackStateNotEmits(t *testing.T) {
 	src := `output out: Integer
 state n: Integer = 0
 
@@ -342,6 +277,7 @@ if (state.n == 2) {
 emit(out, state.n)
 }`
 	ev := compileSrc(t, src, nil)
+	out := bindRecorder(t, ev, "out")
 	if _, err := ev.EvalInit(); err != nil {
 		t.Fatalf("init error: %v", err)
 	}
@@ -350,17 +286,16 @@ emit(out, state.n)
 	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("first run error: %v", err)
 	}
-	emitted := ev.Emitted()
-	if len(emitted) != 2 || emitted[0].Value != registry.Integer(0) || emitted[1].Value != registry.Integer(1) {
-		t.Fatalf("first run: expected emissions [0 1], got %v", emitted)
+	if len(out.values) != 2 || out.values[0] != registry.Integer(0) || out.values[1] != registry.Integer(1) {
+		t.Fatalf("first run: expected emissions [0 1], got %v", out.values)
 	}
 
-	// tick 2 traps mid-way: the emit before the trap must not leak
+	// tick 2 traps after its first emit, which the sink keeps
 	if _, err := ev.EvalRun(); err == nil {
 		t.Fatal("second run: expected trap")
 	}
-	if emitted := ev.Emitted(); len(emitted) != 0 {
-		t.Errorf("second run: expected no emissions after trap, got %v", emitted)
+	if len(out.values) != 3 || out.values[2] != registry.Integer(1) {
+		t.Errorf("second run: expected the pre-trap emit to survive, got %v", out.values)
 	}
 
 	// tick 3 proves n rolled back to 1: it traps identically. Without rollback n would be 2 and this tick would commit.
@@ -480,6 +415,7 @@ emit(out, state.cooldown + state.seeded)
 	}
 
 	ev := evaluator.New(resolvedProg, reg)
+	out := bindRecorder(t, ev, "out")
 	if _, err := ev.EvalInit(); err != nil {
 		t.Fatalf("init error: %v", err)
 	}
@@ -488,43 +424,17 @@ emit(out, state.cooldown + state.seeded)
 	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("first eval error: %v", err)
 	}
-	emitted := ev.Emitted()
-	if len(emitted) != 1 {
-		t.Fatalf("expected 1 emission, got %d: %v", len(emitted), emitted)
-	}
-	if emitted[0].Value != registry.Integer(12) {
-		t.Errorf("first run: expected 12, got %v", emitted[0].Value)
+	if len(out.values) != 1 || out.values[0] != registry.Integer(12) {
+		t.Fatalf("first run: expected [12], got %v", out.values)
 	}
 
 	// bar 2: cooldown persists, 2 -> 1, emits 1 + 10
 	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("second eval error: %v", err)
 	}
-	emitted = ev.Emitted()
-	if len(emitted) != 1 {
-		t.Fatalf("expected 1 emission on second run, got %d", len(emitted))
+	if len(out.values) != 2 || out.values[1] != registry.Integer(11) {
+		t.Errorf("second run: expected [12 11], got %v", out.values)
 	}
-	if emitted[0].Value != registry.Integer(11) {
-		t.Errorf("second run: expected 11, got %v", emitted[0].Value)
-	}
-}
-
-func initedEval(t *testing.T, src string, customize func(*registry.Registry)) *evaluator.Evaluator {
-	t.Helper()
-	ev := compileSrc(t, src, customize)
-	if _, err := ev.EvalInit(); err != nil {
-		t.Fatalf("init error: %v", err)
-	}
-	return ev
-}
-
-func mustRun(t *testing.T, ev *evaluator.Evaluator) registry.Value {
-	t.Helper()
-	got, err := ev.EvalRun()
-	if err != nil {
-		t.Fatalf("run error: %v", err)
-	}
-	return got
 }
 
 func TestEvaluator_LoadPhase(t *testing.T) {
