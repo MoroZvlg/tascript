@@ -4,6 +4,8 @@
 package tascript
 
 import (
+	"errors"
+
 	"github.com/MoroZvlg/tascript/diag"
 	"github.com/MoroZvlg/tascript/evaluator"
 	"github.com/MoroZvlg/tascript/lexer"
@@ -14,8 +16,11 @@ import (
 	"github.com/MoroZvlg/tascript/token"
 )
 
+var ErrBuilderSpent = errors.New("a builder compiles one script: build another to compile again")
+
 type Builder struct {
-	reg *registry.Registry
+	reg   *registry.Registry
+	spent bool
 }
 
 // TODO: make the stdlib modules opt-in (WithMath / WithTime) rather than always registered.
@@ -26,11 +31,13 @@ func NewBuilder() *Builder {
 	return &Builder{reg: reg}
 }
 
-// TODO: one builder, one script, one executable, unenforced on both counts. A second
-// Compile corrupts synthesized port types, and any Register* after Compile mutates the
-// live executable's vocabulary — builder and executable share one registry. Enforce via
-// the error return.
+// Compile spends the builder whether or not the script compiles — a rejected script is retried on a fresh one.
 func (b *Builder) Compile(src string) (*Executable, []diag.Diagnostic, error) {
+	if b.spent {
+		return nil, nil, ErrBuilderSpent
+	}
+	b.spent = true
+
 	p := parser.New(lexer.New(src))
 	prog := p.Parse()
 	if len(p.Diagnostics()) > 0 {
@@ -48,29 +55,50 @@ func (b *Builder) Compile(src string) (*Executable, []diag.Diagnostic, error) {
 
 func (b *Builder) RegisterType(customType string) (registry.TypeID, error) {
 	id := registry.NewTypeID(customType)
+	if b.spent {
+		return id, ErrBuilderSpent
+	}
 	return id, b.reg.RegisterType(id, registry.ScalarShape)
 }
 
 func (b *Builder) RegisterBinary(tok token.TokenType, left, right registry.TypeID, rule registry.BinaryRule) error {
+	if b.spent {
+		return ErrBuilderSpent
+	}
 	return b.reg.RegisterBinary(tok, left, right, rule)
 }
 
 func (b *Builder) RegisterUnary(tok token.TokenType, right registry.TypeID, rule registry.UnaryRule) error {
+	if b.spent {
+		return ErrBuilderSpent
+	}
 	return b.reg.RegisterUnary(tok, right, rule)
 }
 
 func (b *Builder) RegisterMemberAccess(owner registry.TypeID, member string, rule registry.MemberAccessRule) error {
+	if b.spent {
+		return ErrBuilderSpent
+	}
 	return b.reg.RegisterMemberAccess(owner, member, rule)
 }
 
 func (b *Builder) RegisterCall(owner registry.TypeID, member string, rule registry.CallRule) error {
+	if b.spent {
+		return ErrBuilderSpent
+	}
 	return b.reg.RegisterCall(owner, member, rule)
 }
 
 func (b *Builder) RegisterModule(name string) (registry.Value, error) {
+	if b.spent {
+		return nil, ErrBuilderSpent
+	}
 	return b.reg.RegisterModule(name)
 }
 
 func (b *Builder) RegisterCoercion(from, to registry.TypeID, rule registry.CoerceRule) error {
+	if b.spent {
+		return ErrBuilderSpent
+	}
 	return b.reg.RegisterCoercion(from, to, rule)
 }

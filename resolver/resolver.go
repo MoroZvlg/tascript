@@ -344,9 +344,10 @@ func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName st
 		if !ok {
 			return registry.ErrorTypeID, false
 		}
-		typeID, err := r.reg.RegisterScriptType(namespace+"."+declName, fields)
+		name := namespace + "." + declName
+		typeID, err := r.reg.RegisterScriptType(name, fields)
 		if err != nil {
-			// unreachable: duplicate decl names are caught by the env check first
+			r.addTypeRegistrationFail(typed.Tok(), name, err)
 			return registry.ErrorTypeID, false
 		}
 		return typeID, true

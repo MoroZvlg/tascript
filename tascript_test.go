@@ -154,15 +154,61 @@ func TestExecutable_FailedInitIsTerminal(t *testing.T) {
 	}
 }
 
-func TestBuilder_ScriptDiagnosticsAreNotErrors(t *testing.T) {
-	program, diags, err := tascript.NewBuilder().Compile("function Run() {\nnope\n}")
-	if err != nil {
-		t.Fatalf("a script problem must not be an error: %v", err)
-	}
-	if program != nil {
-		t.Error("expected no executable when the script does not compile")
-	}
-	if len(diags) == 0 {
-		t.Fatal("expected diagnostics for an undefined name")
-	}
+func TestBuilder_Compile(t *testing.T) {
+	t.Run("script diagnostics are not errors", func(t *testing.T) {
+		program, diags, err := tascript.NewBuilder().Compile("function Run() {\nnope\n}")
+		if err != nil {
+			t.Fatalf("a script problem must not be an error: %v", err)
+		}
+		if program != nil {
+			t.Error("expected no executable when the script does not compile")
+		}
+		if len(diags) == 0 {
+			t.Fatal("expected diagnostics for an undefined name")
+		}
+	})
+
+	t.Run("a spent builder rejects a second Compile", func(t *testing.T) {
+		builder := tascript.NewBuilder()
+		if _, _, err := builder.Compile(counterSrc); err != nil {
+			t.Fatalf("first compile: %v", err)
+		}
+
+		program, diags, err := builder.Compile(counterSrc)
+		if !errors.Is(err, tascript.ErrBuilderSpent) {
+			t.Fatalf("second compile: got %v, want ErrBuilderSpent", err)
+		}
+		if program != nil || diags != nil {
+			t.Error("a rejected compile must return neither an executable nor diagnostics")
+		}
+	})
+
+	t.Run("a rejected script still spends the builder", func(t *testing.T) {
+		builder := tascript.NewBuilder()
+		if _, diags, _ := builder.Compile("function Run() {\nnope\n}"); len(diags) == 0 {
+			t.Fatal("expected diagnostics")
+		}
+
+		if _, _, err := builder.Compile(counterSrc); !errors.Is(err, tascript.ErrBuilderSpent) {
+			t.Errorf("compile after a rejected script: got %v, want ErrBuilderSpent", err)
+		}
+	})
+
+	t.Run("a spent builder rejects registration", func(t *testing.T) {
+		builder := tascript.NewBuilder()
+		if _, _, err := builder.Compile(counterSrc); err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+
+		if _, err := builder.RegisterType("Late"); !errors.Is(err, tascript.ErrBuilderSpent) {
+			t.Errorf("RegisterType: got %v, want ErrBuilderSpent", err)
+		}
+		if _, err := builder.RegisterModule("late"); !errors.Is(err, tascript.ErrBuilderSpent) {
+			t.Errorf("RegisterModule: got %v, want ErrBuilderSpent", err)
+		}
+		err := builder.RegisterMemberAccess(registry.FloatID, "late", registry.MemberAccessRule{})
+		if !errors.Is(err, tascript.ErrBuilderSpent) {
+			t.Errorf("RegisterMemberAccess: got %v, want ErrBuilderSpent", err)
+		}
+	})
 }

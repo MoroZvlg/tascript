@@ -88,6 +88,14 @@ func (r *Resolver) addUndefinedType(opToken token.Token) {
 	})
 }
 
+func (r *Resolver) addTypeRegistrationFail(opToken token.Token, name string, err error) {
+	r.errs = append(r.errs, &diag.TypeRegistrationFail{
+		At:     opToken.Pos,
+		Name:   name,
+		Reason: err.Error(),
+	})
+}
+
 func (r *Resolver) addUndefinedAttribute(opToken token.Token) {
 	r.errs = append(r.errs, &diag.UndefinedAttribute{
 		At:   opToken.Pos,

@@ -261,6 +261,38 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 	}
 }
 
+func TestResolver_ReusedRegistryReportsPortTypeCollision(t *testing.T) {
+	const src = "input btc: {price: Float}" + runSuffix
+
+	reg := registry.DefaultRegistry()
+	stdlib.Register(reg)
+
+	for pass := 1; pass <= 2; pass++ {
+		prog := parser.New(lexer.New(src)).Parse()
+		resolv := resolver.New(prog, reg)
+		resolv.Resolve()
+
+		got := resolv.Diagnostics()
+		if pass == 1 {
+			if len(got) > 0 {
+				t.Fatalf("first pass: expected no diagnostics, got %v", got)
+			}
+			continue
+		}
+
+		if len(got) != 1 {
+			t.Fatalf("second pass: got %d diagnostics, want 1: %v", len(got), got)
+		}
+		fail, ok := got[0].(*diag.TypeRegistrationFail)
+		if !ok {
+			t.Fatalf("second pass: got %T, want *diag.TypeRegistrationFail", got[0])
+		}
+		if fail.Name != "input.btc" {
+			t.Errorf("name = %s, want input.btc", fail.Name)
+		}
+	}
+}
+
 func TestResolver_ResolveReservedTypeNames(t *testing.T) {
 	tests := []struct {
 		name       string

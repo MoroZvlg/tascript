@@ -59,6 +59,7 @@ const (
 	CodeOutputUnknown        Code = "OUTPUT_UNKNOWN"
 	CodeOutputMissing        Code = "OUTPUT_MISSING"
 	CodeInputTypeMismatch    Code = "INPUT_TYPE_MISMATCH"
+	CodeTypeRegistrationFail Code = "TYPE_REGISTRATION_FAILED"
 	CodeInternalFailure      Code = "INTERNAL_FAILURE"
 )
 
@@ -564,6 +565,21 @@ func (rf RuntimeFailure) Pos() token.Pos { return rf.At }
 
 func (rf RuntimeFailure) Error() string {
 	return render(rf.Code(), rf.At, "%s", rf.Message)
+}
+
+// Not a script problem: the registry was already written by another compile.
+type TypeRegistrationFail struct {
+	At     token.Pos
+	Name   string
+	Reason string
+}
+
+func (tr TypeRegistrationFail) Code() Code     { return CodeTypeRegistrationFail }
+func (tr TypeRegistrationFail) Phase() Phase   { return PhaseCheck }
+func (tr TypeRegistrationFail) Pos() token.Pos { return tr.At }
+
+func (tr TypeRegistrationFail) Error() string {
+	return render(tr.Code(), tr.At, "could not register type %s: %s", tr.Name, tr.Reason)
 }
 
 // InternalFailure is a recovered panic below an entry point:

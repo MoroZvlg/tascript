@@ -36,7 +36,8 @@ can do. See "Not in v0.1" for what moved and why.
 ## v0.1 — what ships
 
 In order. 1–2 are the release; 3–4 are cheap and unblock the error seam; 5–7 are decisions
-that get expensive to change once hosts exist; 8 is the doc.
+that get expensive to change once hosts exist; 8 is the doc. **1, 3 and 4 are done** — item 2
+is the last code item before the decisions.
 
 **1. Output path — ~~replace `Emitted()`~~ done.** Outputs bind like inputs: the host calls
 `BindOutput(name, sink)` before `Init` (every declared output needs one, or `Init` fails
@@ -67,19 +68,15 @@ mechanism as prelude registrations.
   `env`, so a trapped tick rolls back `state` and emits but leaves the indicator advanced.
   Decided: host's problem — but say so in the spec rather than leaving it silent.
 
-**3. Guard the single-use builder.** `resolveTypeDecl` writes synthesized inline port types
-(`input.x` / `output.sig`) into the registry, but the duplicate guard reads the per-pass env
-— so a second `Compile()` on one Builder collides and reports it as a *misleading script
-error* (`ARG_COUNT_MISMATCH: expected 1 args, found 2`, because the structural type resolves
-with no fields). Decided: **one builder = one script = one executable**, so this is a guard
-on the `Compile` **error** return, not a design fix.
+**3. ~~Guard the single-use builder~~ done.** `ErrBuilderSpent`: `Compile` spends the builder
+(whether or not the script compiled) and every `Register*` rejects afterwards, closing both
+the synthesized-port-type collision on a second `Compile` and the `Register*`-after-`Compile`
+hole where builder and executable share one registry. This is the **first producer of
+`Compile`'s error return** — script problems vs host/API misuse — though `len(diags) > 0` is
+still the failure predicate in `prog.Valid` and the fuzz assertion.
 
-- The same guard closes a second hole: builder and executable share one registry, so any
-  `Register*` after `Compile` mutates the **live** executable's vocabulary. The host never
-  gets a `*Registry` (nothing exported returns one), but it keeps the builder.
-- This is also the **first producer of `Compile`'s error return**. The seam exists —
-  `(*Executable, []diag.Diagnostic, error)`, script problems vs host/API misuse — but
-  `len(diags) > 0` is still the failure predicate in `prog.Valid` and the fuzz assertion.
+- The cost, accepted: a host retrying a script the user just fixed must rebuild the builder
+  and re-register its types. Hosts want a `newBuilder()` constructor anyway.
 - A registry `Clone()` per compile was implemented and reverted: it worked, but `Clone` must
   track every new `Registry` field with no compiler help, and it defended against a mutation
   that should not happen. If reusable builders are ever wanted, the fix is a resolver-local
@@ -87,11 +84,11 @@ on the `Compile` **error** return, not a design fix.
   types for one thing only: `len(def.Fields) == 0` at `evalEmit`, which the resolver already
   knows and could bake into `resolved.EmitStmt`).
 
-**4. `resolveTypeDecl` swallows the `RegisterScriptType` error** (`resolver.go:347`) and
-returns `ErrorTypeID` with no diagnostic. Its comment claims the branch is unreachable
-because duplicate decl names are caught by the env check — true within one compile, false
-across two, which is how #3's collision stays silent. Either emit a real diagnostic or use
-internal type IDs that cannot collide.
+**4. ~~`resolveTypeDecl` swallows the `RegisterScriptType` error~~ done.** It now reports
+`TYPE_REGISTRATION_FAILED` (`diag.TypeRegistrationFail`, phase check) instead of returning
+`ErrorTypeID` silently. Unreachable through `Builder` after #3, but a host driving the
+resolver directly over a reused registry still hits it — and now sees it. Note the diagnostic
+carries `Reason string`, not a wrapped `error`, so the diag tables stay `cmp`-comparable.
 
 **5. Make `Registry`'s maps private.** Exported maps mean every `Register*` guard is
 advisory: a host can write `reg.Types[id] = TypeDef{Shape: ModuleShape}` and desync `Types`
