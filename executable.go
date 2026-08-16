@@ -6,6 +6,7 @@ import (
 
 	"github.com/MoroZvlg/tascript/evaluator"
 	"github.com/MoroZvlg/tascript/registry"
+	"github.com/MoroZvlg/tascript/resolved"
 )
 
 type Stage int
@@ -32,11 +33,58 @@ var (
 	ErrNotInitialized = errors.New("Init must succeed before Run")
 	ErrInitRepeated   = errors.New("Init has already run")
 	ErrBindTooLate    = errors.New("inputs must be bound before Init")
+	ErrSetTooLate     = errors.New("a failed program can not be filled")
+
+	ErrMidActivation = evaluator.ErrMidActivation
+	ErrSlotEmpty     = evaluator.ErrSlotEmpty
 )
 
 type Executable struct {
 	eval  *evaluator.Evaluator
 	stage Stage
+}
+
+// Slot is a handle on one interior declared cell. Resolve it once at wire time:
+// lookups are by name, reads and writes are not.
+type Slot struct {
+	ex   *Executable
+	idx  int
+	decl *resolved.SlotDecl
+}
+
+func (e *Executable) Slots() []Slot {
+	decls := e.eval.SlotDecls()
+	slots := make([]Slot, 0, len(decls))
+	for i, decl := range decls {
+		slots = append(slots, Slot{ex: e, idx: i, decl: decl})
+	}
+	return slots
+}
+
+func (e *Executable) Slot(kind, name string) (Slot, bool) {
+	for i, decl := range e.eval.SlotDecls() {
+		if decl.Kind == kind && decl.Name == name {
+			return Slot{ex: e, idx: i, decl: decl}, true
+		}
+	}
+	return Slot{}, false
+}
+
+func (s Slot) Kind() string          { return s.decl.Kind }
+func (s Slot) Name() string          { return s.decl.Name }
+func (s Slot) Type() registry.TypeID { return s.decl.T }
+
+// Get reads at any stage; a cell the host never filled and Init never reached is empty.
+func (s Slot) Get() (registry.Value, error) {
+	return s.ex.eval.SlotGet(s.idx)
+}
+
+// Set fills the cell during the host's turn: before Init, or between ticks.
+func (s Slot) Set(value registry.Value) error {
+	if s.ex.stage == StageFailed {
+		return fmt.Errorf("%w (stage %s)", ErrSetTooLate, s.ex.stage)
+	}
+	return s.ex.eval.SlotSet(s.idx, value)
 }
 
 func (e *Executable) Stage() Stage { return e.stage }
@@ -74,7 +122,7 @@ func (e *Executable) Init() error {
 }
 
 // Run executes one tick.
-// Error stops execution but do not prevent calling Run once again. State will be rollback
+// An error is not a rollback: slot writes before it persist, and Run may be called again.
 func (e *Executable) Run() error {
 	if e.stage != StageInitialized {
 		return fmt.Errorf("%w (stage %s)", ErrNotInitialized, e.stage)

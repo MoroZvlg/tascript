@@ -1,6 +1,9 @@
 package token
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 type TokenType string
 
@@ -44,7 +47,6 @@ const (
 	CONST    TokenType = "const"
 	INPUT    TokenType = "input"
 	OUTPUT   TokenType = "output"
-	STATE    TokenType = "state"
 	FUNCTION TokenType = "function"
 	IF       TokenType = "if"
 	ELSE     TokenType = "else"
@@ -76,7 +78,6 @@ var keywordsMap = map[string]TokenType{
 	"const":    CONST,
 	"input":    INPUT,
 	"output":   OUTPUT,
-	"state":    STATE,
 	"function": FUNCTION,
 	"if":       IF,
 	"else":     ELSE,
@@ -89,4 +90,40 @@ func LookupIdent(ident string) TokenType {
 		return tok
 	}
 	return IDENT
+}
+
+func IsKeyword(ident string) bool {
+	_, ok := keywordsMap[ident]
+	return ok
+}
+
+// not in keywordsMap: the lexer emits these as IDENT
+var reservedIdents = []string{"emit", "Init", "Run"}
+
+func ReservedIdents() []string {
+	return slices.Clone(reservedIdents)
+}
+
+func IsReservedIdent(ident string) bool {
+	return slices.Contains(reservedIdents, ident)
+}
+
+func IsIdentStart(ch byte) bool {
+	return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || (ch == '_')
+}
+
+func IsIdentPart(ch byte) bool {
+	return IsIdentStart(ch) || ('0' <= ch && ch <= '9')
+}
+
+func IsIdent(s string) bool {
+	if s == "" || !IsIdentStart(s[0]) {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if !IsIdentPart(s[i]) {
+			return false
+		}
+	}
+	return true
 }

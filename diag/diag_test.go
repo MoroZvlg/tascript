@@ -56,7 +56,7 @@ func TestDiagnostic_Render(t *testing.T) {
 		},
 		{
 			diag.TopDeclUnexpected{At: pos(1, 1)},
-			"error[TOP_DECL_UNEXPECTED] 1:1: only const, input, output, state, Init and Run functions allowed at top level",
+			"error[TOP_DECL_UNEXPECTED] 1:1: only declarations and Init/Run functions are allowed at the top level",
 		},
 		{
 			diag.TopDeclMisplaced{At: pos(3, 3), Keyword: token.INPUT},
@@ -75,12 +75,40 @@ func TestDiagnostic_Render(t *testing.T) {
 			"error[RESERVED_NAME] 1:7: math is a reserved module name",
 		},
 		{
-			diag.StateUndeclared{At: pos(4, 7), Field: "cooldown"},
-			"error[STATE_UNDECLARED] 4:7: state field cooldown is not declared",
+			diag.SlotUndeclared{At: pos(4, 7), Kind: "state", Name: "cooldown"},
+			"error[SLOT_UNDECLARED] 4:7: state.cooldown is not declared",
 		},
 		{
-			diag.StateUninitialized{At: pos(1, 7), Field: "cooldown"},
-			"error[STATE_UNINITIALIZED] 1:7: state field cooldown has no initializer and is never assigned in Init()",
+			diag.UnknownDeclKeyword{At: pos(1, 1), Word: "indicator"},
+			"error[UNKNOWN_DECL_KEYWORD] 1:1: unknown declaration keyword indicator",
+		},
+		{
+			diag.InitializerRequired{At: pos(1, 11), Kind: "indicator", Name: "fast"},
+			"error[INITIALIZER_REQUIRED] 1:11: indicator fast requires an initializer",
+		},
+		{
+			diag.InitializerForbidden{At: pos(1, 9), Kind: "setting", Name: "period"},
+			"error[INITIALIZER_FORBIDDEN] 1:9: setting period cannot have an initializer",
+		},
+		{
+			diag.TypeRequired{At: pos(1, 9), Kind: "setting", Name: "period"},
+			"error[TYPE_REQUIRED] 1:9: setting period needs a type annotation or an initializer",
+		},
+		{
+			diag.DeclTypeNotAllowed{At: pos(1, 11), Kind: "indicator", T: registry.StringID},
+			"error[DECL_TYPE_NOT_ALLOWED] 1:11: indicator does not accept type String",
+		},
+		{
+			diag.UseBeforeDeclaration{At: pos(2, 18), Name: "period"},
+			"error[USE_BEFORE_DECLARATION] 2:18: period is referenced before its declaration",
+		},
+		{
+			diag.InputInInit{At: pos(3, 12), Name: "btc"},
+			"error[INPUT_IN_INIT] 3:12: input btc is not available before Run",
+		},
+		{
+			diag.SlotTypeMismatch{At: pos(1, 9), Kind: "setting", Name: "period", Expected: registry.IntegerID, Got: registry.StringID},
+			"error[SLOT_TYPE_MISMATCH] 1:9: setting period: expected Integer, found String",
 		},
 		{
 			diag.InvalidBinaryOperation{At: pos(3, 4), Op: "+", Left: registry.IntegerID, Right: registry.StringID},

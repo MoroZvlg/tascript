@@ -10,8 +10,18 @@ import (
 	"github.com/MoroZvlg/tascript/resolver"
 )
 
+func registerStateKind(reg *registry.Registry) {
+	reg.RegisterDeclKind(registry.DeclKind{
+		Word:        "state",
+		Initializer: registry.InitializerOptional,
+		Assignable:  true,
+		Namespaced:  true,
+	})
+}
+
 func testRegistry() *registry.Registry {
 	reg := registry.DefaultRegistry()
+	registerStateKind(reg)
 	module, _ := reg.RegisterModule("t")
 	reg.RegisterMemberAccess(module.TypeID(), "answer", registry.MemberAccessRule{
 		EvalType: registry.IntegerID,

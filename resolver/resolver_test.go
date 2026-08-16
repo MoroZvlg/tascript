@@ -48,9 +48,7 @@ func TestResolver_ResolveConstSimple(t *testing.T) {
 				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
 			}
 
-			reg := registry.DefaultRegistry()
-
-			stdlib.Register(reg)
+			reg := newTestRegistry()
 			resolv := resolver.New(prog, reg)
 
 			resolvedProg := resolv.Resolve()
@@ -61,7 +59,7 @@ func TestResolver_ResolveConstSimple(t *testing.T) {
 				}
 				t.Fatalf("expected 0 errors, got %d\n", len(resolv.Diagnostics()))
 			}
-			dumpedRes := dumpConst(t, resolvedProg.Consts[0])
+			dumpedRes := dumpConst(t, resolvedProg.Consts()[0])
 			if tt.output != dumpedRes {
 				t.Errorf("expected %s, got %s", tt.output, dumpedRes)
 			}
@@ -92,9 +90,7 @@ func TestResolver_ResolveInputsOutputs(t *testing.T) {
 				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
 			}
 
-			reg := registry.DefaultRegistry()
-
-			stdlib.Register(reg)
+			reg := newTestRegistry()
 			resolv := resolver.New(prog, reg)
 			resolvedProg := resolv.Resolve()
 
@@ -107,10 +103,10 @@ func TestResolver_ResolveInputsOutputs(t *testing.T) {
 
 			var dumpedRes string
 			switch {
-			case len(resolvedProg.Inputs) == 1:
-				dumpedRes = resolvedProg.Inputs[0].String()
-			case len(resolvedProg.Outputs) == 1:
-				dumpedRes = resolvedProg.Outputs[0].String()
+			case len(resolvedProg.Inputs()) == 1:
+				dumpedRes = resolvedProg.Inputs()[0].String()
+			case len(resolvedProg.Outputs()) == 1:
+				dumpedRes = resolvedProg.Outputs()[0].String()
 			default:
 				t.Fatal("expected exactly one input or output decl")
 			}
@@ -264,8 +260,7 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 func TestResolver_ReusedRegistryReportsPortTypeCollision(t *testing.T) {
 	const src = "input btc: {price: Float}" + runSuffix
 
-	reg := registry.DefaultRegistry()
-	stdlib.Register(reg)
+	reg := newTestRegistry()
 
 	for pass := 1; pass <= 2; pass++ {
 		prog := parser.New(lexer.New(src)).Parse()
@@ -374,9 +369,7 @@ x
 		t.Fatalf("expected 0 parser errors, got %d", len(p.Diagnostics()))
 	}
 
-	reg := registry.DefaultRegistry()
-
-	stdlib.Register(reg)
+	reg := newTestRegistry()
 	resolv := resolver.New(prog, reg)
 	resolvedProg := resolv.Resolve()
 
@@ -1024,9 +1017,7 @@ emit(level, 1)
 		t.Fatalf("expected 0 parser errors, got %d", len(p.Diagnostics()))
 	}
 
-	reg := registry.DefaultRegistry()
-
-	stdlib.Register(reg)
+	reg := newTestRegistry()
 	resolv := resolver.New(prog, reg)
 	resolvedProg := resolv.Resolve()
 
@@ -1135,42 +1126,52 @@ func TestResolver_ResolveEmitErrors(t *testing.T) {
 	}
 }
 
-func TestResolver_ResolveStateSimple(t *testing.T) {
-	type field struct {
-		name    string
-		t       registry.TypeID
-		hasInit bool
-	}
+func TestResolver_ResolveSlots(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		fields []field
+		name  string
+		input string
+		slots []string
 	}{
 		{
 			"const initializer",
 			"state cooldown: Integer = 0",
-			[]field{{"cooldown", registry.IntegerID, true}},
+			[]string{"state cooldown: Integer = 0"},
 		},
 		{
 			// Integer literal coerces into the declared Float
 			"coerced initializer",
 			"state threshold: Float = 1",
-			[]field{{"threshold", registry.FloatID, true}},
+			[]string{"state threshold: Float = 1"},
 		},
 		{
 			"initializer from const and module call",
 			"const N = 3\nstate x: Float = math.sqrt(9.0) * N",
-			[]field{{"x", registry.FloatID, true}},
+			[]string{"state x: Float = (math.sqrt(number=9) * N)"},
 		},
 		{
 			"no initializer, seeded in Init",
 			"state s: String\nfunction Init() {\nstate.s = \"x\"\n}",
-			[]field{{"s", registry.StringID, false}},
+			[]string{"state s: String"},
 		},
 		{
 			"decl order preserved",
 			"state a: Integer = 0\nstate b: Float = 2.5",
-			[]field{{"a", registry.IntegerID, true}, {"b", registry.FloatID, true}},
+			[]string{"state a: Integer = 0", "state b: Float = 2.5"},
+		},
+		{
+			"initializer reads a slot declared above",
+			"state a: Integer = 2\nstate b: Integer = state.a + 1",
+			[]string{"state a: Integer = 2", "state b: Integer = (state.a + 1)"},
+		},
+		{
+			"type inferred from the initializer",
+			"setting period = 14",
+			[]string{"setting period: Integer = 14"},
+		},
+		{
+			"bare kind slot reads by plain name",
+			"indicator fast = 3.0\nsetting scale: Float = fast",
+			[]string{"indicator fast: Float = 3", "setting scale: Float = indicator.fast"},
 		},
 	}
 
@@ -1183,9 +1184,8 @@ func TestResolver_ResolveStateSimple(t *testing.T) {
 				t.Fatalf("parser diagnostics: %v", p.Diagnostics())
 			}
 
-			reg := registry.DefaultRegistry()
-
-			stdlib.Register(reg)
+			reg := newTestRegistry()
+			registerResolverTestKinds(reg)
 			resolv := resolver.New(prog, reg)
 			resolvedProg := resolv.Resolve()
 			if len(resolv.Diagnostics()) > 0 {
@@ -1195,63 +1195,267 @@ func TestResolver_ResolveStateSimple(t *testing.T) {
 				t.Fatalf("expected 0 errors, got %d\n", len(resolv.Diagnostics()))
 			}
 
-			if resolvedProg.State == nil {
-				t.Fatalf("expected resolved state, got nil")
+			slots := resolvedProg.Slots()
+			if len(slots) != len(tt.slots) {
+				t.Fatalf("expected %d slots, got %d", len(tt.slots), len(slots))
 			}
-			if len(resolvedProg.State.Fields) != len(tt.fields) {
-				t.Fatalf("expected %d state fields, got %d", len(tt.fields), len(resolvedProg.State.Fields))
-			}
-			for i, want := range tt.fields {
-				got := resolvedProg.State.Fields[i]
-				if got.Name != want.name {
-					t.Errorf("field %d: expected name %s, got %s", i, want.name, got.Name)
+			for i, want := range tt.slots {
+				if got := slots[i].String(); got != want {
+					t.Errorf("slot %d: expected %s, got %s", i, want, got)
 				}
-				if got.T != want.t {
-					t.Errorf("field %d: expected type %s, got %s", i, want.t, got.T)
-				}
-				if (got.InitValue != nil) != want.hasInit {
-					t.Errorf("field %d: expected hasInit=%t, got %t", i, want.hasInit, got.InitValue != nil)
+				if slots[i].Index != i {
+					t.Errorf("slot %d: expected index %d, got %d", i, i, slots[i].Index)
 				}
 			}
 		})
 	}
 }
 
-func TestResolver_ResolveStateErrors(t *testing.T) {
+func TestResolver_ResolveInitErrors(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
 		buildDiags func([]token.Pos) []diag.Diagnostic
 	}{
 		{
-			"undeclared field read",
-			"function Run() {\nlet x = state.^foo\n}",
+			"initializer referencing input",
+			"input btc: Integer\nstate x: Integer = ^btc" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addStateUndeclared(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "foo"}),
+					addInputInInit(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "btc"}),
 				}
 			},
 		},
 		{
-			"undeclared field write",
+			"input read in Init",
+			"input btc: Integer\nfunction Init() {\nlet x = ^btc\n}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInputInInit(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "btc"}),
+				}
+			},
+		},
+		{
+			// Rule B replaced definite assignment: an unfilled slot is caught at the end of Init
+			"no initializer and no Init resolves clean",
+			"state x: Integer" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"seeded only under if resolves clean",
+			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n}\n}" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"failed seed still counts as initialization",
+			"state s: Integer\nfunction Init() {\nstate.s = ^nope\n}\nfunction Run() {\nstate.s\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
+				}
+			},
+		},
+		{
+			"a failed type seeded in Init reports once",
+			"state s: ^Nope\nfunction Init() {\nstate.s = 1\n}\nfunction Run() {\nstate.s\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Nope"}),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input, tt.buildDiags)
+		})
+	}
+}
+
+func TestResolver_ResolveKindDeclErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"unregistered keyword",
+			"^signal fast = 1.0" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUnknownDeclKeyword(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "signal"}),
+				}
+			},
+		},
+		{
+			"initializer required",
+			"indicator ^fast: Float" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInitializerRequired(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "fast"}, "indicator"),
+				}
+			},
+		},
+		{
+			"initializer forbidden",
+			"marker ^m: Integer = 1" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addInitializerForbidden(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "m"}, "marker"),
+				}
+			},
+		},
+		{
+			"neither annotation nor initializer",
+			"setting ^period" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addTypeRequired(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "period"}, "setting"),
+				}
+			},
+		},
+		{
+			"annotated type not allowed by the kind",
+			"indicator ^fast: Integer = 1" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDeclTypeNotAllowed(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "fast"}, "indicator", registry.IntegerID),
+				}
+			},
+		},
+		{
+			"inferred type not allowed by the kind",
+			"indicator ^fast = \"x\"" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDeclTypeNotAllowed(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "fast"}, "indicator", registry.StringID),
+				}
+			},
+		},
+		{
+			"annotation and initializer disagree",
+			"setting ^period: Integer = \"x\"" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addTypeMismatch(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "period"}, registry.IntegerID, registry.StringID),
+				}
+			},
+		},
+		{
+			"bare slot referenced before its declaration",
+			"setting scale: Float = ^fast\nindicator fast = 1.0" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUseBeforeDeclaration(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "fast"}),
+				}
+			},
+		},
+		{
+			"const referencing a slot below",
+			"const N = ^fast\nindicator fast = 1.0" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addUseBeforeDeclaration(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "fast"}),
+				}
+			},
+		},
+		{
+			"const referencing a slot above",
+			"indicator fast = 1.0\nconst N = fast" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"initializer referencing an earlier namespaced slot",
+			"setting period: Float = 3.0\nindicator fast = setting.period * 2.0" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"namespaced slot undeclared",
+			"function Run() {\nlet x = setting.^period\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addSlotUndeclared(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "period"}, "setting"),
+				}
+			},
+		},
+		{
+			"duplicate bare slot",
+			"indicator fast = 1.0\nindicator ^fast = 2.0" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.IDENT, Literal: "indicator"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "fast"},
+					),
+				}
+			},
+		},
+		{
+			"bare slot colliding with a const",
+			"const fast = 1\nindicator ^fast = 2.0" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addDuplicateDecl(
+						token.Token{Type: token.IDENT, Literal: "indicator"},
+						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "fast"},
+					),
+				}
+			},
+		},
+		{
+			"bare slot over a module name",
+			"indicator ^math = 1.0" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "math"}, resolver.KindModule),
+				}
+			},
+		},
+		{
+			"assignment to a read-only bare slot",
+			"indicator fast = 1.0\nfunction Run() {\n^fast = 2.0\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotAssignable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "fast"}, "indicator"),
+				}
+			},
+		},
+		{
+			"assignment to a read-only namespaced slot",
+			"setting period: Integer = 1\nfunction Run() {\nsetting.^period = 2\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addNotAssignable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "period"}, "setting"),
+				}
+			},
+		},
+		{
+			"assignment to an assignable bare slot",
+			"marker m: Integer\nfunction Run() {\nm = 2\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"undeclared namespaced slot write",
 			"function Run() {\nstate.^foo = 1\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addStateUndeclared(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "foo"}),
+					addSlotUndeclared(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "foo"}, "state"),
 				}
 			},
 		},
 		{
-			"initializer type mismatch",
-			"state ^x: Integer = true" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addTypeMismatch(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}, registry.IntegerID, registry.BoolID),
-				}
-			},
-		},
-		{
-			"unknown type",
+			"undefined type annotation",
 			"state x: ^Foo = 0" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
@@ -1260,20 +1464,11 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			},
 		},
 		{
-			"initializer referencing input",
-			"input btc: Integer\nstate x: Integer = ^btc" + runSuffix,
+			"namespaced slot referenced before its declaration",
+			"state a: Integer = state.^b\nstate b: Integer = 0" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "btc"}),
-				}
-			},
-		},
-		{
-			"initializer referencing state field",
-			"state a: Integer = 0\nstate b: Integer = state.^a" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addStateUndeclared(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "a"}),
+					addUseBeforeDeclaration(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "b"}),
 				}
 			},
 		},
@@ -1282,84 +1477,20 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			"state a: Integer = state.^a + 1" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addStateUndeclared(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "a"}),
+					addUseBeforeDeclaration(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "a"}),
 				}
 			},
 		},
 		{
-			"duplicate field",
+			"duplicate namespaced slot",
 			"state a: Integer = 0\nstate ^a: Float = 1.0" + runSuffix,
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addDuplicateDecl(
-						token.Token{Type: token.STATE, Literal: "state"},
+						token.Token{Type: token.IDENT, Literal: "state"},
 						token.Token{Type: token.IDENT, Pos: ps[0], Literal: "a"},
 					),
 				}
-			},
-		},
-		{
-			"no initializer and no Init",
-			"state ^x: Integer" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addStateUninitialized(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
-				}
-			},
-		},
-		{
-			"no initializer and Init does not assign it",
-			"state ^x: Integer\nstate y: Integer\nfunction Init() {\nstate.y = 1\n}" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addStateUninitialized(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
-				}
-			},
-		},
-		{
-			"seeded only under if",
-			"state ^x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n}\n}" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addStateUninitialized(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
-				}
-			},
-		},
-		{
-			"seeded at top level then conditionally overwritten",
-			"state x: Integer\nfunction Init() {\nstate.x = 1\nif (true) {\nstate.x = 2\n}\n}" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{}
-			},
-		},
-		{
-			"lone if first, top-level seed after",
-			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 2\n}\nstate.x = 1\n}" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{}
-			},
-		},
-		{
-			"seeded in both if/else branches",
-			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n} else {\nstate.x = 2\n}\n}" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{}
-			},
-		},
-		{
-			"seeded in only one if/else branch",
-			"state ^x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n} else {\nlet y = 2\n}\n}" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addStateUninitialized(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "x"}),
-				}
-			},
-		},
-		{
-			"seeded through else-if chain",
-			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n} else if (false) {\nstate.x = 2\n} else {\nstate.x = 3\n}\n}" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{}
 			},
 		},
 		{
@@ -1379,23 +1510,41 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			},
 		},
 		{
-			"state field read in expression",
+			"namespaced slot read in expression",
 			"state c: Integer = 5\nfunction Run() {\nlet x = state.c + 1\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
 		{
-			"bare state as value",
+			"bare kind word as a value",
 			"state c: Integer = 5\nfunction Run() {\nlet x = ^state\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addUndefinedIdent(token.Token{Type: token.STATE, Pos: ps[0], Literal: "state"}),
+					addNotReadable(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "state"}, resolver.KindDeclWord),
 				}
 			},
 		},
 		{
-			"failed initializer keeps the field declared",
+			"namespaced kind word as a let name",
+			"function Run() {\nlet ^state = 1\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "state"}, resolver.KindDeclWord),
+				}
+			},
+		},
+		{
+			"declaring over a namespaced kind word",
+			"const ^state = 1" + runSuffix,
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					addReservedName(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "state"}, resolver.KindDeclWord),
+				}
+			},
+		},
+		{
+			"failed initializer keeps the slot declared",
 			"state s: Integer = ^nope\nfunction Run() {\nstate.s = 1\nstate.s\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
@@ -1404,26 +1553,8 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 			},
 		},
 		{
-			"failed state assignment still counts as initialization",
-			"state s: Integer\nfunction Init() {\nstate.s = ^nope\n}\nfunction Run() {\nstate.s\n}",
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addUndefinedIdent(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "nope"}),
-				}
-			},
-		},
-		{
-			"a failed state type still declares the field",
+			"a failed type annotation still declares the slot",
 			"state s: ^Nope = 1\nfunction Run() {\nstate.s\n}",
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Nope"}),
-				}
-			},
-		},
-		{
-			"a failed state type seeded in Init reports once",
-			"state s: ^Nope\nfunction Init() {\nstate.s = 1\n}\nfunction Run() {\nstate.s\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					addUndefinedType(token.Token{Type: token.IDENT, Pos: ps[0], Literal: "Nope"}),
@@ -1434,7 +1565,7 @@ func TestResolver_ResolveStateErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runDiagCases(t, tt.input, tt.buildDiags)
+			runDiagCasesWithRegistry(t, tt.input, tt.buildDiags, registerResolverTestKinds)
 		})
 	}
 }
@@ -1454,8 +1585,7 @@ func runDiagCasesWithRegistry(t *testing.T, input string, buildDiags func([]toke
 	l := lexer.New(src)
 	p := parser.New(l)
 	prog := p.Parse()
-	reg := registry.DefaultRegistry()
-	stdlib.Register(reg)
+	reg := newTestRegistry()
 	if setupRegistry != nil {
 		setupRegistry(reg)
 	}
@@ -1475,8 +1605,42 @@ func runDiagCasesWithRegistry(t *testing.T, input string, buildDiags func([]toke
 	}
 }
 
+func newTestRegistry() *registry.Registry {
+	reg := registry.DefaultRegistry()
+	stdlib.Register(reg)
+	registerStateKind(reg)
+	return reg
+}
+
+func registerStateKind(reg *registry.Registry) {
+	reg.RegisterDeclKind(registry.DeclKind{
+		Word:        "state",
+		Initializer: registry.InitializerOptional,
+		Assignable:  true,
+		Namespaced:  true,
+	})
+}
+
 func registerResolverTestType(reg *registry.Registry) {
 	reg.RegisterType(registry.NewTypeID("Money"), registry.ScalarShape)
+}
+
+func registerResolverTestKinds(reg *registry.Registry) {
+	reg.RegisterDeclKind(registry.DeclKind{
+		Word:         "indicator",
+		Initializer:  registry.InitializerRequired,
+		AllowedTypes: []registry.TypeID{registry.FloatID},
+	})
+	reg.RegisterDeclKind(registry.DeclKind{
+		Word:        "setting",
+		Initializer: registry.InitializerOptional,
+		Namespaced:  true,
+	})
+	reg.RegisterDeclKind(registry.DeclKind{
+		Word:        "marker",
+		Initializer: registry.InitializerForbidden,
+		Assignable:  true,
+	})
 }
 
 func registerResolverTestModule(reg *registry.Registry) {
@@ -1605,10 +1769,34 @@ func addNotReadable(tok token.Token, kind resolver.BindingKind) *diag.NotReadabl
 	return &diag.NotReadable{At: tok.Pos, Name: tok.Literal, Kind: string(kind)}
 }
 
-func addStateUndeclared(tok token.Token) *diag.StateUndeclared {
-	return &diag.StateUndeclared{At: tok.Pos, Field: tok.Literal}
+func addSlotUndeclared(tok token.Token, kind string) *diag.SlotUndeclared {
+	return &diag.SlotUndeclared{At: tok.Pos, Kind: kind, Name: tok.Literal}
 }
 
-func addStateUninitialized(tok token.Token) *diag.StateUninitialized {
-	return &diag.StateUninitialized{At: tok.Pos, Field: tok.Literal}
+func addUnknownDeclKeyword(tok token.Token) *diag.UnknownDeclKeyword {
+	return &diag.UnknownDeclKeyword{At: tok.Pos, Word: tok.Literal}
+}
+
+func addInitializerRequired(tok token.Token, kind string) *diag.InitializerRequired {
+	return &diag.InitializerRequired{At: tok.Pos, Kind: kind, Name: tok.Literal}
+}
+
+func addInitializerForbidden(tok token.Token, kind string) *diag.InitializerForbidden {
+	return &diag.InitializerForbidden{At: tok.Pos, Kind: kind, Name: tok.Literal}
+}
+
+func addTypeRequired(tok token.Token, kind string) *diag.TypeRequired {
+	return &diag.TypeRequired{At: tok.Pos, Kind: kind, Name: tok.Literal}
+}
+
+func addDeclTypeNotAllowed(tok token.Token, kind string, t registry.TypeID) *diag.DeclTypeNotAllowed {
+	return &diag.DeclTypeNotAllowed{At: tok.Pos, Kind: kind, T: t}
+}
+
+func addUseBeforeDeclaration(tok token.Token) *diag.UseBeforeDeclaration {
+	return &diag.UseBeforeDeclaration{At: tok.Pos, Name: tok.Literal}
+}
+
+func addInputInInit(tok token.Token) *diag.InputInInit {
+	return &diag.InputInInit{At: tok.Pos, Name: tok.Literal}
 }

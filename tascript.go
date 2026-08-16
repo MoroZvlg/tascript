@@ -89,6 +89,13 @@ func (b *Builder) RegisterCall(owner registry.TypeID, member string, rule regist
 	return b.reg.RegisterCall(owner, member, rule)
 }
 
+func (b *Builder) RegisterDeclKind(kind registry.DeclKind) error {
+	if b.spent {
+		return ErrBuilderSpent
+	}
+	return b.reg.RegisterDeclKind(kind)
+}
+
 func (b *Builder) RegisterModule(name string) (registry.Value, error) {
 	if b.spent {
 		return nil, ErrBuilderSpent

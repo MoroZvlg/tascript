@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/MoroZvlg/tascript/token"
 )
@@ -67,6 +68,22 @@ type CoerceRule struct {
 	EvalFn   func(value Value) Value
 }
 
+type InitializerRule uint8
+
+const (
+	InitializerRequired InitializerRule = iota
+	InitializerOptional
+	InitializerForbidden
+)
+
+type DeclKind struct {
+	Word         string
+	Initializer  InitializerRule
+	Assignable   bool
+	Namespaced   bool
+	AllowedTypes []TypeID
+}
+
 type Registry struct {
 	Binary       map[BinaryKey]BinaryRule
 	Unary        map[UnaryKey]UnaryRule
@@ -75,6 +92,7 @@ type Registry struct {
 	Modules      map[string]*PlainModule
 	Types        map[TypeID]TypeDef
 	Coerces      map[CoerceKey]CoerceRule
+	declKinds    map[string]DeclKind
 }
 
 func DefaultRegistry() *Registry {
@@ -86,6 +104,7 @@ func DefaultRegistry() *Registry {
 		Modules:      make(map[string]*PlainModule),
 		Types:        make(map[TypeID]TypeDef),
 		Coerces:      make(map[CoerceKey]CoerceRule),
+		declKinds:    make(map[string]DeclKind),
 	}
 
 	for _, builtin := range []TypeID{IntegerID, FloatID, StringID, BoolID} {
@@ -124,6 +143,9 @@ func (r *Registry) registerType(id TypeID, shape TypeShape) error {
 	if err := rejectReserved(id); err != nil {
 		return err
 	}
+	if err := r.rejectDeclKindWord(id.String()); err != nil {
+		return err
+	}
 	if _, exists := r.Types[id]; exists {
 		return fmt.Errorf("type %s not registered. ID taken", id)
 	}
@@ -135,6 +157,9 @@ func (r *Registry) registerType(id TypeID, shape TypeShape) error {
 func (r *Registry) RegisterScriptType(name string, fields []FieldDef) (TypeID, error) {
 	id := TypeID{id: name}
 	if err := rejectReserved(id); err != nil {
+		return TypeID{}, err
+	}
+	if err := r.rejectDeclKindWord(name); err != nil {
 		return TypeID{}, err
 	}
 	for _, field := range fields {
@@ -319,4 +344,56 @@ func (r *Registry) LookupCall(owner TypeID, member string) (CallRule, bool) {
 	}
 	rule, ok := r.Call[key]
 	return rule, ok
+}
+
+func (r *Registry) RegisterDeclKind(k DeclKind) error {
+	if !token.IsIdent(k.Word) {
+		return fmt.Errorf("declaration kind %q not registered. word is not a valid identifier", k.Word)
+	}
+	if token.IsKeyword(k.Word) {
+		return fmt.Errorf("declaration kind %q not registered. word is a language keyword", k.Word)
+	}
+	if token.IsReservedIdent(k.Word) {
+		return fmt.Errorf("declaration kind %q not registered. word is reserved", k.Word)
+	}
+	if _, exists := r.declKinds[k.Word]; exists {
+		return fmt.Errorf("declaration kind %q not registered. word taken", k.Word)
+	}
+	if _, exists := r.LookupType(k.Word); exists {
+		return fmt.Errorf("declaration kind %q not registered. word taken by a type", k.Word)
+	}
+	if _, exists := r.Modules[k.Word]; exists {
+		return fmt.Errorf("declaration kind %q not registered. word taken by a module", k.Word)
+	}
+	if err := rejectReserved(k.AllowedTypes...); err != nil {
+		return err
+	}
+	for _, id := range k.AllowedTypes {
+		if _, exists := r.Types[id]; !exists {
+			return fmt.Errorf("declaration kind %q not registered. allowed type %s is unknown", k.Word, id)
+		}
+	}
+	r.declKinds[k.Word] = k
+	return nil
+}
+
+func (r *Registry) LookupDeclKind(word string) (DeclKind, bool) {
+	k, ok := r.declKinds[word]
+	return k, ok
+}
+
+func (r *Registry) DeclKinds() []DeclKind {
+	kinds := make([]DeclKind, 0, len(r.declKinds))
+	for _, k := range r.declKinds {
+		kinds = append(kinds, k)
+	}
+	sort.Slice(kinds, func(i, j int) bool { return kinds[i].Word < kinds[j].Word })
+	return kinds
+}
+
+func (r *Registry) rejectDeclKindWord(name string) error {
+	if _, taken := r.LookupDeclKind(name); taken {
+		return fmt.Errorf("%s not registered. name taken by a declaration kind", name)
+	}
+	return nil
 }

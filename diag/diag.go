@@ -28,8 +28,14 @@ const (
 	CodeArgOrderInvalid      Code = "ARG_ORDER_INVALID"
 	CodeMissingRun           Code = "MISSING_RUN"
 	CodeTopDeclUnexpected    Code = "TOP_DECL_UNEXPECTED"
-	CodeStateUndeclared      Code = "STATE_UNDECLARED"
-	CodeStateUninitialized   Code = "STATE_UNINITIALIZED"
+	CodeSlotUndeclared       Code = "SLOT_UNDECLARED"
+	CodeUnknownDeclKeyword   Code = "UNKNOWN_DECL_KEYWORD"
+	CodeInitializerRequired  Code = "INITIALIZER_REQUIRED"
+	CodeInitializerForbidden Code = "INITIALIZER_FORBIDDEN"
+	CodeTypeRequired         Code = "TYPE_REQUIRED"
+	CodeDeclTypeNotAllowed   Code = "DECL_TYPE_NOT_ALLOWED"
+	CodeUseBeforeDeclaration Code = "USE_BEFORE_DECLARATION"
+	CodeInputInInit          Code = "INPUT_IN_INIT"
 	CodeTopDeclMisplaced     Code = "TOP_DECL_MISPLACED"
 	CodeDuplicateDeclaration Code = "DUPLICATE_DECLARATION"
 	CodeReservedName         Code = "RESERVED_NAME"
@@ -59,6 +65,7 @@ const (
 	CodeOutputUnknown        Code = "OUTPUT_UNKNOWN"
 	CodeOutputMissing        Code = "OUTPUT_MISSING"
 	CodeInputTypeMismatch    Code = "INPUT_TYPE_MISMATCH"
+	CodeSlotTypeMismatch     Code = "SLOT_TYPE_MISMATCH"
 	CodeTypeRegistrationFail Code = "TYPE_REGISTRATION_FAILED"
 	CodeInternalFailure      Code = "INTERNAL_FAILURE"
 )
@@ -196,7 +203,7 @@ func (ud TopDeclUnexpected) Phase() Phase   { return PhaseParse }
 func (ud TopDeclUnexpected) Pos() token.Pos { return ud.At }
 
 func (ud TopDeclUnexpected) Error() string {
-	return render(ud.Code(), ud.At, "only const, input, output, state, Init and Run functions allowed at top level")
+	return render(ud.Code(), ud.At, "only declarations and Init/Run functions are allowed at the top level")
 }
 
 type TopDeclMisplaced struct {
@@ -252,30 +259,113 @@ func (rn ReservedName) Error() string {
 	return render(rn.Code(), rn.At, "%s is a reserved %s name", rn.Name, rn.Kind)
 }
 
-type StateUndeclared struct {
-	At    token.Pos
-	Field string
+type SlotUndeclared struct {
+	At   token.Pos
+	Kind string
+	Name string
 }
 
-func (su StateUndeclared) Code() Code     { return CodeStateUndeclared }
-func (su StateUndeclared) Phase() Phase   { return PhaseCheck }
-func (su StateUndeclared) Pos() token.Pos { return su.At }
+func (su SlotUndeclared) Code() Code     { return CodeSlotUndeclared }
+func (su SlotUndeclared) Phase() Phase   { return PhaseCheck }
+func (su SlotUndeclared) Pos() token.Pos { return su.At }
 
-func (su StateUndeclared) Error() string {
-	return render(su.Code(), su.At, "state field %s is not declared", su.Field)
+func (su SlotUndeclared) Error() string {
+	return render(su.Code(), su.At, "%s.%s is not declared", su.Kind, su.Name)
 }
 
-type StateUninitialized struct {
-	At    token.Pos
-	Field string
+type UnknownDeclKeyword struct {
+	At   token.Pos
+	Word string
 }
 
-func (si StateUninitialized) Code() Code     { return CodeStateUninitialized }
-func (si StateUninitialized) Phase() Phase   { return PhaseCheck }
-func (si StateUninitialized) Pos() token.Pos { return si.At }
+func (ud UnknownDeclKeyword) Code() Code     { return CodeUnknownDeclKeyword }
+func (ud UnknownDeclKeyword) Phase() Phase   { return PhaseCheck }
+func (ud UnknownDeclKeyword) Pos() token.Pos { return ud.At }
 
-func (si StateUninitialized) Error() string {
-	return render(si.Code(), si.At, "state field %s has no initializer and is never assigned in Init()", si.Field)
+func (ud UnknownDeclKeyword) Error() string {
+	return render(ud.Code(), ud.At, "unknown declaration keyword %s", ud.Word)
+}
+
+type InitializerRequired struct {
+	At   token.Pos
+	Kind string
+	Name string
+}
+
+func (ir InitializerRequired) Code() Code     { return CodeInitializerRequired }
+func (ir InitializerRequired) Phase() Phase   { return PhaseCheck }
+func (ir InitializerRequired) Pos() token.Pos { return ir.At }
+
+func (ir InitializerRequired) Error() string {
+	return render(ir.Code(), ir.At, "%s %s requires an initializer", ir.Kind, ir.Name)
+}
+
+type InitializerForbidden struct {
+	At   token.Pos
+	Kind string
+	Name string
+}
+
+func (id InitializerForbidden) Code() Code     { return CodeInitializerForbidden }
+func (id InitializerForbidden) Phase() Phase   { return PhaseCheck }
+func (id InitializerForbidden) Pos() token.Pos { return id.At }
+
+func (id InitializerForbidden) Error() string {
+	return render(id.Code(), id.At, "%s %s cannot have an initializer", id.Kind, id.Name)
+}
+
+type TypeRequired struct {
+	At   token.Pos
+	Kind string
+	Name string
+}
+
+func (tr TypeRequired) Code() Code     { return CodeTypeRequired }
+func (tr TypeRequired) Phase() Phase   { return PhaseCheck }
+func (tr TypeRequired) Pos() token.Pos { return tr.At }
+
+func (tr TypeRequired) Error() string {
+	return render(tr.Code(), tr.At, "%s %s needs a type annotation or an initializer", tr.Kind, tr.Name)
+}
+
+type DeclTypeNotAllowed struct {
+	At   token.Pos
+	Kind string
+	T    registry.TypeID
+}
+
+func (dt DeclTypeNotAllowed) Code() Code     { return CodeDeclTypeNotAllowed }
+func (dt DeclTypeNotAllowed) Phase() Phase   { return PhaseCheck }
+func (dt DeclTypeNotAllowed) Pos() token.Pos { return dt.At }
+
+func (dt DeclTypeNotAllowed) Error() string {
+	return render(dt.Code(), dt.At, "%s does not accept type %s", dt.Kind, dt.T)
+}
+
+type UseBeforeDeclaration struct {
+	At   token.Pos
+	Name string
+}
+
+func (ub UseBeforeDeclaration) Code() Code     { return CodeUseBeforeDeclaration }
+func (ub UseBeforeDeclaration) Phase() Phase   { return PhaseCheck }
+func (ub UseBeforeDeclaration) Pos() token.Pos { return ub.At }
+
+func (ub UseBeforeDeclaration) Error() string {
+	return render(ub.Code(), ub.At, "%s is referenced before its declaration", ub.Name)
+}
+
+type InputInInit struct {
+	At   token.Pos
+	Name string
+}
+
+func (ii InputInInit) Code() Code     { return CodeInputInInit }
+func (ii InputInInit) Phase() Phase   { return PhaseCheck }
+func (ii InputInInit) Pos() token.Pos { return ii.At }
+
+func (ii InputInInit) Error() string {
+	return render(ii.Code(), ii.At, "input %s is not available before Run", ii.Name)
 }
 
 type InvalidBinaryOperation struct {
@@ -662,4 +752,20 @@ func (im InputTypeMismatch) Pos() token.Pos { return im.At }
 
 func (im InputTypeMismatch) Error() string {
 	return render(im.Code(), im.At, "input %s: expected %s, found %s", im.Name, im.Expected, im.Got)
+}
+
+type SlotTypeMismatch struct {
+	At       token.Pos
+	Kind     string
+	Name     string
+	Expected registry.TypeID
+	Got      registry.TypeID
+}
+
+func (sm SlotTypeMismatch) Code() Code     { return CodeSlotTypeMismatch }
+func (sm SlotTypeMismatch) Phase() Phase   { return PhaseRuntime }
+func (sm SlotTypeMismatch) Pos() token.Pos { return sm.At }
+
+func (sm SlotTypeMismatch) Error() string {
+	return render(sm.Code(), sm.At, "%s %s: expected %s, found %s", sm.Kind, sm.Name, sm.Expected, sm.Got)
 }

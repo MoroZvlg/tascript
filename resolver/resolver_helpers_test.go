@@ -44,6 +44,8 @@ func dump(t *testing.T, resolvedExpr resolved.Expression) string {
 		return fmt.Sprintf("(member_access:%s, %s, %s)", expr.Type(), dump(t, expr.Object), expr.Attribute)
 	case *resolved.MethodCallExpr:
 		return fmt.Sprintf("(method_call:%s, %s, %s, %s)", expr.Type(), dump(t, expr.Receiver), expr.Method, dumpArgs(t, expr.Args))
+	case *resolved.SlotRefExpr:
+		return fmt.Sprintf("%s.%s:%s", expr.Slot.Kind, expr.Slot.Name, expr.Type())
 	case *resolved.IndexExpr:
 		return fmt.Sprintf("(index:%s, %s, %s)", expr.Type(), dump(t, expr.Left), dump(t, expr.Index))
 	case *resolved.BadExpr:
@@ -60,6 +62,8 @@ func dumpStmt(t *testing.T, resolvedStmt resolved.Statement) string {
 		return fmt.Sprintf("let %s:%s = %s", stmt.Name, stmt.T, dump(t, stmt.Value))
 	case *resolved.AssignNameStmt:
 		return fmt.Sprintf("%s:%s = %s", stmt.Target, stmt.T, dump(t, stmt.Value))
+	case *resolved.AssignSlotStmt:
+		return fmt.Sprintf("%s.%s:%s = %s", stmt.Target.Kind, stmt.Target.Name, stmt.T, dump(t, stmt.Value))
 	case *resolved.ExprStmt:
 		return dump(t, stmt.Expr)
 	case *resolved.BlockStmt:

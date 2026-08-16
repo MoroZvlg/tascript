@@ -3,7 +3,6 @@ package evaluator
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"runtime/debug"
 
 	"github.com/MoroZvlg/tascript/diag"
@@ -12,29 +11,94 @@ import (
 	"github.com/MoroZvlg/tascript/token"
 )
 
+type slotCell struct {
+	value  registry.Value
+	filled bool
+}
+
 type Evaluator struct {
-	prog     *resolved.Program
-	registry *registry.Registry
-	env      *Env
-	states   map[string]registry.Value
-	inputs   map[string]registry.Value
-	outputs  map[string]registry.Sink
-	currFn   string // Entry point/function name, for runtime diagnostics
+	prog        *resolved.Program
+	registry    *registry.Registry
+	env         *Env
+	slots       []slotCell
+	slotDecls   []*resolved.SlotDecl
+	inputDecls  []*resolved.InputDecl
+	outputDecls []*resolved.OutputDecl
+	inputs      map[string]registry.Value
+	outputs     map[string]registry.Sink
+	currFn      string // Entry point/function name, for runtime diagnostics
+	// inTick guards the slot handle API and Init/Run against re-entrancy
+	inTick bool
 }
 
 func New(prog *resolved.Program, reg *registry.Registry) *Evaluator {
-	return &Evaluator{
+	e := &Evaluator{
 		prog:     prog,
 		registry: reg,
 		env:      EnvFromRegistry(reg),
-		states:   make(map[string]registry.Value),
 		inputs:   make(map[string]registry.Value),
 		outputs:  make(map[string]registry.Sink),
 	}
+
+	for _, decl := range prog.Decls {
+		switch typedDecl := decl.(type) {
+		case *resolved.SlotDecl:
+			e.slotDecls = append(e.slotDecls, typedDecl)
+		case *resolved.InputDecl:
+			e.inputDecls = append(e.inputDecls, typedDecl)
+		case *resolved.OutputDecl:
+			e.outputDecls = append(e.outputDecls, typedDecl)
+		}
+	}
+	e.slots = make([]slotCell, len(e.slotDecls))
+
+	return e
+}
+
+var (
+	ErrMidActivation = errors.New("call into the engine while it is mid-activation")
+	ErrSlotEmpty     = errors.New("slot has no value yet")
+)
+
+func (e *Evaluator) SlotDecls() []*resolved.SlotDecl {
+	return e.slotDecls
+}
+
+func (e *Evaluator) SlotGet(idx int) (registry.Value, error) {
+	if e.inTick {
+		return nil, ErrMidActivation
+	}
+	cell := e.slots[idx]
+	if !cell.filled {
+		return nil, ErrSlotEmpty
+	}
+	return cell.value, nil
+}
+
+func (e *Evaluator) SlotSet(idx int, value registry.Value) error {
+	if e.inTick {
+		return ErrMidActivation
+	}
+	decl := e.slotDecls[idx]
+	if value.TypeID() != decl.T {
+		rule, canCoerce := e.registry.LookupCoerce(value.TypeID(), decl.T)
+		if !canCoerce {
+			return diag.SlotTypeMismatch{
+				At:       decl.Token.Pos,
+				Kind:     decl.Kind,
+				Name:     decl.Name,
+				Expected: decl.T,
+				Got:      value.TypeID(),
+			}
+		}
+		value = rule.EvalFn(value)
+	}
+	e.slots[idx] = slotCell{value: value, filled: true}
+	return nil
 }
 
 func (e *Evaluator) BindInput(name string, value registry.Value) error {
-	for _, decl := range e.prog.Inputs {
+	for _, decl := range e.inputDecls {
 		if decl.Name != name {
 			continue
 		}
@@ -57,7 +121,7 @@ func (e *Evaluator) BindInput(name string, value registry.Value) error {
 }
 
 func (e *Evaluator) BindOutput(name string, sink registry.Sink) error {
-	for _, decl := range e.prog.Outputs {
+	for _, decl := range e.outputDecls {
 		if decl.Name == name {
 			e.outputs[name] = sink
 			return nil
@@ -69,55 +133,77 @@ func (e *Evaluator) BindOutput(name string, sink registry.Sink) error {
 // EvalInit is the load phase and must be called once before the first EvalRun.
 // An error means the program never reached a valid initial state
 func (e *Evaluator) EvalInit() (result registry.Value, err error) {
+	if e.inTick {
+		return nil, ErrMidActivation
+	}
 	e.currFn = "Init"
+	e.inTick = true
 	defer func() {
+		e.inTick = false
 		if r := recover(); r != nil {
 			result, err = nil, e.internalFailure(r)
 		}
 	}()
 
-	for _, decl := range e.prog.Outputs {
+	for _, decl := range e.outputDecls {
 		if _, bound := e.outputs[decl.Name]; !bound {
 			return nil, diag.OutputMissing{At: decl.Token.Pos, Name: decl.Name}
 		}
 	}
 
-	for _, decl := range e.prog.Consts {
-		if err := e.evalConst(decl, e.env); err != nil {
-			return nil, err
+	for _, decl := range e.prog.Decls {
+		switch typedDecl := decl.(type) {
+		case *resolved.ConstDecl:
+			if err := e.evalConst(typedDecl, e.env); err != nil {
+				return nil, err
+			}
+		case *resolved.SlotDecl:
+			// a host fill at Wire wins: the initializer is only a fallback
+			if e.slots[typedDecl.Index].filled || typedDecl.Init == nil {
+				continue
+			}
+			value, err := e.evalExpr(typedDecl.Init, e.env)
+			if err != nil {
+				return nil, err
+			}
+			e.slots[typedDecl.Index] = slotCell{value: value, filled: true}
 		}
-	}
-
-	for _, field := range e.prog.State.Fields {
-		if field.InitValue == nil {
-			continue // will be seeded in Init()
-		}
-		value, err := e.evalExpr(field.InitValue, e.env)
-		if err != nil {
-			return nil, err
-		}
-		e.states[field.Name] = value
 	}
 
 	if e.prog.InitFn != nil {
-		return e.evalBlock(e.prog.InitFn.Body, NewEnclosedEnv(e.env))
+		result, err = e.evalBlock(e.prog.InitFn.Body, NewEnclosedEnv(e.env))
+		if err != nil {
+			return nil, err
+		}
 	}
-	return nil, nil
+
+	for _, decl := range e.slotDecls {
+		if !e.slots[decl.Index].filled {
+			return nil, diag.RuntimeFailure{
+				At:      decl.Token.Pos,
+				Kind:    registry.UninitializedSlot,
+				Message: fmt.Sprintf("%s.%s left uninitialized after Init", decl.Kind, decl.Name),
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // EvalRun executes one tick.
-// On error `state` is rolled back — emits already handed to a sink are not.
+// An aborted tick is unfinished, not undone: slot writes before the error persist.
 // Bound inputs must stay immutable for the call's duration (host-owned coherence).
 // TODO: result is temp for debug/tests.
 func (e *Evaluator) EvalRun() (result registry.Value, err error) {
+	if e.inTick {
+		return nil, ErrMidActivation
+	}
 	e.currFn = "Run"
-	snapshot := maps.Clone(e.states)
+	e.inTick = true
 	defer func() {
+		e.inTick = false
 		if r := recover(); r != nil {
 			result, err = nil, e.internalFailure(r)
-		}
-		if err != nil {
-			e.states = snapshot
 		}
 	}()
 
@@ -130,7 +216,7 @@ func (e *Evaluator) EvalRun() (result registry.Value, err error) {
 }
 
 func (e *Evaluator) bindInputs(env *Env) error {
-	for _, decl := range e.prog.Inputs {
+	for _, decl := range e.inputDecls {
 		value, ok := e.inputs[decl.Name]
 		if !ok {
 			return diag.InputMissing{At: decl.Token.Pos, Name: decl.Name}
@@ -197,19 +283,19 @@ func (e *Evaluator) evalStmt(stmt resolved.Statement, env *Env) (registry.Value,
 		return e.evalIf(n, env)
 	case *resolved.EmitStmt:
 		return e.evalEmit(n, env)
-	case *resolved.AssignStateStmt:
-		return e.evalAssignState(n, env)
+	case *resolved.AssignSlotStmt:
+		return e.evalAssignSlot(n, env)
 	default:
 		panic(fmt.Sprintf("unhandled resolved statement %T: the resolver produced a node the evaluator never wired up", stmt))
 	}
 }
 
-func (e *Evaluator) evalAssignState(stmt *resolved.AssignStateStmt, env *Env) (registry.Value, error) {
+func (e *Evaluator) evalAssignSlot(stmt *resolved.AssignSlotStmt, env *Env) (registry.Value, error) {
 	value, err := e.evalExpr(stmt.Value, env)
 	if err != nil {
 		return nil, err
 	}
-	e.states[stmt.Target.Name] = value
+	e.slots[stmt.Target.Index] = slotCell{value: value, filled: true}
 	return value, nil
 }
 
@@ -307,20 +393,25 @@ func (e *Evaluator) evalExpr(expr resolved.Expression, env *Env) (registry.Value
 		return e.evalMemberAccess(n, env)
 	case *resolved.MethodCallExpr:
 		return e.evalMethodCall(n, env)
-	case *resolved.StateAccessExpr:
-		return e.evalStateAccess(n)
+	case *resolved.SlotRefExpr:
+		return e.evalSlotRef(n)
 	default:
 		panic(fmt.Sprintf("unhandled resolved expression %T: the resolver produced a node the evaluator never wired up", expr))
 	}
 }
 
-func (e *Evaluator) evalStateAccess(expr *resolved.StateAccessExpr) (registry.Value, error) {
-	value, ok := e.states[expr.Field]
-	if !ok {
-		// unreachable: definite-assignment analysis rejects unseeded reads
-		panic(fmt.Sprintf("state field %s read before initialization", expr.Field))
+// evalSlotRef can hit an empty cell: an initializer may read a slot above it that
+// the host was expected to fill at Wire and did not.
+func (e *Evaluator) evalSlotRef(expr *resolved.SlotRefExpr) (registry.Value, error) {
+	cell := e.slots[expr.Slot.Index]
+	if !cell.filled {
+		return nil, diag.RuntimeFailure{
+			At:      expr.Token.Pos,
+			Kind:    registry.UninitializedSlot,
+			Message: fmt.Sprintf("%s.%s read before it was filled", expr.Slot.Kind, expr.Slot.Name),
+		}
 	}
-	return value, nil
+	return cell.value, nil
 }
 
 func (e *Evaluator) evalIdent(expr *resolved.IdentExpr, env *Env) (registry.Value, error) {

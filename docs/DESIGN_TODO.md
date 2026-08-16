@@ -14,18 +14,19 @@ can do. See "Not in v0.1" for what moved and why.
 ## Ground rules any new work must respect
 
 - **The core is domain-blind.** It knows primitives, control flow, typed input/output
-  ports, `state`, host-type dispatch, snapshot/rollback, and a **per-event** execution
-  model (message on a port → `Run` → `emit`; a candle tick is just the signal block's
-  special case). *When* `Run` fires is a host sync primitive, not a language feature.
+  ports, registered declaration kinds (`state` is the prelude one), host-type dispatch,
+  and a **per-event** execution model (message on a port → `Run` → `emit`; a candle tick
+  is just the signal block's special case). *When* `Run` fires is a host sync primitive,
+  not a language feature.
 - **Core packages** (`registry`, `resolver`, `evaluator`, `lexer`, `parser`, `ast`,
   `resolved`, `token`) must never import talive or mention candles. All TA lives in
   `examples/` + tests. **TODO: add a CI import-guard.**
 - **Shared-handle invariant** — host-registered types expose **read-only methods only**,
-  and the language never grows `obj.field =` or `arr[i] =` for host-owned values (`state`
-  mutation is fine, state is engine-owned). Three ways to break it, guard each: general
-  member assignment beyond `state.`; index assignment when `[n]` lands (keep it
-  read-only); a host method registered with side effects writing through the shared
-  pointer.
+  and the language never grows `obj.field =` or `arr[i] =` for host-owned values (slot
+  mutation is fine, slots are engine-owned). Three ways to break it, guard each: general
+  member assignment beyond a namespaced slot's `kind.name`; index assignment when `[n]`
+  lands (keep it read-only); a host method registered with side effects writing through
+  the shared pointer.
 - **`Resolve()` requires a clean parse** and is unguarded by contract — `Compile()`
   returns on parse diagnostics first. Resolver diag fixtures must therefore parse cleanly.
 - **`Resolver.Resolve` always returns a possibly-partial program**; callers must check
@@ -36,8 +37,8 @@ can do. See "Not in v0.1" for what moved and why.
 ## v0.1 — what ships
 
 In order. 1–2 are the release; 3–4 are cheap and unblock the error seam; 5–7 are decisions
-that get expensive to change once hosts exist; 8 is the doc. **1, 3 and 4 are done** — item 2
-is the last code item before the decisions.
+that get expensive to change once hosts exist; 8 is the doc. **1–4 are done** — what is left
+is the decisions and the doc cut.
 
 **1. Output path — ~~replace `Emitted()`~~ done.** Outputs bind like inputs: the host calls
 `BindOutput(name, sink)` before `Init` (every declared output needs one, or `Init` fails
@@ -56,17 +57,22 @@ rollback** (§6.5 rewritten). What is left here:
 - A sink runs inside the tick, so it must not call back into the executable — unenforced,
   documented on `registry.Sink`.
 
-**2. Host-registerable declaration keywords** (was item D). Contextual keyword +
-declaration-form registry; a parser refactor. This is where `indicator rsi: Scalar =
-ta.rsi(14)` comes from, and where `state` / `input` / `output` fold into one generic
-mechanism as prelude registrations.
+**2. ~~Host-registerable declaration keywords~~ done** (was item D). A host registers a
+`registry.DeclKind` and the script gets the word: `indicator fast = ta.sma(3, source =
+ta.Close)`. Scope, as designed: interior slots only — `input`/`output` stay the builtin
+boundary, `const` stays core, `state` ships as the prelude kind. Decisions in
+`DESIGN_DECL_KINDS.md`, the executed plan in `PLAN_DECL_KINDS.md`.
 
-- Measured first: `const fast = ta.sma(3, source = ta.Close)` already compiles, runs, keeps
-  the host object across ticks, and takes method calls mid-`Run`. So this buys **vocabulary,
-  not capability** — size it accordingly.
-- The one semantic difference worth deciding while here: a `const`-held host object lives in
-  `env`, so a trapped tick rolls back `state` and emits but leaves the indicator advanced.
-  Decided: host's problem — but say so in the spec rather than leaving it silent.
+- What it changed beyond vocabulary: one source-order declaration walk (that walk is the
+  scoping rule, replacing the old pass-order rule), slot handles for the host
+  (`Executable.Slots` / `Slot(kind, name)`), Rule A (a host fill at wire beats the
+  initializer), Rule B (nothing empty when Init ends, `UNINITIALIZED_SLOT`) in place of
+  static definite assignment, and **no tick rollback** — an aborted activation is
+  unfinished, not undone.
+- `const` joined the walk: `const window = setting.period * 2` is legal, referencing
+  anything below is `USE_BEFORE_DECLARATION`.
+- Still true, and now spec-visible: a slot holding a host object is not rolled back on a
+  trapped tick, because nothing is. §6.5 must say so.
 
 **3. ~~Guard the single-use builder~~ done.** `ErrBuilderSpent`: `Compile` spends the builder
 (whether or not the script compiled) and every `Register*` rejects afterwards, closing both
@@ -110,16 +116,23 @@ invisible at the API:
 - The coherence window widened with binding: a bound value must hold still from bind until
   `Run` returns, not merely for one call.
 
-**7. Decide `state x: HostType`.** Accepted today for any registered type, and rollback is a
-shallow `maps.Clone`, so `state.saved = candles` persists a live host handle whose internals
-never roll back. Reject at load, or document as host-owned. No snapshot machinery — just
-stop it being silent.
+**7. Decide `state x: HostType`.** Accepted today for any registered type, so
+`state.saved = candles` persists a live host handle the engine has no view into — and with
+rollback gone, nothing pretends otherwise. Reject at load, or document as host-owned. No
+snapshot machinery — just stop it being silent. Note `Slot.Set` gives the host a way to
+fill such a slot itself, which may be the whole answer.
 
 **8. Cut `SPEC.md` to what ships.** Finishing the design doc means *removing* what v0.1 does
 not implement, not implementing it: the capability model, slot policy, and `[n]` history
-windows move to a deferred appendix. Includes the **§6.4 diagnostics reconciliation** (was
-tracker row #14), which is unavoidable here because the spec names codes the impl does not
-have:
+windows move to a deferred appendix. Item 2 left more prose stale than it fixed: §4.3
+(`state` as a keyword and its diagnostics), §4.6 (which registrations are prelude), and
+§6.5 (tick rollback of `state`, plus the `snapshotable` capability that died with it) all
+describe an engine that no longer exists. Includes the **§6.4 diagnostics reconciliation**
+(was tracker row #14), which is unavoidable here because the spec names codes the impl does
+not have — and now also misses the kind family (`UNKNOWN_DECL_KEYWORD`,
+`INITIALIZER_REQUIRED`/`FORBIDDEN`, `TYPE_REQUIRED`, `DECL_TYPE_NOT_ALLOWED`,
+`USE_BEFORE_DECLARATION`, `INPUT_IN_INIT`, `SLOT_UNDECLARED`, `UNINITIALIZED_SLOT`) while
+still naming the deleted `STATE_*` pair:
 
 - ~10 spec codes have no impl (`BOOL_REQUIRED`, `EMIT_PAYLOAD`, `OUTPUT_NOT_WIRED`,
   `HISTORY_*`, most of the `*_LIMIT` family); ~24 impl codes have no spec entry. Naming
@@ -164,13 +177,13 @@ motivation. Revive it with F, or if a gate below turns out to be needed.
 - **`RegisterType` hardcodes `ScalarShape`**, so a host cannot register any other shape and
   `VectorShape` is unreachable from outside. Blocks indexing and these capabilities.
 
-**Slot-policy two-gate (was B).** Generalize `resolver.Binding.Assignable()` into
-`canWrite = slotWritable(kind) && typeReplaceable(T)`. Needs A.
+**Slot-policy two-gate (was B).** `canWrite = slotWritable(kind) && typeReplaceable(T)`.
+Half of it shipped with item 2: `DeclKind.Assignable` is the kind gate, checked at the
+assign site. The type gate still needs A.
 
-**Persistent host-object slots + snapshot generalization (was C).** A slot table holding
-host `Value`s across ticks plus a `Snapshotable` interface. Was billed as "the real enabler
-for indicators", but indicators need slots that *hold* host values across ticks — which
-`const` already does — not slots that snapshot them. Mostly rollback work; see item 7.
+**Snapshot generalization (was C).** The slot table shipped with item 2; the `Snapshotable`
+interface did not, and no longer has a caller — rollback is gone. Revive only if a host
+turns out to want engine-side rollback after all.
 
 **Effect metadata on `CallRule` (was E)** — pure / mutates-receiver / cardinality / phase /
 ownership. Needed for safe stepping; closes the "registry cannot express *this rule mutates*"
@@ -222,10 +235,10 @@ warning is probably `EMPTY_FUNCTION`.
 - **`math.pow` can still return NaN** (`pow(-1.0, 0.5)`); it needs a two-argument domain
   rule, unlike the single-argument `sqrt`/`log` traps.
 - **Two remaining recovery cascades.** A *genuine* type mismatch (not the error type) in a
-  state initializer still `continue`s and drops the field; in a state assignment it still
-  returns `BadStmt`, which `definitelyAssignedState` does not count. Appending anyway would
-  put a value in the tree whose type contradicts the field's declared `T` — fix only
-  alongside a decision on whether `resolved` may hold deliberately ill-typed recovery nodes.
+  slot initializer still drops the whole `SlotDecl`, so later references report as
+  undeclared; in a slot assignment it still returns `BadStmt`. Appending anyway would put a
+  value in the tree whose type contradicts the slot's declared `T` — fix only alongside a
+  decision on whether `resolved` may hold deliberately ill-typed recovery nodes.
 - **Two `Env` implementations drifting** — resolver keys by `Symbol`, evaluator by `string`;
   resolver's `Get` special-cases `isTopLevel()` while the evaluator walks the parent chain
   plainly; `Symbol` is declared in `resolver.go`, not `env.go`. Align during the slot-based

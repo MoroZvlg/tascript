@@ -6,10 +6,10 @@ import "fmt"
 type ErrorKind string
 
 const (
-	DivisionByZero  ErrorKind = "DIVISION_BY_ZERO"
-	InvalidArgument ErrorKind = "INVALID_ARGUMENT"
-	OutOfRange      ErrorKind = "OUT_OF_RANGE"
-	UnassignedState ErrorKind = "UNASSIGNED_STATE"
+	DivisionByZero    ErrorKind = "DIVISION_BY_ZERO"
+	InvalidArgument   ErrorKind = "INVALID_ARGUMENT"
+	OutOfRange        ErrorKind = "OUT_OF_RANGE"
+	UninitializedSlot ErrorKind = "UNINITIALIZED_SLOT"
 	// UnknownKind marks a non-registry error. host-written rules may return arbitrary errors.
 	UnknownKind ErrorKind = "UNKNOWN_FAILURE"
 )

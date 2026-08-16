@@ -24,10 +24,26 @@ func (r *recorder) last() registry.Value {
 	return r.values[len(r.values)-1]
 }
 
+func newBuilder(t *testing.T) *tascript.Builder {
+	t.Helper()
+
+	builder := tascript.NewBuilder()
+	err := builder.RegisterDeclKind(registry.DeclKind{
+		Word:        "state",
+		Initializer: registry.InitializerOptional,
+		Assignable:  true,
+		Namespaced:  true,
+	})
+	if err != nil {
+		t.Fatalf("register state kind: %v", err)
+	}
+	return builder
+}
+
 func compile(t *testing.T, src string) *tascript.Executable {
 	t.Helper()
 
-	program, diags, err := tascript.NewBuilder().Compile(src)
+	program, diags, err := newBuilder(t).Compile(src)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -58,7 +74,7 @@ func (b *box) TypeID() registry.TypeID { return b.id }
 func boxProgram(t *testing.T) (*tascript.Executable, registry.TypeID, *recorder) {
 	t.Helper()
 
-	builder := tascript.NewBuilder()
+	builder := newBuilder(t)
 	boxID, err := builder.RegisterType("Box")
 	if err != nil {
 		t.Fatalf("register type: %v", err)

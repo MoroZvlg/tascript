@@ -209,24 +209,19 @@ func (ma *MemberAccessExpr) Type() registry.TypeID {
 	return ma.T
 }
 
-type StateAccessExpr struct {
+type SlotRefExpr struct {
 	Token token.Token
-	Field string
-	T     registry.TypeID
+	Slot  *SlotDecl
 }
 
-func (sa *StateAccessExpr) String() string {
-	var out bytes.Buffer
-	out.WriteString("state")
-	out.WriteString(sa.Token.Literal)
-	out.WriteString(sa.Field)
-	return out.String()
+func (sr *SlotRefExpr) String() string {
+	return sr.Slot.Kind + "." + sr.Slot.Name
 }
 
-func (sa *StateAccessExpr) expressionNode() {}
+func (sr *SlotRefExpr) expressionNode() {}
 
-func (sa *StateAccessExpr) Type() registry.TypeID {
-	return sa.T
+func (sr *SlotRefExpr) Type() registry.TypeID {
+	return sr.Slot.T
 }
 
 type IndexExpr struct {
@@ -353,16 +348,17 @@ func (as *AssignNameStmt) String() string {
 
 func (as *AssignNameStmt) statementNode() {}
 
-type AssignStateStmt struct {
+type AssignSlotStmt struct {
 	Token  token.Token
-	Target *StateField
+	Target *SlotDecl
 	Value  Expression
 	T      registry.TypeID
 }
 
-func (as *AssignStateStmt) String() string {
+func (as *AssignSlotStmt) String() string {
 	var out bytes.Buffer
-	out.WriteString("state.")
+	out.WriteString(as.Target.Kind)
+	out.WriteString(".")
 	out.WriteString(as.Target.Name)
 	out.WriteString(" = ")
 	if as.Value == nil {
@@ -373,7 +369,7 @@ func (as *AssignStateStmt) String() string {
 	return out.String()
 }
 
-func (as *AssignStateStmt) statementNode() {}
+func (as *AssignSlotStmt) statementNode() {}
 
 type EmitStmt struct {
 	Token  token.Token
@@ -477,49 +473,81 @@ func (bs *BadStmt) String() string { return "<bad statement>" }
 func (bs *BadStmt) statementNode() {}
 
 type Program struct {
-	Consts  []*ConstDecl
-	Inputs  []*InputDecl
-	Outputs []*OutputDecl
-	State   *State
-	InitFn  *FunctionDecl
-	RunFn   *FunctionDecl
+	// Decls is the *ordered* walk list and the only storage
+	Decls  []Decl
+	InitFn *FunctionDecl
+	RunFn  *FunctionDecl
 }
 
-type State struct {
-	Fields []*StateField
-}
-
-func (s *State) String() string {
-	var out bytes.Buffer
-	out.WriteString("State{")
-	for i, field := range s.Fields {
-		out.WriteString(field.String())
-		if i < len(s.Fields)-1 {
-			out.WriteString(",")
+func (p *Program) Consts() []*ConstDecl {
+	var consts []*ConstDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*ConstDecl); ok {
+			consts = append(consts, decl)
 		}
 	}
-	out.WriteString("}")
-	return out.String()
+	return consts
 }
 
-type StateField struct {
-	Token     token.Token
-	Name      string
-	T         registry.TypeID
-	InitValue Expression // decl initializer only; evaluated at load phase
+func (p *Program) Slots() []*SlotDecl {
+	var slots []*SlotDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*SlotDecl); ok {
+			slots = append(slots, decl)
+		}
+	}
+	return slots
 }
 
-func (sf *StateField) String() string {
+func (p *Program) Inputs() []*InputDecl {
+	var inputs []*InputDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*InputDecl); ok {
+			inputs = append(inputs, decl)
+		}
+	}
+	return inputs
+}
+
+func (p *Program) Outputs() []*OutputDecl {
+	var outputs []*OutputDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*OutputDecl); ok {
+			outputs = append(outputs, decl)
+		}
+	}
+	return outputs
+}
+
+type Decl interface {
+	Node
+	declNode()
+}
+
+type SlotDecl struct {
+	Token token.Token
+	Kind  string
+	Name  string
+	T     registry.TypeID
+	Init  Expression
+	Index int
+}
+
+func (sd *SlotDecl) String() string {
 	var out bytes.Buffer
-	out.WriteString(sf.Name)
+	out.WriteString(sd.Kind)
+	out.WriteString(" ")
+	out.WriteString(sd.Name)
 	out.WriteString(": ")
-	out.WriteString(sf.T.String())
-	if sf.InitValue != nil {
+	out.WriteString(sd.T.String())
+	if sd.Init != nil {
 		out.WriteString(" = ")
-		out.WriteString(sf.InitValue.String())
+		out.WriteString(sd.Init.String())
 	}
 	return out.String()
 }
+
+func (sd *SlotDecl) declNode() {}
 
 type InputDecl struct {
 	Token token.Token
@@ -531,6 +559,8 @@ func (id *InputDecl) String() string {
 	return "input " + id.Name + ":" + id.T.String()
 }
 
+func (id *InputDecl) declNode() {}
+
 type OutputDecl struct {
 	Token token.Token
 	Name  string
@@ -540,6 +570,8 @@ type OutputDecl struct {
 func (od *OutputDecl) String() string {
 	return "output " + od.Name + ":" + od.T.String()
 }
+
+func (od *OutputDecl) declNode() {}
 
 type FunctionDecl struct {
 	Token token.Token
@@ -552,6 +584,8 @@ type ConstDecl struct {
 	Value Expression
 	T     registry.TypeID
 }
+
+func (cd *ConstDecl) declNode() {}
 
 func (cd *ConstDecl) String() string {
 	var out bytes.Buffer

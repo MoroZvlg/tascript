@@ -179,16 +179,63 @@ func (r *Resolver) addTypeMismatch(opToken token.Token, expected, got registry.T
 	})
 }
 
-func (r *Resolver) addStateUndeclared(fieldToken token.Token) {
-	r.errs = append(r.errs, &diag.StateUndeclared{
-		At:    fieldToken.Pos,
-		Field: fieldToken.Literal,
+func (r *Resolver) addSlotUndeclared(nameToken token.Token, kind string) {
+	r.errs = append(r.errs, &diag.SlotUndeclared{
+		At:   nameToken.Pos,
+		Kind: kind,
+		Name: nameToken.Literal,
 	})
 }
 
-func (r *Resolver) addStateUninitialized(fieldToken token.Token) {
-	r.errs = append(r.errs, &diag.StateUninitialized{
-		At:    fieldToken.Pos,
-		Field: fieldToken.Literal,
+func (r *Resolver) addUnknownDeclKeyword(wordToken token.Token) {
+	r.errs = append(r.errs, &diag.UnknownDeclKeyword{
+		At:   wordToken.Pos,
+		Word: wordToken.Literal,
+	})
+}
+
+func (r *Resolver) addInitializerRequired(nameToken token.Token, kind string) {
+	r.errs = append(r.errs, &diag.InitializerRequired{
+		At:   nameToken.Pos,
+		Kind: kind,
+		Name: nameToken.Literal,
+	})
+}
+
+func (r *Resolver) addInitializerForbidden(nameToken token.Token, kind string) {
+	r.errs = append(r.errs, &diag.InitializerForbidden{
+		At:   nameToken.Pos,
+		Kind: kind,
+		Name: nameToken.Literal,
+	})
+}
+
+func (r *Resolver) addTypeRequired(nameToken token.Token, kind, name string) {
+	r.errs = append(r.errs, &diag.TypeRequired{
+		At:   nameToken.Pos,
+		Kind: kind,
+		Name: name,
+	})
+}
+
+func (r *Resolver) addDeclTypeNotAllowed(nameToken token.Token, kind string, t registry.TypeID) {
+	r.errs = append(r.errs, &diag.DeclTypeNotAllowed{
+		At:   nameToken.Pos,
+		Kind: kind,
+		T:    t,
+	})
+}
+
+func (r *Resolver) addUseBeforeDeclaration(nameToken token.Token) {
+	r.errs = append(r.errs, &diag.UseBeforeDeclaration{
+		At:   nameToken.Pos,
+		Name: nameToken.Literal,
+	})
+}
+
+func (r *Resolver) addInputInInit(nameToken token.Token) {
+	r.errs = append(r.errs, &diag.InputInInit{
+		At:   nameToken.Pos,
+		Name: nameToken.Literal,
 	})
 }

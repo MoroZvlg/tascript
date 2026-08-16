@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/diag"
@@ -14,24 +15,21 @@ type Symbol string
 
 // Resolver doing both resolve and type check
 type Resolver struct {
-	prog         *ast.Program
-	resolvedProg *resolved.Program
-	reg          *registry.Registry
-	errs         []diag.Diagnostic
-	currFn       string
+	prog          *ast.Program
+	resolvedProg  *resolved.Program
+	reg           *registry.Registry
+	errs          []diag.Diagnostic
+	currFn        string
+	slotCount     int
+	declaredNames map[Symbol]bool
 }
 
 func New(prog *ast.Program, reg *registry.Registry) *Resolver {
-	resolvedProg := &resolved.Program{
-		// NOTE: we need empty
-		State: &resolved.State{
-			Fields: make([]*resolved.StateField, 0),
-		},
-	}
 	return &Resolver{
-		prog:         prog,
-		resolvedProg: resolvedProg,
-		reg:          reg,
+		prog:          prog,
+		resolvedProg:  &resolved.Program{},
+		reg:           reg,
+		declaredNames: make(map[Symbol]bool),
 	}
 }
 
@@ -39,27 +37,56 @@ func (r *Resolver) Diagnostics() []diag.Diagnostic {
 	return r.errs
 }
 
+// Resolve walks the top-level declarations in source order: that walk IS the scoping rule
 func (r *Resolver) Resolve() *resolved.Program {
 	topLevelEnv := EnvFromRegistry(r.reg)
+	r.collectDeclaredNames()
 
-	r.resolvedProg.Consts = r.resolveConst(r.prog.Consts, topLevelEnv)
-	r.resolveState(r.prog.StateFields, topLevelEnv)
-
-	// NOTE: decl resolve order IS the scoping rule: consts and state initializers resolve before inputs/outputs
-	// enter the env, so referencing dynamic data in them will fail.
-	r.resolvedProg.Inputs = r.resolveInputs(r.prog.Inputs, topLevelEnv)
-	r.resolvedProg.Outputs = r.resolveOutputs(r.prog.Outputs, topLevelEnv)
+	for _, decl := range r.prog.Decls {
+		switch typedDecl := decl.(type) {
+		case *ast.ConstDecl:
+			r.resolveConst(typedDecl, topLevelEnv)
+		case *ast.InputDecl:
+			r.resolveInput(typedDecl, topLevelEnv)
+		case *ast.OutputDecl:
+			r.resolveOutput(typedDecl, topLevelEnv)
+		case *ast.KindDecl:
+			r.resolveKindDecl(typedDecl, topLevelEnv)
+		default:
+			panic(fmt.Sprintf("unhandled ast declaration %T: ast grew a node the resolver never wired up", typedDecl))
+		}
+	}
 
 	if r.prog.InitFn != nil {
 		r.currFn = "Init"
 		r.resolvedProg.InitFn = r.resolveFunc(r.prog.InitFn, NewEnclosedEnv(topLevelEnv))
 	}
-	r.checkStateInitialized()
 
 	r.currFn = "Run"
 	r.resolvedProg.RunFn = r.resolveFunc(r.prog.RunFn, NewEnclosedEnv(topLevelEnv))
 
 	return r.resolvedProg
+}
+
+// collectDeclaredNames feeds USE_BEFORE_DECLARATION: a name missing from the env
+// during the walk but present here is declared further down.
+func (r *Resolver) collectDeclaredNames() {
+	for _, decl := range r.prog.Decls {
+		switch typedDecl := decl.(type) {
+		case *ast.ConstDecl:
+			r.declaredNames[Symbol(typedDecl.Identifier.String())] = true
+		case *ast.InputDecl:
+			r.declaredNames[Symbol(typedDecl.Identifier.String())] = true
+		case *ast.OutputDecl:
+			r.declaredNames[Symbol(typedDecl.Identifier.String())] = true
+		case *ast.KindDecl:
+			kind, exists := r.reg.LookupDeclKind(typedDecl.Keyword)
+			if !exists {
+				continue
+			}
+			r.declaredNames[slotSymbol(kind, typedDecl.Identifier.String())] = true
+		}
+	}
 }
 
 func (r *Resolver) resolveFunc(astFunc *ast.FunctionDecl, env *Env) *resolved.FunctionDecl {
@@ -101,7 +128,7 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 			return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 		}
 		exprVal := r.resolveExpr(astStmtTyped.Value, env)
-		env.Set(Symbol(name), Binding{T: exprVal.Type(), Kind: KindLet})
+		env.Set(Symbol(name), Binding{T: exprVal.Type(), Kind: KindLet, assignable: true})
 		return &resolved.LetStmt{
 			Token: astStmtTyped.Tok(),
 			Name:  name,
@@ -110,80 +137,38 @@ func (r *Resolver) resolveStmt(astStmt ast.Statement, env *Env) resolved.Stateme
 		}
 	case *ast.AssignStmt:
 		value := r.resolveExpr(astStmtTyped.Value, env)
-		switch target := astStmtTyped.Target.(type) {
-		case *ast.IdentExpr:
-			binding, exists := env.Get(Symbol(target.String()))
-			if !exists {
-				r.addUndefinedVar(target.Tok())
-				return &resolved.BadStmt{Token: target.Tok()}
-			}
-			if !binding.Assignable() {
-				r.addNotAssignable(target.Tok(), binding.Kind)
-				return &resolved.BadStmt{Token: target.Tok()}
-			}
-			if isErrorType(value.Type(), binding.T) {
+		binding, targetTok, ok := r.resolveAssignTarget(astStmtTyped, env)
+		if !ok {
+			return &resolved.BadStmt{Token: targetTok}
+		}
+		if !binding.Assignable() {
+			r.addNotAssignable(targetTok, binding.KindLabel())
+			return &resolved.BadStmt{Token: targetTok}
+		}
+		if isErrorType(value.Type(), binding.T) {
+			return &resolved.BadStmt{Token: astStmtTyped.Tok()}
+		}
+		if binding.T != value.Type() {
+			coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), binding.T)
+			if !coerceExists {
+				r.addTypeMismatch(astStmtTyped.Tok(), binding.T, value.Type())
 				return &resolved.BadStmt{Token: astStmtTyped.Tok()}
 			}
-			if binding.T != value.Type() {
-				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), binding.T)
-				if !coerceExists {
-					r.addTypeMismatch(astStmtTyped.Tok(), binding.T, value.Type())
-					return &resolved.BadStmt{Token: astStmtTyped.Tok()}
-				}
-				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
-			}
-
-			return &resolved.AssignNameStmt{
+			value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
+		}
+		if binding.Slot != nil {
+			return &resolved.AssignSlotStmt{
 				Token:  astStmtTyped.Tok(),
-				Target: target.String(),
+				Target: binding.Slot,
 				Value:  value,
 				T:      binding.T,
 			}
-		case *ast.MemberAccessExpr:
-			identExpr, ok := target.Object.(*ast.IdentExpr)
-			if !ok {
-				r.addInvalidAssignTarget(astStmtTyped.Tok())
-				return &resolved.BadStmt{Token: astStmtTyped.Tok()}
-			}
-
-			if identExpr.Tok().Type != token.STATE {
-				r.addInvalidAssignTarget(astStmtTyped.Tok())
-				return &resolved.BadStmt{Token: astStmtTyped.Tok()}
-			}
-
-			fieldName := target.Member.String()
-			var fieldDecl *resolved.StateField
-			for _, field := range r.resolvedProg.State.Fields {
-				if field.Name == fieldName {
-					fieldDecl = field
-					break
-				}
-			}
-
-			if fieldDecl == nil {
-				r.addStateUndeclared(target.Member.Tok())
-				return &resolved.BadStmt{Token: astStmtTyped.Tok()}
-			}
-
-			if !isErrorType(value.Type(), fieldDecl.T) && fieldDecl.T != value.Type() {
-				coerceRule, coerceExists := r.reg.LookupCoerce(value.Type(), fieldDecl.T)
-				if !coerceExists {
-					r.addTypeMismatch(astStmtTyped.Tok(), fieldDecl.T, value.Type())
-					return &resolved.BadStmt{Token: astStmtTyped.Tok()}
-				}
-				value = &resolved.CoerceExpr{Inner: value, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
-			}
-
-			return &resolved.AssignStateStmt{
-				Token:  astStmtTyped.Tok(),
-				Target: fieldDecl,
-				Value:  value,
-				T:      fieldDecl.T,
-			}
-
-		default:
-			r.addInvalidAssignTarget(astStmtTyped.Tok())
-			return &resolved.BadStmt{Token: astStmtTyped.Tok()}
+		}
+		return &resolved.AssignNameStmt{
+			Token:  astStmtTyped.Tok(),
+			Target: targetTok.Literal,
+			Value:  value,
+			T:      binding.T,
 		}
 	case *ast.BlockStmt:
 		return r.resolveBlock(astStmtTyped, NewEnclosedEnv(env))
@@ -265,52 +250,44 @@ func (r *Resolver) resolveLogical(expr *ast.InfixExpr, left, right resolved.Expr
 	return &resolved.LogicalExpr{Token: expr.Tok(), Left: left, Right: right}
 }
 
-func (r *Resolver) resolveInputs(inputs []*ast.InputDecl, env *Env) []*resolved.InputDecl {
-	resolvedInputs := make([]*resolved.InputDecl, 0, len(inputs))
-	for _, in := range inputs {
-		sym := Symbol(in.Identifier.String())
-		if binding, exists := env.Get(sym); exists {
-			if binding.Reserved() {
-				r.addReservedName(in.Identifier.Tok(), binding.Kind)
-			} else {
-				r.addDuplicateDeclaration(in.Tok(), in.Identifier.Tok())
-			}
-
-			continue
+func (r *Resolver) resolveInput(in *ast.InputDecl, env *Env) {
+	sym := Symbol(in.Identifier.String())
+	if binding, exists := env.Get(sym); exists {
+		if binding.Reserved() {
+			r.addReservedName(in.Identifier.Tok(), binding.Kind)
+		} else {
+			r.addDuplicateDeclaration(in.Tok(), in.Identifier.Tok())
 		}
-		typeID, _ := r.resolveTypeDecl(in.Type, "input", in.Identifier.String())
-		env.Set(sym, Binding{T: typeID, Kind: KindInput})
-		resolvedInputs = append(resolvedInputs, &resolved.InputDecl{
-			Token: in.Tok(),
-			Name:  in.Identifier.String(),
-			T:     typeID,
-		})
+		return
 	}
-	return resolvedInputs
+	typeID, _ := r.resolveTypeDecl(in.Type, "input", in.Identifier.String())
+	env.Set(sym, Binding{T: typeID, Kind: KindInput})
+	decl := &resolved.InputDecl{
+		Token: in.Tok(),
+		Name:  in.Identifier.String(),
+		T:     typeID,
+	}
+	r.resolvedProg.Decls = append(r.resolvedProg.Decls, decl)
 }
 
-func (r *Resolver) resolveOutputs(outputs []*ast.OutputDecl, env *Env) []*resolved.OutputDecl {
-	resolvedOutputs := make([]*resolved.OutputDecl, 0, len(outputs))
-	for _, out := range outputs {
-		sym := Symbol(out.Identifier.String())
-		if binding, exists := env.Get(sym); exists {
-			if binding.Reserved() {
-				r.addReservedName(out.Identifier.Tok(), binding.Kind)
-			} else {
-				r.addDuplicateDeclaration(out.Tok(), out.Identifier.Tok())
-			}
-
-			continue
+func (r *Resolver) resolveOutput(out *ast.OutputDecl, env *Env) {
+	sym := Symbol(out.Identifier.String())
+	if binding, exists := env.Get(sym); exists {
+		if binding.Reserved() {
+			r.addReservedName(out.Identifier.Tok(), binding.Kind)
+		} else {
+			r.addDuplicateDeclaration(out.Tok(), out.Identifier.Tok())
 		}
-		typeID, _ := r.resolveTypeDecl(out.Type, "output", out.Identifier.String())
-		env.Set(sym, Binding{T: typeID, Kind: KindOutput})
-		resolvedOutputs = append(resolvedOutputs, &resolved.OutputDecl{
-			Token: out.Tok(),
-			Name:  out.Identifier.String(),
-			T:     typeID,
-		})
+		return
 	}
-	return resolvedOutputs
+	typeID, _ := r.resolveTypeDecl(out.Type, "output", out.Identifier.String())
+	env.Set(sym, Binding{T: typeID, Kind: KindOutput})
+	decl := &resolved.OutputDecl{
+		Token: out.Tok(),
+		Name:  out.Identifier.String(),
+		T:     typeID,
+	}
+	r.resolvedProg.Decls = append(r.resolvedProg.Decls, decl)
 }
 
 func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName string) (registry.TypeID, bool) {
@@ -356,113 +333,147 @@ func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName st
 	}
 }
 
-func (r *Resolver) resolveConst(consts []*ast.ConstDecl, env *Env) []*resolved.ConstDecl {
-	resolvedConsts := make([]*resolved.ConstDecl, 0)
-	for _, c := range consts {
-		sym := Symbol(c.Identifier.String())
-		if binding, exists := env.Get(sym); exists {
-			if binding.Reserved() {
-				r.addReservedName(c.Identifier.Tok(), binding.Kind)
-			} else {
-				r.addDuplicateDeclaration(c.Tok(), c.Identifier.Tok())
-			}
-
-			continue
+func (r *Resolver) resolveConst(c *ast.ConstDecl, env *Env) {
+	sym := Symbol(c.Identifier.String())
+	if binding, exists := env.Get(sym); exists {
+		if binding.Reserved() {
+			r.addReservedName(c.Identifier.Tok(), binding.Kind)
+		} else {
+			r.addDuplicateDeclaration(c.Tok(), c.Identifier.Tok())
 		}
-		constValue := r.resolveExpr(c.Value, env)
-		env.Set(sym, Binding{T: constValue.Type(), Kind: KindConst})
-		resolvedConsts = append(resolvedConsts, &resolved.ConstDecl{
-			Token: c.Tok(),
-			Name:  c.Identifier.String(),
-			Value: constValue,
-			T:     constValue.Type(),
-		})
+		return
 	}
-	return resolvedConsts
+	constValue := r.resolveExpr(c.Value, env)
+	env.Set(sym, Binding{T: constValue.Type(), Kind: KindConst})
+	r.resolvedProg.Decls = append(r.resolvedProg.Decls, &resolved.ConstDecl{
+		Token: c.Tok(),
+		Name:  c.Identifier.String(),
+		Value: constValue,
+		T:     constValue.Type(),
+	})
 }
 
-func (r *Resolver) resolveState(fieldEntries []*ast.StateFieldDecl, env *Env) {
-	fields := make([]*resolved.StateField, 0, len(fieldEntries))
-	seen := make(map[string]bool, len(fieldEntries))
-	for _, fieldEntry := range fieldEntries {
-		name := fieldEntry.Identifier.String()
-		if seen[name] {
-			r.addDuplicateDeclaration(fieldEntry.Tok(), fieldEntry.Identifier.Tok())
-			continue
-		}
-		seen[name] = true
+func (r *Resolver) resolveKindDecl(d *ast.KindDecl, env *Env) {
+	kind, exists := r.reg.LookupDeclKind(d.Keyword)
+	if !exists {
+		r.addUnknownDeclKeyword(d.Tok())
+		return
+	}
 
-		typeID, exists := r.reg.LookupType(fieldEntry.Type.String())
-		if !exists {
-			typeToken := fieldEntry.Tok()
-			if typeIdent, ok := fieldEntry.Type.(*ast.IdentExpr); ok {
-				typeToken = typeIdent.Tok()
-			}
-			r.addUndefinedType(typeToken)
+	name := d.Identifier.String()
+	sym := slotSymbol(kind, name)
+	if binding, taken := env.Get(sym); taken {
+		if binding.Reserved() {
+			r.addReservedName(d.Identifier.Tok(), binding.Kind)
+		} else {
+			r.addDuplicateDeclaration(d.Tok(), d.Identifier.Tok())
+		}
+		return
+	}
+
+	switch kind.Initializer {
+	case registry.InitializerRequired:
+		if d.Value == nil {
+			r.addInitializerRequired(d.Identifier.Tok(), kind.Word)
+		}
+	case registry.InitializerForbidden:
+		if d.Value != nil {
+			r.addInitializerForbidden(d.Identifier.Tok(), kind.Word)
+		}
+	}
+
+	slotType := registry.ErrorTypeID
+	if d.Type != nil {
+		typeID, typeExists := r.reg.LookupType(d.Type.String())
+		if !typeExists {
+			r.addUndefinedType(d.Type.Tok())
 			typeID = registry.ErrorTypeID
 		}
-		field := &resolved.StateField{
-			Token: fieldEntry.Identifier.Tok(),
-			Name:  name,
-			T:     typeID,
-		}
-		if fieldEntry.Value != nil {
-			initValue := r.resolveExpr(fieldEntry.Value, env)
-			if !isErrorType(initValue.Type(), typeID) && initValue.Type() != typeID {
-				coerceRule, coerceExists := r.reg.LookupCoerce(initValue.Type(), typeID)
-				if !coerceExists {
-					r.addTypeMismatch(fieldEntry.Identifier.Tok(), typeID, initValue.Type())
-					continue
-				}
-				initValue = &resolved.CoerceExpr{Inner: initValue, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
-			}
-			field.InitValue = initValue
-		}
-		// NOTE: do not add fields to State here. In such case it next state decl may reference prev state decl
-		fields = append(fields, field)
+		slotType = typeID
 	}
-	r.resolvedProg.State.Fields = fields
+
+	var initValue resolved.Expression
+	if d.Value != nil {
+		initValue = r.resolveExpr(d.Value, env)
+	}
+
+	switch {
+	case d.Type != nil && initValue != nil:
+		if !isErrorType(initValue.Type(), slotType) && initValue.Type() != slotType {
+			coerceRule, canCoerce := r.reg.LookupCoerce(initValue.Type(), slotType)
+			if !canCoerce {
+				r.addTypeMismatch(d.Identifier.Tok(), slotType, initValue.Type())
+				return
+			}
+			initValue = &resolved.CoerceExpr{Inner: initValue, T: coerceRule.EvalType, EvalFn: coerceRule.EvalFn}
+		}
+	case d.Type == nil && initValue != nil:
+		slotType = initValue.Type()
+	case d.Type == nil:
+		r.addTypeRequired(d.Identifier.Tok(), kind.Word, name)
+	}
+
+	if len(kind.AllowedTypes) > 0 && !isErrorType(slotType) && !slices.Contains(kind.AllowedTypes, slotType) {
+		r.addDeclTypeNotAllowed(d.Identifier.Tok(), kind.Word, slotType)
+	}
+
+	slot := &resolved.SlotDecl{
+		Token: d.Identifier.Tok(),
+		Kind:  kind.Word,
+		Name:  name,
+		T:     slotType,
+		Init:  initValue,
+		Index: r.slotCount,
+	}
+	r.slotCount++
+	env.Set(sym, Binding{T: slotType, Kind: KindSlot, Slot: slot, assignable: kind.Assignable})
+	r.resolvedProg.Decls = append(r.resolvedProg.Decls, slot)
 }
 
-// checkStateInitialized: every state field MUST have a declaration initializer
-// or be definitely assigned in Init() in every execution path.
-func (r *Resolver) checkStateInitialized() {
-	assigned := make(map[*resolved.StateField]bool)
-	if r.resolvedProg.InitFn != nil {
-		assigned = definitelyAssignedState(r.resolvedProg.InitFn.Body)
-	}
-	for _, field := range r.resolvedProg.State.Fields {
-		if field.InitValue == nil && !assigned[field] {
-			r.addStateUninitialized(field.Token)
+func (r *Resolver) resolveAssignTarget(stmt *ast.AssignStmt, env *Env) (Binding, token.Token, bool) {
+	switch target := stmt.Target.(type) {
+	case *ast.IdentExpr:
+		binding, exists := env.Get(Symbol(target.String()))
+		if !exists {
+			r.addUndefinedVar(target.Tok())
+			return Binding{}, target.Tok(), false
 		}
+		return binding, target.Tok(), true
+	case *ast.MemberAccessExpr:
+		identExpr, isIdent := target.Object.(*ast.IdentExpr)
+		if !isIdent {
+			r.addInvalidAssignTarget(stmt.Tok())
+			return Binding{}, stmt.Tok(), false
+		}
+		if binding, declared := env.Get(Symbol(identExpr.String())); !declared || binding.Kind != KindDeclWord {
+			r.addInvalidAssignTarget(stmt.Tok())
+			return Binding{}, stmt.Tok(), false
+		}
+		binding, declared := env.Get(namespacedSymbol(identExpr.String(), target.Member.String()))
+		if !declared {
+			r.addSlotUndeclared(target.Member.Tok(), identExpr.String())
+			return Binding{}, stmt.Tok(), false
+		}
+		return binding, target.Member.Tok(), true
+	default:
+		r.addInvalidAssignTarget(stmt.Tok())
+		return Binding{}, stmt.Tok(), false
 	}
 }
 
-// definitelyAssignedState returns the state fields assigned on every execution path through stmt.
-// Deliberately conservative: a statement kind without a rule here(including any future stmts) — contributes nothing.
-func definitelyAssignedState(stmt resolved.Statement) map[*resolved.StateField]bool {
-	assigned := make(map[*resolved.StateField]bool)
-	switch typedStmt := stmt.(type) {
-	case *resolved.AssignStateStmt:
-		assigned[typedStmt.Target] = true
-	case *resolved.BlockStmt:
-		for _, inner := range typedStmt.Stmts {
-			for field, _ := range definitelyAssignedState(inner) {
-				assigned[field] = true
-			}
+// a KindDeclWord binding exists only for a namespaced kind, so the key is always qualified
+func (r *Resolver) resolveSlotRef(word, member *ast.IdentExpr, env *Env) resolved.Expression {
+	sym := namespacedSymbol(word.String(), member.String())
+	binding, exists := env.Get(sym)
+	if !exists {
+		if r.currFn == "" && r.declaredNames[sym] {
+			r.addUseBeforeDeclaration(member.Tok())
+		} else {
+			r.addSlotUndeclared(member.Tok(), word.String())
 		}
-	case *resolved.IfStmt:
-		if typedStmt.Else == nil {
-			break // no else: the branch may not run, nothing is definite
-		}
-		inElse := definitelyAssignedState(typedStmt.Else)                      // else branch
-		for field, _ := range definitelyAssignedState(typedStmt.Consequence) { // if branch
-			if _, exists := inElse[field]; exists {
-				assigned[field] = true
-			}
-		}
+		return &resolved.BadExpr{Token: member.Tok()}
 	}
-	return assigned
+	return &resolved.SlotRefExpr{Token: member.Tok(), Slot: binding.Slot}
 }
 
 func isErrorType(types ...registry.TypeID) bool {
@@ -494,12 +505,23 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 	case *ast.IdentExpr:
 		binding, exists := env.Get(Symbol(typedExpr.String()))
 		if !exists {
-			r.addUndefinedIdent(typedExpr.Tok())
+			if r.currFn == "" && r.declaredNames[Symbol(typedExpr.String())] {
+				r.addUseBeforeDeclaration(typedExpr.Tok())
+			} else {
+				r.addUndefinedIdent(typedExpr.Tok())
+			}
 			return &resolved.BadExpr{Token: typedExpr.Tok()}
 		}
 		if !binding.Readable() {
 			r.addNotReadable(typedExpr.Tok(), binding.Kind)
 			return &resolved.BadExpr{Token: typedExpr.Tok()}
+		}
+		if binding.Kind == KindInput && r.currFn != "Run" {
+			r.addInputInInit(typedExpr.Tok())
+			return &resolved.BadExpr{Token: typedExpr.Tok()}
+		}
+		if binding.Slot != nil {
+			return &resolved.SlotRefExpr{Token: typedExpr.Tok(), Slot: binding.Slot}
 		}
 		return &resolved.IdentExpr{Token: typedExpr.Tok(), T: binding.T}
 	case *ast.InfixExpr:
@@ -538,26 +560,9 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 	case *ast.MemberAccessExpr:
 		errsBefore := len(r.errs)
 		identExpr, isIdent := typedExpr.Object.(*ast.IdentExpr)
-		if isIdent && identExpr.Tok().Type == token.STATE {
-			fieldName := typedExpr.Member.String()
-			var fieldDecl *resolved.StateField
-
-			for _, field := range r.resolvedProg.State.Fields {
-				if field.Name == fieldName {
-					fieldDecl = field
-					break
-				}
-			}
-
-			if fieldDecl == nil {
-				r.addStateUndeclared(typedExpr.Member.Tok())
-				return &resolved.BadExpr{Token: typedExpr.Tok()}
-			}
-
-			return &resolved.StateAccessExpr{
-				Token: typedExpr.Tok(),
-				Field: fieldName,
-				T:     fieldDecl.T,
+		if isIdent {
+			if binding, declared := env.Get(Symbol(identExpr.String())); declared && binding.Kind == KindDeclWord {
+				return r.resolveSlotRef(identExpr, typedExpr.Member, env)
 			}
 		}
 

@@ -156,7 +156,7 @@ func TestExecutable_FailedInitIsTerminal(t *testing.T) {
 
 func TestBuilder_Compile(t *testing.T) {
 	t.Run("script diagnostics are not errors", func(t *testing.T) {
-		program, diags, err := tascript.NewBuilder().Compile("function Run() {\nnope\n}")
+		program, diags, err := newBuilder(t).Compile("function Run() {\nnope\n}")
 		if err != nil {
 			t.Fatalf("a script problem must not be an error: %v", err)
 		}
@@ -169,7 +169,7 @@ func TestBuilder_Compile(t *testing.T) {
 	})
 
 	t.Run("a spent builder rejects a second Compile", func(t *testing.T) {
-		builder := tascript.NewBuilder()
+		builder := newBuilder(t)
 		if _, _, err := builder.Compile(counterSrc); err != nil {
 			t.Fatalf("first compile: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestBuilder_Compile(t *testing.T) {
 	})
 
 	t.Run("a rejected script still spends the builder", func(t *testing.T) {
-		builder := tascript.NewBuilder()
+		builder := newBuilder(t)
 		if _, diags, _ := builder.Compile("function Run() {\nnope\n}"); len(diags) == 0 {
 			t.Fatal("expected diagnostics")
 		}
@@ -195,7 +195,7 @@ func TestBuilder_Compile(t *testing.T) {
 	})
 
 	t.Run("a spent builder rejects registration", func(t *testing.T) {
-		builder := tascript.NewBuilder()
+		builder := newBuilder(t)
 		if _, _, err := builder.Compile(counterSrc); err != nil {
 			t.Fatalf("compile: %v", err)
 		}

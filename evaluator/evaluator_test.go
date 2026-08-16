@@ -28,6 +28,7 @@ emit(sig, dir="up", price=threshold + 0.2)
 		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
 	}
 	reg := registry.DefaultRegistry()
+	registerStateKind(reg)
 	resolv := resolver.New(prog, reg)
 	resolvedProg := resolv.Resolve()
 	if len(resolv.Diagnostics()) > 0 {
@@ -264,7 +265,8 @@ func TestEvaluator_TrapDivisionByZero(t *testing.T) {
 	}
 }
 
-func TestEvaluator_TrapRollsBackStateNotEmits(t *testing.T) {
+// An aborted tick is unfinished, not undone: slot writes before the trap persist.
+func TestEvaluator_TrapLeavesEarlierSlotWrites(t *testing.T) {
 	src := `output out: Integer
 state n: Integer = 0
 
@@ -298,9 +300,12 @@ emit(out, state.n)
 		t.Errorf("second run: expected the pre-trap emit to survive, got %v", out.values)
 	}
 
-	// tick 3 proves n rolled back to 1: it traps identically. Without rollback n would be 2 and this tick would commit.
-	if _, err := ev.EvalRun(); err == nil {
-		t.Error("third run: expected trap again — state write leaked from the aborted tick")
+	// tick 3 sees n = 2, the value the aborted tick wrote before trapping, and commits
+	if _, err := ev.EvalRun(); err != nil {
+		t.Fatalf("third run error: %v", err)
+	}
+	if len(out.values) != 5 || out.values[3] != registry.Integer(2) || out.values[4] != registry.Integer(3) {
+		t.Errorf("third run: expected emissions [2 3] on top, got %v", out.values)
 	}
 }
 
@@ -408,6 +413,7 @@ emit(out, state.cooldown + state.seeded)
 		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
 	}
 	reg := registry.DefaultRegistry()
+	registerStateKind(reg)
 	resolv := resolver.New(prog, reg)
 	resolvedProg := resolv.Resolve()
 	if len(resolv.Diagnostics()) > 0 {
@@ -503,6 +509,137 @@ func TestEvaluator_LoadPhase(t *testing.T) {
 		}
 	})
 }
+
+func TestEvaluator_UninitializedSlotFailsInit(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			"no initializer and no Init",
+			"state x: Integer\nfunction Run() {\nstate.x\n}",
+		},
+		{
+			"Init does not assign it",
+			"state x: Integer\nstate y: Integer = 0\nfunction Init() {\nstate.y = 1\n}\nfunction Run() {\nstate.x\n}",
+		},
+		{
+			"assigned only under a branch that does not run",
+			"state x: Integer\nfunction Init() {\nif (false) {\nstate.x = 1\n}\n}\nfunction Run() {\nstate.x\n}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev := compileSrc(t, tt.src, nil)
+			_, err := ev.EvalInit()
+			if err == nil {
+				t.Fatal("expected Init to fail on the unfilled slot")
+			}
+			failure, ok := err.(diag.RuntimeFailure)
+			if !ok {
+				t.Fatalf("expected diag.RuntimeFailure, got %T: %v", err, err)
+			}
+			if failure.Kind != registry.UninitializedSlot {
+				t.Errorf("kind = %s, want %s", failure.Kind, registry.UninitializedSlot)
+			}
+			if !strings.Contains(failure.Message, "state.x") {
+				t.Errorf("message %q does not name the slot", failure.Message)
+			}
+		})
+	}
+}
+
+func TestEvaluator_SlotHandles(t *testing.T) {
+	const src = "state x: Integer = 1\nstate y: Integer\nfunction Init() {\nstate.y = 2\n}\nfunction Run() {\nstate.x + state.y\n}"
+
+	t.Run("a host fill before Init wins over the initializer", func(t *testing.T) {
+		ev := compileSrc(t, src, nil)
+		if err := ev.SlotSet(0, registry.Integer(10)); err != nil {
+			t.Fatalf("SlotSet: %v", err)
+		}
+		if _, err := ev.EvalInit(); err != nil {
+			t.Fatalf("init error: %v", err)
+		}
+		if got := mustRun(t, ev); got != registry.Integer(12) {
+			t.Errorf("got %v, want 12", got)
+		}
+	})
+
+	t.Run("a host fill before Init satisfies Rule B", func(t *testing.T) {
+		ev := compileSrc(t, "state x: Integer\nfunction Run() {\nstate.x\n}", nil)
+		if err := ev.SlotSet(0, registry.Integer(7)); err != nil {
+			t.Fatalf("SlotSet: %v", err)
+		}
+		if _, err := ev.EvalInit(); err != nil {
+			t.Fatalf("init error: %v", err)
+		}
+		if got := mustRun(t, ev); got != registry.Integer(7) {
+			t.Errorf("got %v, want 7", got)
+		}
+	})
+
+	t.Run("Get reports an empty slot before Init", func(t *testing.T) {
+		ev := compileSrc(t, src, nil)
+		if _, err := ev.SlotGet(0); !errors.Is(err, evaluator.ErrSlotEmpty) {
+			t.Errorf("SlotGet: got %v, want ErrSlotEmpty", err)
+		}
+	})
+
+	t.Run("Set coerces into the declared type", func(t *testing.T) {
+		ev := compileSrc(t, "state f: Float = 0.0\nfunction Run() {\nstate.f\n}", nil)
+		if err := ev.SlotSet(0, registry.Integer(3)); err != nil {
+			t.Fatalf("SlotSet: %v", err)
+		}
+		if _, err := ev.EvalInit(); err != nil {
+			t.Fatalf("init error: %v", err)
+		}
+		if got := mustRun(t, ev); got != registry.Float(3) {
+			t.Errorf("got %v, want 3", got)
+		}
+	})
+
+	t.Run("Set rejects an unrelated type", func(t *testing.T) {
+		ev := compileSrc(t, src, nil)
+		err := ev.SlotSet(0, registry.String("nope"))
+		if err == nil {
+			t.Fatal("expected a type error")
+		}
+		if _, ok := err.(diag.SlotTypeMismatch); !ok {
+			t.Fatalf("expected diag.SlotTypeMismatch, got %T: %v", err, err)
+		}
+	})
+
+	t.Run("Set between ticks is visible to the next tick", func(t *testing.T) {
+		ev := initedEval(t, src, nil)
+		if got := mustRun(t, ev); got != registry.Integer(3) {
+			t.Fatalf("first run: got %v, want 3", got)
+		}
+		if err := ev.SlotSet(0, registry.Integer(5)); err != nil {
+			t.Fatalf("SlotSet: %v", err)
+		}
+		if got := mustRun(t, ev); got != registry.Integer(7) {
+			t.Errorf("second run: got %v, want 7", got)
+		}
+	})
+
+	t.Run("a sink calling back mid-tick is rejected", func(t *testing.T) {
+		ev := compileSrc(t, "output out: Integer\nstate x: Integer = 1\nfunction Run() {\nemit(out, state.x)\n}", nil)
+		var setErr error
+		ev.BindOutput("out", sinkFn(func(registry.Value) { setErr = ev.SlotSet(0, registry.Integer(9)) }))
+		if _, err := ev.EvalInit(); err != nil {
+			t.Fatalf("init error: %v", err)
+		}
+		mustRun(t, ev)
+		if !errors.Is(setErr, evaluator.ErrMidActivation) {
+			t.Errorf("SlotSet inside Emit: got %v, want ErrMidActivation", setErr)
+		}
+	})
+}
+
+type sinkFn func(registry.Value)
+
+func (f sinkFn) Emit(value registry.Value) { f(value) }
 
 func TestEvaluator_InputBinding(t *testing.T) {
 	src := "input price: Float\nfunction Run() {\nprice\n}"

@@ -8,13 +8,50 @@ import (
 )
 
 type Program struct {
-	Consts      []*ConstDecl
-	Inputs      []*InputDecl
-	Outputs     []*OutputDecl
-	StateFields []*StateFieldDecl
-	InitFn      *FunctionDecl
-	RunFn       *FunctionDecl
-	Valid       bool
+	Decls  []Statement
+	InitFn *FunctionDecl
+	RunFn  *FunctionDecl
+	Valid  bool
+}
+
+func (p *Program) Consts() []*ConstDecl {
+	var decls []*ConstDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*ConstDecl); ok {
+			decls = append(decls, decl)
+		}
+	}
+	return decls
+}
+
+func (p *Program) Inputs() []*InputDecl {
+	var decls []*InputDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*InputDecl); ok {
+			decls = append(decls, decl)
+		}
+	}
+	return decls
+}
+
+func (p *Program) Outputs() []*OutputDecl {
+	var decls []*OutputDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*OutputDecl); ok {
+			decls = append(decls, decl)
+		}
+	}
+	return decls
+}
+
+func (p *Program) KindDecls() []*KindDecl {
+	var decls []*KindDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*KindDecl); ok {
+			decls = append(decls, decl)
+		}
+	}
+	return decls
 }
 
 type Node interface {
@@ -67,6 +104,8 @@ func (id *InputDecl) String() string {
 
 func (id *InputDecl) Tok() token.Token { return id.Token }
 
+func (id *InputDecl) statementNode() {}
+
 // OutputDecl
 // - output alert: String
 // - output alert: { field: Type }
@@ -97,6 +136,8 @@ func (od *OutputDecl) String() string {
 
 func (od *OutputDecl) Tok() token.Token { return od.Token }
 
+func (od *OutputDecl) statementNode() {}
+
 // ConstDecl - const FOO = "BAR" + "ZOO"
 type ConstDecl struct {
 	Token      token.Token
@@ -123,36 +164,40 @@ func (cd *ConstDecl) String() string {
 
 func (cd *ConstDecl) Tok() token.Token { return cd.Token }
 
-type StateFieldDecl struct {
+func (cd *ConstDecl) statementNode() {}
+
+// KindDecl - <kind word> <name>[: Type][ = expr], where the word is a host-registered kind
+type KindDecl struct {
 	Token      token.Token
+	Keyword    string
 	Identifier *IdentExpr
-	Type       TypeDecl
+	Type       *IdentExpr
 	Value      Expression
 }
 
-func (sfd *StateFieldDecl) String() string {
+func (kd *KindDecl) String() string {
 	var out bytes.Buffer
-	out.WriteString(sfd.Token.Literal)
+	out.WriteString(kd.Keyword)
 	out.WriteString(" ")
-	if sfd.Identifier == nil {
+	if kd.Identifier == nil {
 		out.WriteString("<unknown>")
 	} else {
-		out.WriteString(sfd.Identifier.String())
+		out.WriteString(kd.Identifier.String())
 	}
-	out.WriteString(": ")
-	if sfd.Type == nil {
-		out.WriteString("<missing type>")
-	} else {
-		out.WriteString(sfd.Type.String())
+	if kd.Type != nil {
+		out.WriteString(": ")
+		out.WriteString(kd.Type.String())
 	}
-	if sfd.Value != nil {
+	if kd.Value != nil {
 		out.WriteString(" = ")
-		out.WriteString(sfd.Value.String())
+		out.WriteString(kd.Value.String())
 	}
 	return out.String()
 }
 
-func (sfd *StateFieldDecl) Tok() token.Token { return sfd.Token }
+func (kd *KindDecl) Tok() token.Token { return kd.Token }
+
+func (kd *KindDecl) statementNode() {}
 
 // FunctionDecl
 // - function Init() {}

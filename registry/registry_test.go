@@ -330,3 +330,159 @@ func TestRegistry_EmitRule(t *testing.T) {
 		}
 	})
 }
+
+func TestRegistry_RegisterDeclKind(t *testing.T) {
+	reg := registry.DefaultRegistry()
+	if err := reg.RegisterType(registry.NewTypeID("Indicator"), registry.ScalarShape); err != nil {
+		t.Fatalf("RegisterType: %v", err)
+	}
+
+	kind := registry.DeclKind{
+		Word:         "indicator",
+		Initializer:  registry.InitializerRequired,
+		AllowedTypes: []registry.TypeID{registry.NewTypeID("Indicator")},
+	}
+	if err := reg.RegisterDeclKind(kind); err != nil {
+		t.Fatalf("RegisterDeclKind: %v", err)
+	}
+
+	got, ok := reg.LookupDeclKind("indicator")
+	if !ok {
+		t.Fatal("registered kind is not resolvable")
+	}
+	if got.Word != "indicator" || got.Initializer != registry.InitializerRequired || len(got.AllowedTypes) != 1 {
+		t.Errorf("lookup returned %+v", got)
+	}
+	if _, ok := reg.LookupDeclKind("setting"); ok {
+		t.Error("unregistered kind resolved")
+	}
+}
+
+func TestRegistry_DeclKindWordRejected(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*registry.Registry) error
+		word  string
+	}{
+		{"empty", nil, ""},
+		{"leading digit", nil, "2fast"},
+		{"illegal char", nil, "in-dicator"},
+		{"whitespace", nil, "my kind"},
+		{"language keyword", nil, "const"},
+		{"emit", nil, "emit"},
+		{"Init", nil, "Init"},
+		{"Run", nil, "Run"},
+		{"builtin type name", nil, "Integer"},
+		{
+			"registered kind",
+			func(r *registry.Registry) error { return r.RegisterDeclKind(registry.DeclKind{Word: "indicator"}) },
+			"indicator",
+		},
+		{
+			"module name",
+			func(r *registry.Registry) error { _, err := r.RegisterModule("ta"); return err },
+			"ta",
+		},
+		{
+			"script type name",
+			func(r *registry.Registry) error { _, err := r.RegisterScriptType("Signal", nil); return err },
+			"Signal",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := registry.DefaultRegistry()
+			if tt.setup != nil {
+				if err := tt.setup(reg); err != nil {
+					t.Fatalf("setup: %v", err)
+				}
+			}
+			if err := reg.RegisterDeclKind(registry.DeclKind{Word: tt.word}); err == nil {
+				t.Fatalf("expected word %q to be rejected, got nil error", tt.word)
+			}
+		})
+	}
+}
+
+func TestRegistry_DeclKindAllowedTypesValidated(t *testing.T) {
+	tests := []struct {
+		name  string
+		types []registry.TypeID
+	}{
+		{"unknown type", []registry.TypeID{registry.NewTypeID("Nope")}},
+		{"error type", []registry.TypeID{registry.ErrorTypeID}},
+		{"one known one unknown", []registry.TypeID{registry.IntegerID, registry.NewTypeID("Nope")}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := registry.DefaultRegistry()
+			err := reg.RegisterDeclKind(registry.DeclKind{Word: "indicator", AllowedTypes: tt.types})
+			if err == nil {
+				t.Fatal("expected the allowed types to be rejected, got nil error")
+			}
+			if _, ok := reg.LookupDeclKind("indicator"); ok {
+				t.Error("the rejected kind must not be registered")
+			}
+		})
+	}
+}
+
+func TestRegistry_DeclKindWordBlocksLaterNames(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*registry.Registry) error
+	}{
+		{"RegisterType", func(r *registry.Registry) error {
+			return r.RegisterType(registry.NewTypeID("indicator"), registry.ScalarShape)
+		}},
+		{"RegisterModule", func(r *registry.Registry) error {
+			_, err := r.RegisterModule("indicator")
+			return err
+		}},
+		{"RegisterScriptType", func(r *registry.Registry) error {
+			_, err := r.RegisterScriptType("indicator", nil)
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := registry.DefaultRegistry()
+			if err := reg.RegisterDeclKind(registry.DeclKind{Word: "indicator"}); err != nil {
+				t.Fatalf("RegisterDeclKind: %v", err)
+			}
+			if err := tt.call(reg); err == nil {
+				t.Fatal("expected the declaration kind word to block the name, got nil error")
+			}
+			if _, exists := reg.LookupType("indicator"); exists {
+				t.Error("the rejected name must not be registered as a type")
+			}
+		})
+	}
+}
+
+func TestRegistry_DeclKindsSorted(t *testing.T) {
+	reg := registry.DefaultRegistry()
+	for _, word := range []string{"setting", "indicator"} {
+		if err := reg.RegisterDeclKind(registry.DeclKind{Word: word}); err != nil {
+			t.Fatalf("RegisterDeclKind(%s): %v", word, err)
+		}
+	}
+
+	var words []string
+	for _, k := range reg.DeclKinds() {
+		words = append(words, k.Word)
+	}
+
+	want := []string{"indicator", "setting"}
+	if len(words) != len(want) {
+		t.Fatalf("DeclKinds() = %v, want %v", words, want)
+	}
+	for i, w := range want {
+		if words[i] != w {
+			t.Fatalf("DeclKinds() = %v, want %v", words, want)
+		}
+	}
+}

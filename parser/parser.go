@@ -35,7 +35,6 @@ func New(l *lexer.Lexer) *Parser {
 
 	p.prefixFns = map[token.TokenType]func() ast.Expression{
 		token.IDENT:   p.parseIdentExpr,
-		token.STATE:   p.parseIdentExpr,
 		token.INTEGER: p.parseIntegerExpr,
 		token.FLOAT:   p.parseFloatExpr,
 		token.STRING:  p.parseStringExpr,
@@ -92,22 +91,26 @@ func (p *Parser) Parse() *ast.Program {
 		case token.CONST:
 			decl := p.parseConstDecl()
 			if p.errCount == errsBefore {
-				prog.Consts = append(prog.Consts, decl)
+				prog.Decls = append(prog.Decls, decl)
 			}
 		case token.INPUT:
 			decl := p.parseInputDecl()
 			if p.errCount == errsBefore {
-				prog.Inputs = append(prog.Inputs, decl)
+				prog.Decls = append(prog.Decls, decl)
 			}
 		case token.OUTPUT:
 			decl := p.parseOutputDecl()
 			if p.errCount == errsBefore {
-				prog.Outputs = append(prog.Outputs, decl)
+				prog.Decls = append(prog.Decls, decl)
 			}
-		case token.STATE:
-			decl := p.parseStateFieldDecl()
-			if p.errCount == errsBefore {
-				prog.StateFields = append(prog.StateFields, decl)
+		case token.IDENT:
+			if p.peekTokenIs(token.IDENT) {
+				decl := p.parseKindDecl()
+				if p.errCount == errsBefore {
+					prog.Decls = append(prog.Decls, decl)
+				}
+			} else {
+				p.addTopDeclUnexpected(p.currentToken.Pos)
 			}
 		case token.FUNCTION:
 			decl := p.parseFunctionDecl()
@@ -207,36 +210,21 @@ func (p *Parser) parseOutputDecl() *ast.OutputDecl {
 	return &ast.OutputDecl{Token: decl.Token, Identifier: decl.Identifier, Type: decl.Type}
 }
 
-func (p *Parser) parseStateFieldDecl() *ast.StateFieldDecl {
-	decl := &ast.StateFieldDecl{Token: p.currentToken}
+// parseKindDecl expects the caller to have checked that both the word and the name are IDENT
+func (p *Parser) parseKindDecl() *ast.KindDecl {
+	decl := &ast.KindDecl{Token: p.currentToken, Keyword: p.currentToken.Literal}
 
 	p.nextToken()
+	decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
 
-	if p.currTokenIs(token.IDENT) {
-		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
+	if p.peekTokenIs(token.COLON) {
 		p.nextToken()
-	} else {
-		p.addUnexpectedToken(p.currentToken, token.IDENT)
-	}
-
-	if p.currTokenIs(token.COLON) {
 		p.nextToken()
-	} else {
-		// don't need to add second error on the same pos (we didn't move in case of missing IDENT)
-		if decl.Identifier != nil {
-			p.addUnexpectedToken(p.currentToken, token.COLON)
+		if !p.currTokenIs(token.IDENT) {
+			p.addTypeExpected(p.currentToken.Pos)
+			return decl
 		}
-		return decl
-	}
-
-	switch p.currentToken.Type {
-	case token.IDENT:
 		decl.Type = &ast.IdentExpr{Token: p.currentToken}
-	// NOTE: subject of future improvements
-	//case token.LBRACE:
-	//	decl.Type = p.parseInlineTypeExpr()
-	default:
-		p.addTypeExpected(p.currentToken.Pos)
 	}
 
 	if p.peekTokenIs(token.ASSIGN) {
