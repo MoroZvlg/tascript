@@ -45,7 +45,7 @@ func RegisterStdMath(reg *Registry) {
 			if operator == token.SLASH {
 				resultType = FloatID
 			}
-			reg.RegisterBinary(operator, pair.left, pair.right, BinaryRule{
+			_ = reg.RegisterBinary(operator, pair.left, pair.right, BinaryRule{
 				EvalFn:   makeNumericBinary(operator),
 				EvalType: resultType,
 			})
@@ -54,7 +54,7 @@ func RegisterStdMath(reg *Registry) {
 
 	for _, operator := range comparisonOperators {
 		for _, pair := range numericTypePairs {
-			reg.RegisterBinary(operator, pair.left, pair.right, BinaryRule{
+			_ = reg.RegisterBinary(operator, pair.left, pair.right, BinaryRule{
 				EvalFn:   makeNumericCompare(operator),
 				EvalType: BoolID,
 			})
@@ -62,11 +62,11 @@ func RegisterStdMath(reg *Registry) {
 	}
 
 	for _, operand := range []TypeID{StringID, BoolID} {
-		reg.RegisterBinary(token.EQ, operand, operand, BinaryRule{
+		_ = reg.RegisterBinary(token.EQ, operand, operand, BinaryRule{
 			EvalFn:   evalScalarEq,
 			EvalType: BoolID,
 		})
-		reg.RegisterBinary(token.NEQ, operand, operand, BinaryRule{
+		_ = reg.RegisterBinary(token.NEQ, operand, operand, BinaryRule{
 			EvalFn:   evalScalarNeq,
 			EvalType: BoolID,
 		})
@@ -74,28 +74,28 @@ func RegisterStdMath(reg *Registry) {
 
 	// String concatenation: "a" + "b" -> "ab". No other operator is defined
 	// for strings (e.g. `*` repetition), so they fall through to InvalidBinaryOp.
-	reg.RegisterBinary(token.PLUS, StringID, StringID, BinaryRule{
+	_ = reg.RegisterBinary(token.PLUS, StringID, StringID, BinaryRule{
 		EvalFn:   evalStringConcat,
 		EvalType: StringID,
 	})
 
 	// Numeric negation: -Integer -> Integer, -Float -> Float.
 	for _, operand := range []TypeID{IntegerID, FloatID} {
-		reg.RegisterUnary(token.MINUS, operand, UnaryRule{
+		_ = reg.RegisterUnary(token.MINUS, operand, UnaryRule{
 			EvalFn:   evalNumericNegate,
 			EvalType: operand,
 		})
 	}
 
 	// Logical not: !Bool -> Bool.
-	reg.RegisterUnary(token.BANG, BoolID, UnaryRule{
+	_ = reg.RegisterUnary(token.BANG, BoolID, UnaryRule{
 		EvalFn:   evalBoolNot,
 		EvalType: BoolID,
 	})
 }
 
 func evalStringConcat(left, right Value) (Value, error) {
-	return left.(String) + right.(String), nil
+	return asString(left) + asString(right), nil
 }
 
 func evalNumericNegate(operand Value) (Value, error) {
@@ -110,7 +110,7 @@ func evalNumericNegate(operand Value) (Value, error) {
 }
 
 func evalBoolNot(operand Value) (Value, error) {
-	return !operand.(Bool), nil
+	return !asBool(operand), nil
 }
 
 func makeNumericBinary(operator token.TokenType) func(left, right Value) (Value, error) {

@@ -260,7 +260,7 @@ func (r *Resolver) resolveInput(in *ast.InputDecl, env *Env) {
 		}
 		return
 	}
-	typeID, _ := r.resolveTypeDecl(in.Type, "input", in.Identifier.String())
+	typeID := r.resolveTypeDecl(in.Type, "input", in.Identifier.String())
 	env.Set(sym, Binding{T: typeID, Kind: KindInput})
 	decl := &resolved.InputDecl{
 		Token: in.Tok(),
@@ -280,7 +280,7 @@ func (r *Resolver) resolveOutput(out *ast.OutputDecl, env *Env) {
 		}
 		return
 	}
-	typeID, _ := r.resolveTypeDecl(out.Type, "output", out.Identifier.String())
+	typeID := r.resolveTypeDecl(out.Type, "output", out.Identifier.String())
 	env.Set(sym, Binding{T: typeID, Kind: KindOutput})
 	decl := &resolved.OutputDecl{
 		Token: out.Tok(),
@@ -290,15 +290,15 @@ func (r *Resolver) resolveOutput(out *ast.OutputDecl, env *Env) {
 	r.resolvedProg.Decls = append(r.resolvedProg.Decls, decl)
 }
 
-func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName string) (registry.TypeID, bool) {
+func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName string) registry.TypeID {
 	switch typed := typeDecl.(type) {
 	case *ast.IdentExpr:
 		typeID, exists := r.reg.LookupType(typed.String())
 		if !exists {
 			r.addUndefinedType(typed.Tok())
-			return registry.ErrorTypeID, false
+			return registry.ErrorTypeID
 		}
-		return typeID, true
+		return typeID
 	case *ast.TypeExpr:
 		fields := make([]registry.FieldDef, 0, len(typed.Fields))
 		seen := make(map[string]bool)
@@ -319,17 +319,17 @@ func (r *Resolver) resolveTypeDecl(typeDecl ast.TypeDecl, namespace, declName st
 			fields = append(fields, registry.FieldDef{Name: field.Name.String(), Type: fieldType})
 		}
 		if !ok {
-			return registry.ErrorTypeID, false
+			return registry.ErrorTypeID
 		}
 		name := namespace + "." + declName
 		typeID, err := r.reg.RegisterScriptType(name, fields)
 		if err != nil {
 			r.addTypeRegistrationFail(typed.Tok(), name, err)
-			return registry.ErrorTypeID, false
+			return registry.ErrorTypeID
 		}
-		return typeID, true
+		return typeID
 	default:
-		return registry.ErrorTypeID, false
+		return registry.ErrorTypeID
 	}
 }
 
@@ -380,6 +380,7 @@ func (r *Resolver) resolveKindDecl(d *ast.KindDecl, env *Env) {
 		if d.Value != nil {
 			r.addInitializerForbidden(d.Identifier.Tok(), kind.Word)
 		}
+	case registry.InitializerOptional:
 	}
 
 	slotType := registry.ErrorTypeID

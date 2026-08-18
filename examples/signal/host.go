@@ -8,8 +8,9 @@ import (
 
 func registerHost(builder *tascript.Builder) error {
 	reg := builder.Registry()
-	stdlib.RegisterMath(reg)
-	stdlib.RegisterTime(reg)
+	if err := stdlib.Register(reg); err != nil {
+		return err
+	}
 
 	for _, name := range []string{"Candle", "CandleSeries", "Indicator", "Source"} {
 		if _, err := reg.RegisterScalarType(name); err != nil {

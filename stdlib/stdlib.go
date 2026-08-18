@@ -3,7 +3,9 @@ package stdlib
 
 import "github.com/MoroZvlg/tascript/registry"
 
-func Register(reg *registry.Registry) {
-	RegisterMath(reg)
-	RegisterTime(reg)
+func Register(reg *registry.Registry) error {
+	if err := RegisterMath(reg); err != nil {
+		return err
+	}
+	return RegisterTime(reg)
 }

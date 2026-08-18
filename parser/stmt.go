@@ -140,10 +140,8 @@ func (p *Parser) parseLetStmt() *ast.LetStmt {
 
 	if p.currTokenIs(token.ASSIGN) {
 		p.nextToken()
-	} else {
-		if letStmt.Name != nil {
-			p.addUnexpectedToken(p.currentToken, token.ASSIGN)
-		}
+	} else if letStmt.Name != nil {
+		p.addUnexpectedToken(p.currentToken, token.ASSIGN)
 	}
 
 	letStmt.Value = p.parseExpression(LowestPrec)

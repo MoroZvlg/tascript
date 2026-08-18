@@ -155,10 +155,10 @@ func DefaultRegistry() *Registry {
 
 	RegisterStdMath(reg)
 
-	reg.RegisterCoercion(IntegerID, FloatID, CoerceRule{
+	_ = reg.RegisterCoercion(IntegerID, FloatID, CoerceRule{
 		EvalType: FloatID,
 		EvalFn: func(value Value) Value {
-			return Float(float64(value.(Integer)))
+			return Float(float64(asInteger(value)))
 		},
 	})
 
@@ -227,10 +227,10 @@ func (r *Registry) RegisterScriptType(name string, fields []FieldDef) (TypeID, e
 
 	for _, field := range fields {
 		fieldName := field.Name
-		r.RegisterMemberAccess(id, fieldName, MemberAccessRule{
+		_ = r.RegisterMemberAccess(id, fieldName, MemberAccessRule{
 			EvalType: field.Type,
 			EvalFn: func(receiver Value) (Value, error) {
-				return receiver.(Record).Fields[fieldName], nil
+				return asRecord(receiver).Fields[fieldName], nil
 			},
 		})
 	}

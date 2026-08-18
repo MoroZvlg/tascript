@@ -319,14 +319,14 @@ func TestParser_Input(t *testing.T) {
 		{
 			"correct input with type",
 			"input btc: CandleSeries",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
 		{
 			"correct input with custom type",
 			"input btc: {foo: Integer}",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -379,7 +379,7 @@ func TestParser_Input(t *testing.T) {
 			// function Run added in test on the next line
 			"missing right brace",
 			"input btc: {btc: btc",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(token.Pos{Line: 2, Col: 1}, token.RBRACE, token.FUNCTION),
 				}
@@ -503,14 +503,14 @@ func TestParser_Output(t *testing.T) {
 		{
 			"correct output with type",
 			"output alert: String",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
 		{
 			"correct output with custom type",
 			"output alert: {foo: Integer}",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -563,7 +563,7 @@ func TestParser_Output(t *testing.T) {
 			// function Run added in test on the next line
 			"missing right brace",
 			"output alert: {alert: alert",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(token.Pos{Line: 2, Col: 1}, token.RBRACE, token.FUNCTION),
 				}
@@ -592,14 +592,14 @@ func TestParser_Output(t *testing.T) {
 		{
 			"trailing comma in custom type",
 			"output alert: {foo: Integer,}",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
 		{
 			"trailing comma before a newline",
 			"output alert: {\nfoo: Integer,\n}",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -971,7 +971,7 @@ func TestParser_ParseFunc(t *testing.T) {
 		{
 			"correct Run",
 			"function Run() {let a = 3}",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -1078,7 +1078,7 @@ func TestParser_ParseFuncBody(t *testing.T) {
 		{
 			"call expr",
 			"let foo = math.pow(2)",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -1112,7 +1112,7 @@ func TestParser_ParseFuncBody(t *testing.T) {
 		{
 			"member ) in call expr",
 			"foo.bar(2 ^",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					// NOTE: error on next line after input
 					unexpectedErr(token.Pos{Line: 3, Col: 1}, token.RPAREN, token.RBRACE),
@@ -1215,7 +1215,7 @@ func TestParser_ParseFuncBody(t *testing.T) {
 			// newlines are suppressed inside [], so the missing ] is reported on the next line
 			"index missing ]",
 			"foo[1 ^",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(token.Pos{Line: 3, Col: 1}, token.RBRACKET, token.RBRACE),
 				}

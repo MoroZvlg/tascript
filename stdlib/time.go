@@ -31,13 +31,20 @@ const (
 	msPerWeek         = 7 * msPerDay
 )
 
-func RegisterTime(reg *registry.Registry) {
-	reg.RegisterType(TimeID, registry.ScalarShape)
-	reg.RegisterType(DurationID, registry.ScalarShape)
-	registerTimeOperators(reg)
-
-	timeModule, _ := reg.RegisterModule("time")
+func RegisterTime(reg *registry.Registry) error {
+	if err := reg.RegisterType(TimeID, registry.ScalarShape); err != nil {
+		return err
+	}
+	if err := reg.RegisterType(DurationID, registry.ScalarShape); err != nil {
+		return err
+	}
+	timeModule, err := reg.RegisterModule("time")
+	if err != nil {
+		return err
+	}
 	moduleType := timeModule.TypeID()
+
+	registerTimeOperators(reg)
 
 	registerDurationConst(reg, moduleType, "MILLISECOND", 1)
 	registerDurationConst(reg, moduleType, "SECOND", msPerSecond)
@@ -54,28 +61,30 @@ func RegisterTime(reg *registry.Registry) {
 	registerWeekdayConst(reg, moduleType, "FRIDAY", 5)
 	registerWeekdayConst(reg, moduleType, "SATURDAY", 6)
 
-	reg.RegisterCall(moduleType, "from_unix_ms", registry.CallRule{
+	_ = reg.RegisterCall(moduleType, "from_unix_ms", registry.CallRule{
 		Args:     []registry.ParamRule{{Type: registry.IntegerID, Name: "ms"}},
 		EvalType: TimeID,
 		EvalFn: func(_ registry.Value, args map[string]registry.Value) (registry.Value, error) {
-			return Time(int64(args["ms"].(registry.Integer))), nil
+			return Time(asInteger(args["ms"])), nil
 		},
 	})
 
 	registerTimeProperties(reg)
 	registerDurationProperties(reg)
 
-	reg.RegisterCall(TimeID, "truncate", registry.CallRule{
+	_ = reg.RegisterCall(TimeID, "truncate", registry.CallRule{
 		Args:     []registry.ParamRule{{Type: DurationID, Name: "bucket"}},
 		EvalType: TimeID,
 		EvalFn: func(receiver registry.Value, args map[string]registry.Value) (registry.Value, error) {
-			return evalTruncate(int64(receiver.(Time)), int64(args["bucket"].(Duration)))
+			return evalTruncate(asTime(receiver), asDuration(args["bucket"]))
 		},
 	})
+
+	return nil
 }
 
 func registerDurationConst(reg *registry.Registry, module registry.TypeID, name string, ms int64) {
-	reg.RegisterMemberAccess(module, name, registry.MemberAccessRule{
+	_ = reg.RegisterMemberAccess(module, name, registry.MemberAccessRule{
 		EvalType: DurationID,
 		EvalFn: func(_ registry.Value) (registry.Value, error) {
 			return Duration(ms), nil
@@ -84,7 +93,7 @@ func registerDurationConst(reg *registry.Registry, module registry.TypeID, name 
 }
 
 func registerWeekdayConst(reg *registry.Registry, module registry.TypeID, name string, day int) {
-	reg.RegisterMemberAccess(module, name, registry.MemberAccessRule{
+	_ = reg.RegisterMemberAccess(module, name, registry.MemberAccessRule{
 		EvalType: registry.IntegerID,
 		EvalFn: func(_ registry.Value) (registry.Value, error) {
 			return registry.Integer(day), nil
@@ -105,20 +114,20 @@ func registerTimeProperties(reg *registry.Registry) {
 }
 
 func registerTimeComponent(reg *registry.Registry, name string, fn func(time.Time) int) {
-	reg.RegisterMemberAccess(TimeID, name, registry.MemberAccessRule{
+	_ = reg.RegisterMemberAccess(TimeID, name, registry.MemberAccessRule{
 		EvalType: registry.IntegerID,
 		EvalFn: func(receiver registry.Value) (registry.Value, error) {
-			utc := time.UnixMilli(int64(receiver.(Time))).UTC()
+			utc := time.UnixMilli(asTime(receiver)).UTC()
 			return registry.Integer(fn(utc)), nil
 		},
 	})
 }
 
 func registerDurationProperties(reg *registry.Registry) {
-	reg.RegisterMemberAccess(DurationID, "milliseconds", registry.MemberAccessRule{
+	_ = reg.RegisterMemberAccess(DurationID, "milliseconds", registry.MemberAccessRule{
 		EvalType: registry.IntegerID,
 		EvalFn: func(receiver registry.Value) (registry.Value, error) {
-			return registry.Integer(int64(receiver.(Duration))), nil
+			return registry.Integer(asDuration(receiver)), nil
 		},
 	})
 	registerDurationTotal(reg, "seconds", msPerSecond)
@@ -126,10 +135,10 @@ func registerDurationProperties(reg *registry.Registry) {
 	registerDurationTotal(reg, "hours", msPerHour)
 	registerDurationTotal(reg, "days", msPerDay)
 	registerDurationTotal(reg, "weeks", msPerWeek)
-	reg.RegisterMemberAccess(DurationID, "abs", registry.MemberAccessRule{
+	_ = reg.RegisterMemberAccess(DurationID, "abs", registry.MemberAccessRule{
 		EvalType: DurationID,
 		EvalFn: func(receiver registry.Value) (registry.Value, error) {
-			d := receiver.(Duration)
+			d := Duration(asDuration(receiver))
 			if d < 0 {
 				return -d, nil
 			}
@@ -139,10 +148,10 @@ func registerDurationProperties(reg *registry.Registry) {
 }
 
 func registerDurationTotal(reg *registry.Registry, name string, unitMs int64) {
-	reg.RegisterMemberAccess(DurationID, name, registry.MemberAccessRule{
+	_ = reg.RegisterMemberAccess(DurationID, name, registry.MemberAccessRule{
 		EvalType: registry.FloatID,
 		EvalFn: func(receiver registry.Value) (registry.Value, error) {
-			return registry.Float(float64(receiver.(Duration)) / float64(unitMs)), nil
+			return registry.Float(float64(asDuration(receiver)) / float64(unitMs)), nil
 		},
 	})
 }

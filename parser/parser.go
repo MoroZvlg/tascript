@@ -281,17 +281,13 @@ func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 
 	if p.currTokenIs(token.LPAREN) {
 		p.nextToken()
-	} else {
-		if p.errCount == errsBeforeDecl {
-			p.addUnexpectedToken(p.currentToken, token.LPAREN)
-		}
+	} else if p.errCount == errsBeforeDecl {
+		p.addUnexpectedToken(p.currentToken, token.LPAREN)
 	}
 	if p.currTokenIs(token.RPAREN) {
 		p.nextToken()
-	} else {
-		if p.errCount == errsBeforeDecl {
-			p.addUnexpectedToken(p.currentToken, token.RPAREN)
-		}
+	} else if p.errCount == errsBeforeDecl {
+		p.addUnexpectedToken(p.currentToken, token.RPAREN)
 	}
 
 	if !p.currTokenIs(token.LBRACE) {
