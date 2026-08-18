@@ -7,6 +7,8 @@ import (
 	"github.com/MoroZvlg/tascript/token"
 )
 
+const maxParseErrors = 100
+
 const (
 	InitFnIdent     = "Init"
 	RunFnIdent      = "Run"
@@ -18,7 +20,9 @@ type Parser struct {
 	currentToken token.Token
 	peekToken    token.Token
 	errors       []diag.Diagnostic
-	depth        int
+	// slice may stop growing, so we add separate counter to replace len(errors)
+	errCount int
+	depth    int
 
 	prefixFns map[token.TokenType]func() ast.Expression
 	infixFns  map[token.TokenType]func(ast.Expression) ast.Expression
@@ -66,6 +70,14 @@ func (p *Parser) Diagnostics() []diag.Diagnostic {
 	return p.errors
 }
 
+func (p *Parser) addDiag(d diag.Diagnostic) {
+	p.errCount++
+	if len(p.errors) >= maxParseErrors {
+		return
+	}
+	p.errors = append(p.errors, d)
+}
+
 func (p *Parser) Parse() *ast.Program {
 	prog := &ast.Program{Valid: true}
 	for !p.currTokenIs(token.EOF) {
@@ -74,32 +86,41 @@ func (p *Parser) Parse() *ast.Program {
 			continue
 		}
 
-		errsBefore := len(p.errors)
+		errsBefore := p.errCount
 		switch p.currentToken.Type {
 		case token.CONST:
 			decl := p.parseConstDecl()
-			if len(p.errors) == errsBefore {
-				prog.Consts = append(prog.Consts, decl)
+			if p.errCount == errsBefore {
+				prog.Decls = append(prog.Decls, decl)
 			}
 		case token.INPUT:
 			decl := p.parseInputDecl()
-			if len(p.errors) == errsBefore {
-				prog.Inputs = append(prog.Inputs, decl)
+			if p.errCount == errsBefore {
+				prog.Decls = append(prog.Decls, decl)
 			}
 		case token.OUTPUT:
 			decl := p.parseOutputDecl()
-			if len(p.errors) == errsBefore {
-				prog.Outputs = append(prog.Outputs, decl)
+			if p.errCount == errsBefore {
+				prog.Decls = append(prog.Decls, decl)
+			}
+		case token.IDENT:
+			if p.peekTokenIs(token.IDENT) {
+				decl := p.parseKindDecl()
+				if p.errCount == errsBefore {
+					prog.Decls = append(prog.Decls, decl)
+				}
+			} else {
+				p.addTopDeclUnexpected(p.currentToken.Pos)
 			}
 		case token.FUNCTION:
 			decl := p.parseFunctionDecl()
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				switch decl.Identifier.String() {
 				case InitFnIdent:
 					if prog.InitFn != nil {
 						// NOTE: this is incorrect phase for such an error. But otherwise we will replace func and that's it
 						// Will see in the future if there will be a better way to handle it
-						p.addDuplicateDecl(decl.Token, decl.Identifier.Token)
+						p.addDuplicateDecl(decl.Tok(), decl.Identifier.Tok())
 					} else {
 						prog.InitFn = decl
 					}
@@ -107,7 +128,7 @@ func (p *Parser) Parse() *ast.Program {
 					if prog.RunFn != nil {
 						// NOTE: this is incorrect phase for such an error. But otherwise we will replace func and that's it
 						// Will see in the future if there will be a better way to handle it
-						p.addDuplicateDecl(decl.Token, decl.Identifier.Token)
+						p.addDuplicateDecl(decl.Tok(), decl.Identifier.Tok())
 					} else {
 						prog.RunFn = decl
 					}
@@ -115,29 +136,39 @@ func (p *Parser) Parse() *ast.Program {
 				}
 			}
 		default:
-			p.addUnexpectedTopDecl(p.currentToken.Pos)
+			p.addTopDeclUnexpected(p.currentToken.Pos)
 		}
-		if len(p.errors) == errsBefore &&
+		if p.errCount == errsBefore &&
 			!p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) {
 			p.addUnexpectedToken(p.peekToken, token.NEWLINE)
 		}
-		if len(p.errors) > errsBefore {
+		if p.errCount > errsBefore {
 			prog.Valid = false
+			// no point of further parsing. we won't add diags anyway
+			if p.errCount >= maxParseErrors {
+				break
+			}
 			p.syncToNewLine()
 		}
 		p.nextToken()
 	}
 
-	if prog.RunFn == nil && len(p.errors) == 0 {
+	if prog.RunFn == nil && p.errCount == 0 {
 		prog.Valid = false
-		p.addMissingRunFn(p.currentToken.Pos)
+		p.addMissingRun(p.currentToken.Pos)
 	}
 
 	return prog
 }
 
-func (p *Parser) parseInputDecl() *ast.InputDecl {
-	decl := &ast.InputDecl{Token: p.currentToken}
+type portDecl struct {
+	Token      token.Token
+	Identifier *ast.IdentExpr
+	Type       ast.TypeDecl
+}
+
+func (p *Parser) parsePortDecl() portDecl {
+	decl := portDecl{Token: p.currentToken}
 
 	p.nextToken()
 
@@ -151,7 +182,7 @@ func (p *Parser) parseInputDecl() *ast.InputDecl {
 	if p.currTokenIs(token.COLON) {
 		p.nextToken()
 	} else {
-		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
+		// don't need to add second error on the same pos (we didn't move in case of missing IDENT)
 		if decl.Identifier != nil {
 			p.addUnexpectedToken(p.currentToken, token.COLON)
 		}
@@ -164,41 +195,44 @@ func (p *Parser) parseInputDecl() *ast.InputDecl {
 	case token.LBRACE:
 		decl.Type = p.parseInlineTypeExpr()
 	default:
-		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
+		p.addTypeExpected(p.currentToken.Pos)
 	}
 	return decl
 }
 
+func (p *Parser) parseInputDecl() *ast.InputDecl {
+	decl := p.parsePortDecl()
+	return &ast.InputDecl{Token: decl.Token, Identifier: decl.Identifier, Type: decl.Type}
+}
+
 func (p *Parser) parseOutputDecl() *ast.OutputDecl {
-	decl := &ast.OutputDecl{Token: p.currentToken}
+	decl := p.parsePortDecl()
+	return &ast.OutputDecl{Token: decl.Token, Identifier: decl.Identifier, Type: decl.Type}
+}
+
+// parseKindDecl expects the caller to have checked that both the word and the name are IDENT
+func (p *Parser) parseKindDecl() *ast.KindDecl {
+	decl := &ast.KindDecl{Token: p.currentToken, Keyword: p.currentToken.Literal}
 
 	p.nextToken()
+	decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
 
-	if p.currTokenIs(token.IDENT) {
-		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
+	if p.peekTokenIs(token.COLON) {
 		p.nextToken()
-	} else {
-		p.addUnexpectedToken(p.currentToken, token.IDENT)
-	}
-
-	if p.currTokenIs(token.COLON) {
 		p.nextToken()
-	} else {
-		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
-		if decl.Identifier != nil {
-			p.addUnexpectedToken(p.currentToken, token.COLON)
+		if !p.currTokenIs(token.IDENT) {
+			p.addTypeExpected(p.currentToken.Pos)
+			return decl
 		}
-		return decl
+		decl.Type = &ast.IdentExpr{Token: p.currentToken}
 	}
 
-	switch p.currentToken.Type {
-	case token.IDENT:
-		decl.Type = &ast.IdentExpr{Token: p.currentToken}
-	case token.LBRACE:
-		decl.Type = p.parseInlineTypeExpr()
-	default:
-		p.addTypeOrCustomTypeExpected(p.currentToken.Pos)
+	if p.peekTokenIs(token.ASSIGN) {
+		p.nextToken()
+		p.nextToken()
+		decl.Value = p.parseExpression(LowestPrec)
 	}
+
 	return decl
 }
 
@@ -217,7 +251,7 @@ func (p *Parser) parseConstDecl() *ast.ConstDecl {
 	if p.currTokenIs(token.ASSIGN) {
 		p.nextToken()
 	} else {
-		// don't need to add second error on the same pos(we didn't move in case of missing IDEN)
+		// don't need to add second error on the same pos (we didn't move in case of missing IDENT)
 		if decl.Identifier != nil {
 			p.addUnexpectedToken(p.currentToken, token.ASSIGN)
 		}
@@ -233,12 +267,10 @@ func (p *Parser) parseConstDecl() *ast.ConstDecl {
 func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 	decl := &ast.FunctionDecl{Token: p.currentToken}
 	p.nextToken()
-	errsBeforeDecl := len(p.errors)
+	errsBeforeDecl := p.errCount
 	if p.currTokenIs(token.IDENT) {
 		if p.currentToken.Literal != InitFnIdent && p.currentToken.Literal != RunFnIdent {
-			p.addForbiddenFunc(p.currentToken.Pos)
-			// don't need to parse func body if it's forbidden func
-			return decl
+			p.addForbiddenFunction(p.currentToken.Pos)
 		}
 
 		decl.Identifier = &ast.IdentExpr{Token: p.currentToken}
@@ -250,33 +282,32 @@ func (p *Parser) parseFunctionDecl() *ast.FunctionDecl {
 	if p.currTokenIs(token.LPAREN) {
 		p.nextToken()
 	} else {
-		if len(p.errors) == errsBeforeDecl {
+		if p.errCount == errsBeforeDecl {
 			p.addUnexpectedToken(p.currentToken, token.LPAREN)
 		}
 	}
 	if p.currTokenIs(token.RPAREN) {
 		p.nextToken()
 	} else {
-		if len(p.errors) == errsBeforeDecl {
+		if p.errCount == errsBeforeDecl {
 			p.addUnexpectedToken(p.currentToken, token.RPAREN)
 		}
 	}
 
 	if !p.currTokenIs(token.LBRACE) {
-		if len(p.errors) == errsBeforeDecl {
+		if p.errCount == errsBeforeDecl {
 			p.addUnexpectedToken(p.currentToken, token.LBRACE)
 		}
 		// we didn't find func block declaration start. don't need to parse
 		return decl
 	}
 
-	errsBeforeBody := len(p.errors)
 	decl.Body = p.parseBlock() // leaves current ON `}` (or EOF)
 
 	// only Run (and the unreachable unnamed case) reject a genuinely empty body
 	notInitFn := decl.Identifier == nil || decl.Identifier.String() == RunFnIdent
-	if len(decl.Body.Stmts) == 0 && len(p.errors) == errsBeforeBody && notInitFn {
-		p.addEmptyFunctionBody(p.currentToken.Pos)
+	if len(decl.Body.Stmts) == 0 && p.errCount == errsBeforeDecl && notInitFn {
+		p.addEmptyFunction(p.currentToken.Pos)
 	}
 
 	return decl
@@ -291,7 +322,7 @@ func (p *Parser) parseInlineTypeExpr() *ast.TypeExpr {
 
 	if p.peekTokenIs(token.RBRACE) {
 		p.nextToken()
-		p.addEmptyCustomType(decl.Token.Pos)
+		p.addEmptyCustomType(decl.Tok().Pos)
 		return decl
 	}
 
@@ -325,6 +356,11 @@ func (p *Parser) parseInlineTypeExpr() *ast.TypeExpr {
 
 		if p.peekTokenIs(token.COMMA) {
 			p.nextToken()
+			p.skipPeekNewLines()
+			if p.peekTokenIs(token.RBRACE) {
+				p.nextToken()
+				break
+			}
 			continue
 		}
 

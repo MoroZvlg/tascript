@@ -1,0 +1,80 @@
+package main
+
+import (
+	"fmt"
+
+	"github.com/MoroZvlg/tascript"
+	"github.com/MoroZvlg/tascript/diag"
+	"github.com/MoroZvlg/tascript/registry"
+)
+
+type Money struct {
+	Cents    int
+	Currency string
+}
+
+func (m Money) String() string {
+	unit := m.Cents / 100
+	cents := m.Cents % 100
+	return fmt.Sprintf("%d.%d %s", unit, cents, m.Currency)
+}
+
+type TaScriptMoney struct {
+	data       Money
+	DataTypeID registry.TypeID
+}
+
+func (tam TaScriptMoney) TypeID() registry.TypeID {
+	return tam.DataTypeID
+}
+
+func (tam TaScriptMoney) TypeShape() registry.TypeShape {
+	return registry.ScalarShape
+}
+
+func main() {
+	src := `const math = 5
+function Run() { math }
+`
+	builder := tascript.NewBuilder()
+
+	//moneyID, err := builder.RegisterType("Money")
+	//if err != nil {
+	//	panic(err)
+	//}
+	//
+	//err = engine.RegisterBinary(token.ASTERISK, moneyID, registry.FloatID, registry.BinaryRule{
+	//	EvalFn: func(tok token.TokenType, left, right registry.Value) registry.Value {
+	//		moneyV := left.(TaScriptMoney)
+	//		rightF := float64(right.(registry.Float))
+	//		resultCents := float64(moneyV.data.Cents) * rightF
+	//		return TaScriptMoney{data: Money{int(resultCents), moneyV.data.Currency}, DataTypeID: moneyV.DataTypeID}
+	//	},
+	//	EvalType: moneyID,
+	//})
+	//if err != nil {
+	//	panic(err)
+	//}
+
+	program, diags, err := builder.Compile(src)
+	if err != nil {
+		panic(err)
+	}
+	if len(diags) > 0 {
+		showDiags(diags)
+		return
+	}
+	if err := program.Init(); err != nil {
+		panic(err)
+	}
+
+	if err := program.Run(); err != nil {
+		panic(err)
+	}
+}
+
+func showDiags(diags []diag.Diagnostic) {
+	for _, d := range diags {
+		fmt.Println(d)
+	}
+}

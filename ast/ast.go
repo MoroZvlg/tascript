@@ -8,16 +8,55 @@ import (
 )
 
 type Program struct {
-	Consts  []*ConstDecl
-	Inputs  []*InputDecl
-	Outputs []*OutputDecl
-	InitFn  *FunctionDecl
-	RunFn   *FunctionDecl
-	Valid   bool
+	Decls  []Statement
+	InitFn *FunctionDecl
+	RunFn  *FunctionDecl
+	Valid  bool
+}
+
+func (p *Program) Consts() []*ConstDecl {
+	var decls []*ConstDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*ConstDecl); ok {
+			decls = append(decls, decl)
+		}
+	}
+	return decls
+}
+
+func (p *Program) Inputs() []*InputDecl {
+	var decls []*InputDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*InputDecl); ok {
+			decls = append(decls, decl)
+		}
+	}
+	return decls
+}
+
+func (p *Program) Outputs() []*OutputDecl {
+	var decls []*OutputDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*OutputDecl); ok {
+			decls = append(decls, decl)
+		}
+	}
+	return decls
+}
+
+func (p *Program) KindDecls() []*KindDecl {
+	var decls []*KindDecl
+	for _, d := range p.Decls {
+		if decl, ok := d.(*KindDecl); ok {
+			decls = append(decls, decl)
+		}
+	}
+	return decls
 }
 
 type Node interface {
 	String() string
+	Tok() token.Token
 }
 
 type Statement interface {
@@ -28,11 +67,6 @@ type Statement interface {
 type Expression interface {
 	Node
 	expressionNode()
-}
-
-type Declaration interface {
-	Node
-	declarationNode()
 }
 
 type TypeDecl interface {
@@ -68,7 +102,9 @@ func (id *InputDecl) String() string {
 	return out.String()
 }
 
-func (id *InputDecl) declarationNode() {}
+func (id *InputDecl) Tok() token.Token { return id.Token }
+
+func (id *InputDecl) statementNode() {}
 
 // OutputDecl
 // - output alert: String
@@ -98,7 +134,9 @@ func (od *OutputDecl) String() string {
 	return out.String()
 }
 
-func (od *OutputDecl) declarationNode() {}
+func (od *OutputDecl) Tok() token.Token { return od.Token }
+
+func (od *OutputDecl) statementNode() {}
 
 // ConstDecl - const FOO = "BAR" + "ZOO"
 type ConstDecl struct {
@@ -124,16 +162,49 @@ func (cd *ConstDecl) String() string {
 	return out.String()
 }
 
-func (cd *ConstDecl) declarationNode() {}
+func (cd *ConstDecl) Tok() token.Token { return cd.Token }
+
+func (cd *ConstDecl) statementNode() {}
+
+// KindDecl - <kind word> <name>[: Type][ = expr], where the word is a host-registered kind
+type KindDecl struct {
+	Token      token.Token
+	Keyword    string
+	Identifier *IdentExpr
+	Type       *IdentExpr
+	Value      Expression
+}
+
+func (kd *KindDecl) String() string {
+	var out bytes.Buffer
+	out.WriteString(kd.Keyword)
+	out.WriteString(" ")
+	if kd.Identifier == nil {
+		out.WriteString("<unknown>")
+	} else {
+		out.WriteString(kd.Identifier.String())
+	}
+	if kd.Type != nil {
+		out.WriteString(": ")
+		out.WriteString(kd.Type.String())
+	}
+	if kd.Value != nil {
+		out.WriteString(" = ")
+		out.WriteString(kd.Value.String())
+	}
+	return out.String()
+}
+
+func (kd *KindDecl) Tok() token.Token { return kd.Token }
+
+func (kd *KindDecl) statementNode() {}
 
 // FunctionDecl
 // - function Init() {}
 type FunctionDecl struct {
 	Token      token.Token
 	Identifier *IdentExpr
-	// we don't have params for now
-	//Parameters []*Identifier
-	Body *BlockStmt
+	Body       *BlockStmt
 }
 
 func (fd *FunctionDecl) String() string {
@@ -145,12 +216,6 @@ func (fd *FunctionDecl) String() string {
 		out.WriteString(fd.Identifier.String())
 	}
 	out.WriteString("(")
-	//for i, param := range fd.Parameters {
-	//	out.WriteString(param.String())
-	//	if i < len(fd.Parameters)-1 {
-	//		out.WriteString(", ")
-	//	}
-	//}
 	out.WriteString(") ")
 	if fd.Body != nil {
 		out.WriteString(fd.Body.String())
@@ -158,7 +223,7 @@ func (fd *FunctionDecl) String() string {
 	return out.String()
 }
 
-func (fd *FunctionDecl) declarationNode() {}
+func (fd *FunctionDecl) Tok() token.Token { return fd.Token }
 
 type BadExpr struct {
 	Token token.Token
@@ -167,6 +232,8 @@ type BadExpr struct {
 func (be *BadExpr) String() string {
 	return "<error>"
 }
+
+func (be *BadExpr) Tok() token.Token { return be.Token }
 
 func (be *BadExpr) expressionNode() {}
 
@@ -177,6 +244,8 @@ type IdentExpr struct {
 func (ie *IdentExpr) String() string {
 	return ie.Token.Literal
 }
+
+func (ie *IdentExpr) Tok() token.Token { return ie.Token }
 
 func (ie *IdentExpr) expressionNode() {}
 
@@ -191,6 +260,8 @@ func (ie *IntegerExpr) String() string {
 	return fmt.Sprintf("%d", ie.Value)
 }
 
+func (ie *IntegerExpr) Tok() token.Token { return ie.Token }
+
 func (ie *IntegerExpr) expressionNode() {}
 
 type FloatExpr struct {
@@ -201,6 +272,8 @@ type FloatExpr struct {
 func (fe *FloatExpr) String() string {
 	return fmt.Sprintf("%g", fe.Value)
 }
+
+func (fe *FloatExpr) Tok() token.Token { return fe.Token }
 
 func (fe *FloatExpr) expressionNode() {}
 
@@ -214,6 +287,8 @@ func (se *StringExpr) String() string {
 	return fmt.Sprintf("%q", se.Value)
 }
 
+func (se *StringExpr) Tok() token.Token { return se.Token }
+
 func (se *StringExpr) expressionNode() {}
 
 type BooleanExpr struct {
@@ -224,6 +299,8 @@ type BooleanExpr struct {
 func (be *BooleanExpr) String() string {
 	return fmt.Sprintf("%t", be.Value)
 }
+
+func (be *BooleanExpr) Tok() token.Token { return be.Token }
 
 func (be *BooleanExpr) expressionNode() {}
 
@@ -245,6 +322,8 @@ func (ie *InfixExpr) String() string {
 	return out.String()
 }
 
+func (ie *InfixExpr) Tok() token.Token { return ie.Token }
+
 func (ie *InfixExpr) expressionNode() {}
 
 type PrefixExpr struct {
@@ -259,21 +338,25 @@ func (pe *PrefixExpr) String() string {
 	return out.String()
 }
 
+func (pe *PrefixExpr) Tok() token.Token { return pe.Token }
+
 func (pe *PrefixExpr) expressionNode() {}
 
 type MemberAccessExpr struct {
 	Token  token.Token
 	Object Expression
-	Method Expression
+	Member *IdentExpr
 }
 
 func (ma *MemberAccessExpr) String() string {
 	var out bytes.Buffer
 	out.WriteString(ma.Object.String())
 	out.WriteString(ma.Token.Literal)
-	out.WriteString(ma.Method.String())
+	out.WriteString(ma.Member.String())
 	return out.String()
 }
+
+func (ma *MemberAccessExpr) Tok() token.Token { return ma.Token }
 
 func (ma *MemberAccessExpr) expressionNode() {}
 
@@ -291,6 +374,8 @@ func (ie *IndexExpr) String() string {
 	out.WriteString("]")
 	return out.String()
 }
+
+func (ie *IndexExpr) Tok() token.Token { return ie.Token }
 
 func (ie *IndexExpr) expressionNode() {}
 
@@ -321,6 +406,8 @@ func (ce *CallExpr) String() string {
 	return out.String()
 }
 
+func (ce *CallExpr) Tok() token.Token { return ce.Token }
+
 func (ce *CallExpr) expressionNode() {}
 
 type KwargsExpr struct {
@@ -340,6 +427,8 @@ func (ke *KwargsExpr) String() string {
 	}
 	return out.String()
 }
+
+func (ke *KwargsExpr) Tok() token.Token { return ke.Token }
 
 func (ke *KwargsExpr) expressionNode() {}
 
@@ -361,6 +450,8 @@ func (te *TypeExpr) String() string {
 	return out.String()
 }
 
+func (te *TypeExpr) Tok() token.Token { return te.Token }
+
 func (te *TypeExpr) typeDeclNode() {}
 
 type FieldExpr struct {
@@ -376,6 +467,8 @@ func (fe *FieldExpr) String() string {
 	out.WriteString(fe.Type.String())
 	return out.String()
 }
+
+func (fe *FieldExpr) Tok() token.Token { return fe.Token }
 
 type LetStmt struct {
 	Token token.Token
@@ -400,11 +493,13 @@ func (ls *LetStmt) String() string {
 	return out.String()
 }
 
+func (ls *LetStmt) Tok() token.Token { return ls.Token }
+
 func (ls *LetStmt) statementNode() {}
 
 type AssignStmt struct {
 	Token  token.Token // the `=`
-	Target Expression
+	Target Expression  // TODO: should be ident?
 	Value  Expression
 }
 
@@ -424,18 +519,21 @@ func (as *AssignStmt) String() string {
 	return out.String()
 }
 
+func (as *AssignStmt) Tok() token.Token { return as.Token }
+
 func (as *AssignStmt) statementNode() {}
 
 // BadStmt is a placeholder kept in the tree when a statement is too broken to
 // form a meaningful partial node. It preserves the source span so later passes
-// (tooling, analyzer) keep working over recovered code. See [IsBadExpr] for the
-// expression-level analogue.
+// (tooling, analyzer) keep working over recovered code.
 type BadStmt struct {
 	From token.Pos
 	To   token.Pos
 }
 
 func (bs *BadStmt) String() string { return "<bad statement>" }
+
+func (bs *BadStmt) Tok() token.Token { return token.Token{Pos: bs.From} }
 
 func (bs *BadStmt) statementNode() {}
 
@@ -450,6 +548,8 @@ func (es *ExprStmt) String() string {
 	}
 	return "<missing expression>"
 }
+
+func (es *ExprStmt) Tok() token.Token { return es.Token }
 
 func (es *ExprStmt) statementNode() {}
 
@@ -476,6 +576,8 @@ func (bs *BlockStmt) String() string {
 	out.WriteString("}")
 	return out.String()
 }
+
+func (bs *BlockStmt) Tok() token.Token { return bs.Token }
 
 func (bs *BlockStmt) statementNode() {}
 
@@ -506,6 +608,8 @@ func (is *IfStmt) String() string {
 	}
 	return out.String()
 }
+
+func (is *IfStmt) Tok() token.Token { return is.Token }
 
 func (is *IfStmt) statementNode() {}
 

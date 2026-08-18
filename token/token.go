@@ -1,6 +1,9 @@
 package token
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 type TokenType string
 
@@ -56,7 +59,7 @@ type Pos struct {
 	Col  int
 }
 
-func (p *Pos) String() string {
+func (p Pos) String() string {
 	return fmt.Sprintf("%d:%d", p.Line, p.Col)
 }
 
@@ -66,7 +69,7 @@ type Token struct {
 	Literal string
 }
 
-func (t *Token) String() string {
+func (t Token) String() string {
 	return fmt.Sprintf("[%s] -> %s", t.Type, t.Literal)
 }
 
@@ -87,4 +90,40 @@ func LookupIdent(ident string) TokenType {
 		return tok
 	}
 	return IDENT
+}
+
+func IsKeyword(ident string) bool {
+	_, ok := keywordsMap[ident]
+	return ok
+}
+
+// not in keywordsMap: the lexer emits these as IDENT
+var reservedIdents = []string{"emit", "Init", "Run"}
+
+func ReservedIdents() []string {
+	return slices.Clone(reservedIdents)
+}
+
+func IsReservedIdent(ident string) bool {
+	return slices.Contains(reservedIdents, ident)
+}
+
+func IsIdentStart(ch byte) bool {
+	return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || (ch == '_')
+}
+
+func IsIdentPart(ch byte) bool {
+	return IsIdentStart(ch) || ('0' <= ch && ch <= '9')
+}
+
+func IsIdent(s string) bool {
+	if s == "" || !IsIdentStart(s[0]) {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if !IsIdentPart(s[i]) {
+			return false
+		}
+	}
+	return true
 }

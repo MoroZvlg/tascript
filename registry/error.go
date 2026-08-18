@@ -1,0 +1,25 @@
+package registry
+
+import "fmt"
+
+// ErrorKind classifies runtime failures a correct interpreter can hit
+type ErrorKind string
+
+const (
+	DivisionByZero    ErrorKind = "DIVISION_BY_ZERO"
+	InvalidArgument   ErrorKind = "INVALID_ARGUMENT"
+	OutOfRange        ErrorKind = "OUT_OF_RANGE"
+	UninitializedSlot ErrorKind = "UNINITIALIZED_SLOT"
+	// UnknownKind marks a non-registry error. host-written rules may return arbitrary errors.
+	UnknownKind ErrorKind = "UNKNOWN_FAILURE"
+)
+
+// Error is what rule EvalFns return to trap the current tick.
+type Error struct {
+	Kind    ErrorKind
+	Message string
+}
+
+func (e Error) Error() string {
+	return fmt.Sprintf("[%s] %s", e.Kind, e.Message)
+}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoroZvlg/tascript/ast"
 	"github.com/MoroZvlg/tascript/diag"
 	"github.com/MoroZvlg/tascript/lexer"
 	"github.com/MoroZvlg/tascript/parser"
@@ -49,8 +50,8 @@ func TestParser_ParseConstSimple(t *testing.T) {
 				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
 			}
 
-			if tt.output != prog.Consts[0].String() {
-				t.Errorf("expected %s, got %s", tt.output, prog.Consts[0].String())
+			if tt.output != prog.Consts()[0].String() {
+				t.Errorf("expected %s, got %s", tt.output, prog.Consts()[0].String())
 			}
 
 			if !prog.Valid {
@@ -168,7 +169,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 			},
 		},
 		{
-			"???",
+			"[Group] missing operand and illegal token",
 			"const FOO = (3 + ^) * ^#",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
@@ -200,7 +201,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 			"const FOO = ^" + strings.Repeat("9", 100),
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					parseFailedErr(ps[0], token.INTEGER),
+					numberOutOfRangeErr(ps[0], token.INTEGER, strings.Repeat("9", 100)),
 				}
 			},
 		},
@@ -209,7 +210,7 @@ func TestParser_ParseConstErrors(t *testing.T) {
 			"const FOO = ^" + strings.Repeat("9", 400) + ".0",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					parseFailedErr(ps[0], token.FLOAT),
+					numberOutOfRangeErr(ps[0], token.FLOAT, strings.Repeat("9", 400)+".0"),
 				}
 			},
 		},
@@ -267,8 +268,8 @@ func TestParser_ParseConstRecovery(t *testing.T) {
 		t.Errorf("expected prog be invalid, got true")
 	}
 
-	if len(prog.Consts) != 2 {
-		t.Fatalf("expected 2 constant parsed after recovery, got %d", len(prog.Consts))
+	if len(prog.Consts()) != 2 {
+		t.Fatalf("expected 2 constant parsed after recovery, got %d", len(prog.Consts()))
 	}
 }
 
@@ -298,8 +299,8 @@ func TestParser_ParseInputSimple(t *testing.T) {
 				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
 			}
 
-			if tt.output != prog.Inputs[0].String() {
-				t.Errorf("expected %s, got %s", tt.output, prog.Inputs[0].String())
+			if tt.output != prog.Inputs()[0].String() {
+				t.Errorf("expected %s, got %s", tt.output, prog.Inputs()[0].String())
 			}
 
 			if !prog.Valid {
@@ -405,16 +406,6 @@ func TestParser_Input(t *testing.T) {
 			},
 		},
 		{
-			// a trailing comma reopens the field loop, which then demands another field
-			"trailing comma in custom type",
-			"input btc: {foo: Integer,^}",
-			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					unexpectedErr(ps[0], token.IDENT, token.RBRACE),
-				}
-			},
-		},
-		{
 			// keywords are not IDENT, so they can't be used as field names
 			"keyword as field name",
 			"input btc: {^const: Integer}",
@@ -461,8 +452,8 @@ func TestParser_ParseInputRecovery(t *testing.T) {
 		t.Errorf("expected prog be invalid, got true")
 	}
 
-	if len(prog.Inputs) != 2 {
-		t.Fatalf("expected 2 inputs parsed after recovery, got %d", len(prog.Consts))
+	if len(prog.Inputs()) != 2 {
+		t.Fatalf("expected 2 inputs parsed after recovery, got %d", len(prog.Inputs()))
 	}
 }
 
@@ -492,8 +483,8 @@ func TestParser_ParseOutputSimple(t *testing.T) {
 				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
 			}
 
-			if tt.output != prog.Outputs[0].String() {
-				t.Errorf("expected %s, got %s", tt.output, prog.Outputs[0].String())
+			if tt.output != prog.Outputs()[0].String() {
+				t.Errorf("expected %s, got %s", tt.output, prog.Outputs()[0].String())
 			}
 
 			if !prog.Valid {
@@ -599,13 +590,17 @@ func TestParser_Output(t *testing.T) {
 			},
 		},
 		{
-			// a trailing comma reopens the field loop, which then demands another field
 			"trailing comma in custom type",
-			"output alert: {foo: Integer,^}",
+			"output alert: {foo: Integer,}",
 			func(ps []token.Pos) []diag.Diagnostic {
-				return []diag.Diagnostic{
-					unexpectedErr(ps[0], token.IDENT, token.RBRACE),
-				}
+				return []diag.Diagnostic{}
+			},
+		},
+		{
+			"trailing comma before a newline",
+			"output alert: {\nfoo: Integer,\n}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{}
 			},
 		},
 		{
@@ -655,8 +650,169 @@ func TestParser_ParseOutputRecovery(t *testing.T) {
 		t.Errorf("expected prog be invalid, got true")
 	}
 
-	if len(prog.Outputs) != 2 {
-		t.Fatalf("expected 2 outputs parsed after recovery, got %d", len(prog.Outputs))
+	if len(prog.Outputs()) != 2 {
+		t.Fatalf("expected 2 outputs parsed after recovery, got %d", len(prog.Outputs()))
+	}
+}
+
+func TestParser_ParseKindDeclSimple(t *testing.T) {
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{"indicator fast = ta.sma(3)", "indicator fast = ta.sma(3)"},
+		{"setting period: Integer = 14", "setting period: Integer = 14"},
+		{"setting period: Integer", "setting period: Integer"},
+		{"indicator fast", "indicator fast"},
+		{"indicator slow = 1.5 + 2.0", "indicator slow = (1.5 + 2)"},
+		{"\nsetting period: Integer = 14\n", "setting period: Integer = 14"},
+		{"state cooldown: Integer = 0", "state cooldown: Integer = 0"},
+		{"state last_signal: Time", "state last_signal: Time"},
+		{"state cd: Duration = 30 * time.MINUTE", "state cd: Duration = (30 * time.MINUTE)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := lexer.New(tt.input + runSuffix)
+			p := parser.New(l)
+			prog := p.Parse()
+			if len(p.Diagnostics()) > 0 {
+				for _, d := range p.Diagnostics() {
+					t.Log(d)
+				}
+				t.Fatalf("expected 0 errors, got %d\n", len(p.Diagnostics()))
+			}
+
+			if len(prog.Decls) != 1 {
+				t.Fatalf("expected 1 declaration, got %d", len(prog.Decls))
+			}
+
+			decl, ok := prog.Decls[0].(*ast.KindDecl)
+			if !ok {
+				t.Fatalf("expected *ast.KindDecl, got %T", prog.Decls[0])
+			}
+			if tt.output != decl.String() {
+				t.Errorf("expected %s, got %s", tt.output, decl.String())
+			}
+
+			if !prog.Valid {
+				t.Errorf("expected prog be valid, got false")
+			}
+		})
+	}
+}
+
+func TestParser_KindDecl(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		buildDiags func([]token.Pos) []diag.Diagnostic
+	}{
+		{
+			"missing name",
+			"^indicator",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{unexpectedTopDeclErr(ps[0])}
+			},
+		},
+		{
+			"missing type after colon",
+			"setting period: ^= 0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{expectedTypeOrCustomType(ps[0])}
+			},
+		},
+		{
+			"schema as type",
+			"setting pair: ^{a: Float}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{expectedTypeOrCustomType(ps[0])}
+			},
+		},
+		{
+			"missing initializer expression",
+			"indicator fast = ^",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{exprExpectedErr(ps[0], token.NEWLINE)}
+			},
+		},
+		{
+			"junk after decl",
+			"setting period: Integer ^14",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{unexpectedErr(ps[0], token.NEWLINE, token.INTEGER)}
+			},
+		},
+		{
+			"keyword as name",
+			"^indicator const = 1",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{unexpectedTopDeclErr(ps[0])}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDiagCases(t, tt.input+runSuffix, tt.buildDiags)
+		})
+	}
+}
+
+func TestParser_ParseKindDeclRecovery(t *testing.T) {
+	src := "setting a: {}\nsetting b: Integer = 0\nindicator c" + runSuffix
+	p := parser.New(lexer.New(src))
+	prog := p.Parse()
+
+	got := p.Diagnostics()
+	if len(got) != 1 {
+		for i, d := range got {
+			t.Logf("got[%d] %+v", i, d)
+		}
+		t.Fatalf("expected 1 error, got %d", len(got))
+	}
+
+	if prog.Valid {
+		t.Errorf("expected prog be invalid, got true")
+	}
+
+	if len(prog.KindDecls()) != 2 {
+		t.Fatalf("expected 2 declarations parsed after recovery, got %d", len(prog.KindDecls()))
+	}
+}
+
+func TestParser_TopLevelDeclOrder(t *testing.T) {
+	src := `const LIMIT = 3
+setting period: Integer = 14
+input price: Float
+indicator fast = ta.sma(2)
+state cooldown: Integer = 0
+output alert: String` + runSuffix
+
+	p := parser.New(lexer.New(src))
+	prog := p.Parse()
+	if len(p.Diagnostics()) > 0 {
+		for _, d := range p.Diagnostics() {
+			t.Log(d)
+		}
+		t.Fatalf("expected 0 errors, got %d", len(p.Diagnostics()))
+	}
+
+	want := []string{
+		"const LIMIT = 3",
+		"setting period: Integer = 14",
+		"input price: Float",
+		"indicator fast = ta.sma(2)",
+		"state cooldown: Integer = 0",
+		"output alert: String",
+	}
+	if len(prog.Decls) != len(want) {
+		t.Fatalf("expected %d declarations, got %d", len(want), len(prog.Decls))
+	}
+	for i, w := range want {
+		if got := prog.Decls[i].String(); got != w {
+			t.Errorf("Decls[%d] = %q, want %q", i, got, w)
+		}
 	}
 }
 
@@ -668,11 +824,10 @@ func TestParser_ParseFunc(t *testing.T) {
 	}{
 		{
 			"missing ident",
-			"function ^() {^}",
+			"function ^() {}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.IDENT, token.LPAREN),
-					emptyFuncErr(ps[1]),
 				}
 			},
 		},
@@ -705,11 +860,10 @@ func TestParser_ParseFunc(t *testing.T) {
 		},
 		{
 			"missing iden and (",
-			"function ^){^}",
+			"function ^){}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					unexpectedErr(ps[0], token.IDENT, token.RPAREN),
-					emptyFuncErr(ps[1]),
 				}
 			},
 		},
@@ -797,7 +951,17 @@ func TestParser_ParseFunc(t *testing.T) {
 		},
 		{
 			"forbidden func name",
-			"function ^MyFunction() ^{}",
+			"function ^MyFunction() {}",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					forbiddenFuncErr(ps[0]),
+				}
+			},
+		},
+		{
+			// the body is parsed, not skipped: recovery must not land inside it
+			"forbidden func name with body",
+			"function ^MyFunction() {\nlet a = 3\na + 1\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
 					forbiddenFuncErr(ps[0]),
@@ -834,6 +998,9 @@ func TestParser_ParseFuncBlockSimple(t *testing.T) {
 		{"foo.bar((2+5), key=value)", "foo.bar((2 + 5), key = value)"},
 		{"foo.bar((2+5), key=(3+5))", "foo.bar((2 + 5), key = (3 + 5))"},
 		{"foo.bar(\n(2+5), \nkey=(3+5)\n)", "foo.bar((2 + 5), key = (3 + 5))"},
+		{"foo.bar(2,)", "foo.bar(2)"},
+		{"foo.bar(key=value, )", "foo.bar(key = value)"},
+		{"foo.bar(2, key=value,\n)", "foo.bar(2, key = value)"},
 		{"emit(foo)", "emit(foo)"},
 		{`emit(foo, "bar")`, `emit(foo, "bar")`},
 		{"emit(foo, bar=value)", "emit(foo, bar = value)"},
@@ -843,6 +1010,10 @@ func TestParser_ParseFuncBlockSimple(t *testing.T) {
 		{"if (a > b) {\nlet c = 3\n}", "if ((a > b)) {\nlet c = 3\n}"},
 		{"if (a) {\nlet b = 3\n} else {\nlet c = 4\n}", "if (a) {\nlet b = 3\n} else {\nlet c = 4\n}"},
 		{"if (a) {\nlet b = 3\n} else if (c) {\nlet d = 4\n}", "if (a) {\nlet b = 3\n} else if (c) {\nlet d = 4\n}"},
+		// `else` may start its own line — nothing else can follow a `}` this way
+		{"if (a) {\nlet b = 3\n}\nelse {\nlet c = 4\n}", "if (a) {\nlet b = 3\n} else {\nlet c = 4\n}"},
+		{"if (a) {\nlet b = 3\n}\nelse if (c) {\nlet d = 4\n}", "if (a) {\nlet b = 3\n} else if (c) {\nlet d = 4\n}"},
+		{"if (a) {\nlet b = 3\n} // why\nelse {\nlet c = 4\n}", "if (a) {\nlet b = 3\n} else {\nlet c = 4\n}"},
 		{"if (a) {\nif (b) {\nlet c = 3\n}\n}", "if (a) {\nif (b) {\nlet c = 3\n}\n}"},
 		// newlines are suppressed inside (), so a multi-line condition parses fine
 		{"if (a &&\nb) {\nlet c = 3\n}", "if ((a && b)) {\nlet c = 3\n}"},
@@ -852,6 +1023,8 @@ func TestParser_ParseFuncBlockSimple(t *testing.T) {
 		// member-target assignment
 		{"state.cooldown = 0", "state.cooldown = 0"},
 		{"state.cooldown = math.max(0, state.cooldown - 1)", "state.cooldown = math.max(0, (state.cooldown - 1))"},
+		{"state.cooldown = state.cooldown - 1", "state.cooldown = (state.cooldown - 1)"},
+		{"let x = state.cooldown", "let x = state.cooldown"},
 		// empty else block still renders (gated on the else token, not the slice)
 		{"if (a) {} else {}", "if (a) {} else {}"},
 		// index (history) access
@@ -1086,6 +1259,44 @@ func TestParser_ParseFuncBody(t *testing.T) {
 				}
 			},
 		},
+		{
+			// host kind words are ordinary identifiers to the parser: a misplaced
+			// kind decl can only fail as a stray token, not as TOP_DECL_MISPLACED
+			"kind decl in body",
+			"state ^cooldown: Integer = 0",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					unexpectedErr(ps[0], token.NEWLINE, token.IDENT),
+				}
+			},
+		},
+		{
+			"const decl in body",
+			"^const FOO = 1",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					topDeclInBodyErr(ps[0], token.CONST),
+				}
+			},
+		},
+		{
+			"input decl in body",
+			"^input btc: CandleSeries",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					topDeclInBodyErr(ps[0], token.INPUT),
+				}
+			},
+		},
+		{
+			"output decl in body",
+			"^output alerts: Integer",
+			func(ps []token.Pos) []diag.Diagnostic {
+				return []diag.Diagnostic{
+					topDeclInBodyErr(ps[0], token.OUTPUT),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1097,39 +1308,43 @@ func TestParser_ParseFuncBody(t *testing.T) {
 }
 
 func unexpectedErr(pos token.Pos, expected, got token.TokenType) *diag.UnexpectedToken {
-	return &diag.UnexpectedToken{Phase: diag.PhaseParse, Pos: pos, Expected: expected, Got: got}
+	return &diag.UnexpectedToken{At: pos, Expected: expected, Got: got}
 }
 
-func expectedTypeOrCustomType(pos token.Pos) *diag.TypeOrCustomTypeExpected {
-	return &diag.TypeOrCustomTypeExpected{Phase: diag.PhaseParse, Pos: pos}
+func expectedTypeOrCustomType(pos token.Pos) *diag.TypeExpected {
+	return &diag.TypeExpected{At: pos}
 }
 
 func emptyCustomType(pos token.Pos) *diag.EmptyCustomType {
-	return &diag.EmptyCustomType{Phase: diag.PhaseParse, Pos: pos}
+	return &diag.EmptyCustomType{At: pos}
 }
 
 func exprExpectedErr(pos token.Pos, got token.TokenType) *diag.ExpressionExpected {
-	return &diag.ExpressionExpected{Phase: diag.PhaseParse, Pos: pos, Got: got}
+	return &diag.ExpressionExpected{At: pos, Got: got}
 }
 
-func parseFailedErr(pos token.Pos, target token.TokenType) *diag.ParseFailed {
-	return &diag.ParseFailed{Phase: diag.PhaseParse, Pos: pos, Target: target}
+func numberOutOfRangeErr(pos token.Pos, target token.TokenType, literal string) *diag.NumberOutOfRange {
+	return &diag.NumberOutOfRange{At: pos, Target: target, Literal: literal}
 }
 
-func emptyFuncErr(pos token.Pos) *diag.EmptyFunctionBody {
-	return &diag.EmptyFunctionBody{Phase: diag.PhaseParse, Pos: pos}
+func emptyFuncErr(pos token.Pos) *diag.EmptyFunction {
+	return &diag.EmptyFunction{At: pos}
 }
 
-func forbiddenFuncErr(pos token.Pos) *diag.ForbiddenFunc {
-	return &diag.ForbiddenFunc{Phase: diag.PhaseParse, Pos: pos}
+func forbiddenFuncErr(pos token.Pos) *diag.ForbiddenFunction {
+	return &diag.ForbiddenFunction{At: pos}
 }
 
-func missingRunErr(pos token.Pos) *diag.MissingRunFunc {
-	return &diag.MissingRunFunc{Phase: diag.PhaseParse, Pos: pos}
+func missingRunErr(pos token.Pos) *diag.MissingRun {
+	return &diag.MissingRun{At: pos}
 }
 
-func unexpectedTopDeclErr(pos token.Pos) diag.UnexpectedTopDecl {
-	return diag.UnexpectedTopDecl{Phase: diag.PhaseParse, Pos: pos}
+func topDeclInBodyErr(pos token.Pos, keyword token.TokenType) *diag.TopDeclMisplaced {
+	return &diag.TopDeclMisplaced{At: pos, Keyword: keyword}
+}
+
+func unexpectedTopDeclErr(pos token.Pos) *diag.TopDeclUnexpected {
+	return &diag.TopDeclUnexpected{At: pos}
 }
 
 func extractErrorsPos(input string) (string, []token.Pos) {
@@ -1181,6 +1396,19 @@ func runDiagCases(t *testing.T, input string, buildDiags func([]token.Pos) []dia
 	}
 }
 
+func TestParser_ErrorCap(t *testing.T) {
+	src := strings.Repeat("@\n", 300)
+	p := parser.New(lexer.New(src))
+	prog := p.Parse()
+
+	if prog.Valid {
+		t.Errorf("expected prog be invalid, got true")
+	}
+	if got := len(p.Diagnostics()); got != 100 {
+		t.Fatalf("expected diagnostics capped at 100, got %d", got)
+	}
+}
+
 // Program-level recovery: a junk top-level token must not drop the following good const
 func TestParser_ErrorModeLeak(t *testing.T) {
 	t.Run("junk before good const is recovered", func(t *testing.T) {
@@ -1192,13 +1420,13 @@ func TestParser_ErrorModeLeak(t *testing.T) {
 		if prog.Valid {
 			t.Errorf("expected prog invalid (junk `@` present), got valid")
 		}
-		if len(prog.Consts) != 1 {
-			t.Fatalf("expected 1 const recovered after junk, got %d", len(prog.Consts))
+		if len(prog.Consts()) != 1 {
+			t.Fatalf("expected 1 const recovered after junk, got %d", len(prog.Consts()))
 		}
-		if prog.Consts[0].Identifier.String() != "FOO" {
+		if prog.Consts()[0].Identifier.String() != "FOO" {
 			t.Errorf("expected recovered const to be valid")
 		}
-		if got := prog.Consts[0].String(); got != "const FOO = 5" {
+		if got := prog.Consts()[0].String(); got != "const FOO = 5" {
 			t.Errorf("expected recovered const %q, got %q", "const FOO = 5", got)
 		}
 	})
@@ -1220,7 +1448,7 @@ func TestParser_ErrorModeLeak(t *testing.T) {
 	})
 }
 
-func TestParser_UnexpectedTopDecl(t *testing.T) {
+func TestParser_TopDeclUnexpected(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
@@ -1262,18 +1490,16 @@ func TestParser_DeepNesting(t *testing.T) {
 			if prog.Valid {
 				t.Errorf("expected invalid program for deeply nested input, got valid")
 			}
-			if !hasNestingTooDeep(p.Diagnostics()) {
+			found := false
+			for _, d := range p.Diagnostics() {
+				if _, ok := d.(*diag.NestingTooDeep); ok {
+					found = true
+					break
+				}
+			}
+			if !found {
 				t.Errorf("expected a NESTING_TOO_DEEP diagnostic, got: %v", p.Diagnostics())
 			}
 		})
 	}
-}
-
-func hasNestingTooDeep(diags []diag.Diagnostic) bool {
-	for _, d := range diags {
-		if _, ok := d.(diag.NestingTooDeep); ok {
-			return true
-		}
-	}
-	return false
 }

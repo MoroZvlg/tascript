@@ -23,10 +23,10 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 			break
 		}
 
-		errsBeforeStmt := len(p.errors)
+		errsBeforeStmt := p.errCount
 		block.Stmts = append(block.Stmts, p.parseStatement())
 		switch {
-		case len(p.errors) != errsBeforeStmt:
+		case p.errCount != errsBeforeStmt:
 			p.syncToStmtEnd() // already reported; just recover position
 		case !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.RBRACE) && !p.peekTokenIs(token.EOF):
 			p.addUnexpectedToken(p.peekToken, token.NEWLINE)
@@ -44,6 +44,9 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseLetStmt()
 	case token.IF:
 		return p.parseIfStmt()
+	case token.CONST, token.INPUT, token.OUTPUT:
+		p.addTopDeclMisplaced(p.currentToken)
+		return &ast.BadStmt{From: p.currentToken.Pos, To: p.currentToken.Pos}
 	default:
 		return p.parseExprOrAssignStmt()
 	}
@@ -59,7 +62,7 @@ func (p *Parser) parseIfStmt() ast.Statement {
 
 	ifTok := p.currentToken
 	stmt := &ast.IfStmt{Token: ifTok}
-	beforeCondErrs := len(p.errors)
+	beforeCondErrs := p.errCount
 
 	if p.peekTokenIs(token.LPAREN) {
 		p.nextToken() // current = `(`
@@ -67,7 +70,7 @@ func (p *Parser) parseIfStmt() ast.Statement {
 		stmt.Condition = p.parseExpression(LowestPrec)
 		if p.peekTokenIs(token.RPAREN) {
 			p.nextToken() // current = `)`
-		} else if len(p.errors) == beforeCondErrs {
+		} else if p.errCount == beforeCondErrs {
 			p.addUnexpectedToken(p.peekToken, token.RPAREN)
 		}
 	} else {
@@ -78,7 +81,7 @@ func (p *Parser) parseIfStmt() ast.Statement {
 	if p.peekTokenIs(token.LBRACE) {
 		p.nextToken() // current = `{`
 	} else {
-		if len(p.errors) == beforeCondErrs {
+		if p.errCount == beforeCondErrs {
 			p.addUnexpectedToken(p.peekToken, token.LBRACE)
 		}
 		if !p.advanceToLBrace() {

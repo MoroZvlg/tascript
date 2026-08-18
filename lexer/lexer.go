@@ -93,6 +93,9 @@ func (l *Lexer) NextToken() token.Token {
 				break
 			}
 		}
+		if l.atElse() {
+			return l.NextToken()
+		}
 		return token.Token{Pos: pos, Type: token.NEWLINE, Literal: ""}
 	}
 
@@ -100,10 +103,10 @@ func (l *Lexer) NextToken() token.Token {
 		return token.Token{Pos: l.pos(), Type: token.EOF, Literal: ""}
 	}
 
-	if isLetter(l.currChar) {
+	if token.IsIdentStart(l.currChar) {
 		pos := l.pos()
 		startIdx := l.currCursor
-		for isLetter(l.currChar) || isDigit(l.currChar) {
+		for token.IsIdentPart(l.currChar) {
 			l.advance()
 		}
 		literal := l.src[startIdx:l.currCursor]
@@ -238,6 +241,10 @@ func (l *Lexer) readString() (string, string) {
 	var sb strings.Builder
 	errMsg := "" // first error wins; we keep scanning to the closing quote either way
 	for {
+		// stop before the newline, never on it: the parser needs it as a statement separator
+		if isNewline(l.peek()) {
+			return "", "unterminated string"
+		}
 		l.advance()
 		switch l.currChar {
 		case 0:
@@ -257,6 +264,9 @@ func (l *Lexer) readString() (string, string) {
 			}
 			return sb.String(), ""
 		case '\\':
+			if isNewline(l.peek()) {
+				return "", "unterminated string"
+			}
 			l.advance()
 			if l.eof() {
 				return "", "unterminated string"
@@ -303,15 +313,26 @@ func (l *Lexer) pos() token.Pos {
 	}
 }
 
-func (l *Lexer) atNewline() bool { return l.currChar == '\n' || l.currChar == '\r' }
+func (l *Lexer) atNewline() bool { return isNewline(l.currChar) }
+
+func (l *Lexer) atElse() bool {
+	const kw = "else"
+	if l.currCursor < 0 || l.currCursor+len(kw) > len(l.src) || l.src[l.currCursor:l.currCursor+len(kw)] != kw {
+		return false
+	}
+	next := l.currCursor + len(kw)
+	if next == len(l.src) {
+		return true
+	}
+	// if next symbol is letter or digit we have not an else Stmt but some other IDENT
+	return !token.IsIdentPart(l.src[next])
+}
+
+func isNewline(char byte) bool { return char == '\n' || char == '\r' }
 
 func (l *Lexer) eof() bool { return l.currCursor >= len(l.src) }
 
 func (l *Lexer) peekEof() bool { return l.peekCursor >= len(l.src) }
-
-func isLetter(ch byte) bool {
-	return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || (ch == '_')
-}
 
 func isDigit(ch byte) bool {
 	return '0' <= ch && ch <= '9'

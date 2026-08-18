@@ -86,7 +86,7 @@ func (p *Parser) parseMemberExpr(left ast.Expression) ast.Expression {
 		p.addUnexpectedToken(p.currentToken, token.IDENT)
 		return &ast.BadExpr{Token: p.currentToken}
 	}
-	expr.Method = p.parseIdentExpr()
+	expr.Member = &ast.IdentExpr{Token: p.currentToken}
 	return &expr
 }
 
@@ -117,30 +117,33 @@ func (p *Parser) parseCallExpr(callee ast.Expression) ast.Expression {
 	for {
 		p.nextToken()
 
-		errsBefore := len(p.errors)
+		errsBefore := p.errCount
 		if p.currTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
 			kwargSeen = true
 			kwarg := &ast.KwargsExpr{Token: p.currentToken, Key: &ast.IdentExpr{Token: p.currentToken}}
 			p.nextToken() // consume `=`
 			p.nextToken()
 			value := p.parseExpression(LowestPrec)
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				kwarg.Value = value
 				callExpr.Kwargs = append(callExpr.Kwargs, kwarg)
 			}
 		} else {
 			if kwargSeen {
-				p.addArgsOrder(p.currentToken.Pos)
+				p.addArgOrderInvalid(p.currentToken.Pos)
 				break
 			}
 			arg := p.parseExpression(LowestPrec)
-			if len(p.errors) == errsBefore {
+			if p.errCount == errsBefore {
 				callExpr.Args = append(callExpr.Args, arg)
 			}
 		}
 
 		if p.peekTokenIs(token.COMMA) {
 			p.nextToken()
+			if p.peekTokenIs(token.RPAREN) {
+				break
+			}
 			continue
 		}
 
@@ -162,7 +165,7 @@ func (p *Parser) parseIdentExpr() ast.Expression {
 func (p *Parser) parseIntegerExpr() ast.Expression {
 	val, err := strconv.Atoi(p.currentToken.Literal)
 	if err != nil {
-		p.addParseFailed(p.currentToken.Pos, p.currentToken.Type, err)
+		p.addNumberOutOfRange(p.currentToken)
 		return &ast.BadExpr{Token: p.currentToken}
 	}
 	return &ast.IntegerExpr{Token: p.currentToken, Value: val}
@@ -171,7 +174,7 @@ func (p *Parser) parseIntegerExpr() ast.Expression {
 func (p *Parser) parseFloatExpr() ast.Expression {
 	val, err := strconv.ParseFloat(p.currentToken.Literal, 64)
 	if err != nil {
-		p.addParseFailed(p.currentToken.Pos, p.currentToken.Type, err)
+		p.addNumberOutOfRange(p.currentToken)
 		return &ast.BadExpr{Token: p.currentToken}
 	}
 	return &ast.FloatExpr{Token: p.currentToken, Value: val}
