@@ -183,6 +183,11 @@ Output names are not readable values. They are valid only as the first argument 
 Every declared output must be bound to a sink before `Init` via `BindOutput(name, sink)`, or
 `Init` fails with `OUTPUT_MISSING`. Binding an undeclared name is `OUTPUT_UNKNOWN`.
 
+A `Sink` reports the type it accepts through `TypeID() TypeID`, the same method every
+`Value` carries. `BindOutput` checks it against the port's declared type and rejects a
+mismatch with `OUTPUT_TYPE_MISMATCH`. For a structured port the sink names the script type
+the port registered, `output.<name>`.
+
 #### Port rules
 
 - Port declarations may appear **only at the top level**.
@@ -480,12 +485,15 @@ value position is `NOT_READABLE`, not a type error.
 `function`, blocks, and the declaration-form shape; the slot mechanism; the per-event
 execution model; the registry itself.
 
-**Standard prelude** — always registered by `NewBuilder`:
+**Standard prelude** — registered by `NewBuilder`:
 
 - the value types `Integer`, `Float`, `String`, `Bool`
 - arithmetic, comparison, and logical rules over them, plus `Integer → Float` coercion
-- the `math` and `time` modules (§5.3, §3.5), and with them `Time` and `Duration`
 - the `const`, `input`, and `output` declaration forms
+
+The `math` and `time` modules (§5.3, §3.5), and with them the `Time` and `Duration` types,
+are **opt-in**: a host registers them, and a program naming `math` or `time` against a host
+that did not is `UNDEFINED_IDENT`.
 
 **The prelude registers no declaration kinds.** A fresh registry has none: a program using
 `state` compiles only against a host that registered the word.
@@ -744,6 +752,7 @@ Codes are a user-facing category, not a one-to-one class identifier — several 
 | `INPUT_TYPE_MISMATCH` | Bound value's type does not match and does not coerce. |
 | `OUTPUT_MISSING` | A declared output was never bound to a sink. |
 | `OUTPUT_UNKNOWN` | Bind of an output the script does not declare. |
+| `OUTPUT_TYPE_MISMATCH` | A sink was bound to a port of another type. |
 | `SLOT_TYPE_MISMATCH` | `Slot.Set` with a value of the wrong type. |
 
 ### 6.5 Runtime failure protocol

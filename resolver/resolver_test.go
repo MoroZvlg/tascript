@@ -1104,7 +1104,7 @@ func TestResolver_ResolveEmitErrors(t *testing.T) {
 			"output sig: {dir: String, price: Float}\nfunction Run() {\nemit^(sig, dir=\"up\")\n}",
 			func(ps []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{
-					addArgCountMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, 2, 1),
+					addArgCountMismatch(token.Token{Type: token.LPAREN, Pos: ps[0], Literal: "("}, 3, 2),
 				}
 			},
 		},

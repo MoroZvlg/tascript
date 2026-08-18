@@ -52,7 +52,7 @@ func TestExecutable_Binding(t *testing.T) {
 			t.Errorf("bind input after Init: got %v, want ErrBindTooLate", err)
 		}
 
-		err = program.BindOutput("seen", &recorder{})
+		err = program.BindOutput("seen", &recorder{accepts: registry.FloatID})
 		if !errors.Is(err, tascript.ErrBindTooLate) {
 			t.Errorf("bind output after Init: got %v, want ErrBindTooLate", err)
 		}
@@ -61,7 +61,7 @@ func TestExecutable_Binding(t *testing.T) {
 	t.Run("binding an undeclared output errors", func(t *testing.T) {
 		program := compile(t, counterSrc)
 
-		err := program.BindOutput("nope", &recorder{})
+		err := program.BindOutput("nope", &recorder{accepts: registry.IntegerID})
 		var unknown diag.OutputUnknown
 		if !errors.As(err, &unknown) {
 			t.Fatalf("got %T %v, want diag.OutputUnknown", err, err)
@@ -194,21 +194,43 @@ func TestBuilder_Compile(t *testing.T) {
 		}
 	})
 
-	t.Run("a spent builder rejects registration", func(t *testing.T) {
+	t.Run("compiling seals the registry against later registration", func(t *testing.T) {
 		builder := newBuilder(t)
+		reg := builder.Registry()
 		if _, _, err := builder.Compile(counterSrc); err != nil {
 			t.Fatalf("compile: %v", err)
 		}
 
-		if _, err := builder.RegisterType("Late"); !errors.Is(err, tascript.ErrBuilderSpent) {
-			t.Errorf("RegisterType: got %v, want ErrBuilderSpent", err)
+		if _, err := reg.RegisterScalarType("Late"); !errors.Is(err, registry.ErrSealed) {
+			t.Errorf("RegisterScalarType: got %v, want ErrSealed", err)
 		}
-		if _, err := builder.RegisterModule("late"); !errors.Is(err, tascript.ErrBuilderSpent) {
-			t.Errorf("RegisterModule: got %v, want ErrBuilderSpent", err)
+		if _, err := reg.RegisterModule("late"); !errors.Is(err, registry.ErrSealed) {
+			t.Errorf("RegisterModule: got %v, want ErrSealed", err)
 		}
-		err := builder.RegisterMemberAccess(registry.FloatID, "late", registry.MemberAccessRule{})
-		if !errors.Is(err, tascript.ErrBuilderSpent) {
-			t.Errorf("RegisterMemberAccess: got %v, want ErrBuilderSpent", err)
+		err := reg.RegisterMemberAccess(registry.FloatID, "late", registry.MemberAccessRule{})
+		if !errors.Is(err, registry.ErrSealed) {
+			t.Errorf("RegisterMemberAccess: got %v, want ErrSealed", err)
+		}
+	})
+}
+
+func TestExecutable_BindOutputChecksSinkType(t *testing.T) {
+	t.Run("matching type binds", func(t *testing.T) {
+		program := compile(t, counterSrc)
+		if err := program.BindOutput("tick", &recorder{accepts: registry.IntegerID}); err != nil {
+			t.Fatalf("BindOutput: %v", err)
+		}
+	})
+
+	t.Run("mismatched type is rejected at bind", func(t *testing.T) {
+		program := compile(t, counterSrc)
+		err := program.BindOutput("tick", &recorder{accepts: registry.StringID})
+		var mismatch diag.OutputTypeMismatch
+		if !errors.As(err, &mismatch) {
+			t.Fatalf("got %T %v, want diag.OutputTypeMismatch", err, err)
+		}
+		if mismatch.Expected != registry.IntegerID || mismatch.Got != registry.StringID {
+			t.Errorf("got %s, want Integer/String", err)
 		}
 	})
 }

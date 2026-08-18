@@ -65,6 +65,7 @@ const (
 	CodeOutputUnknown        Code = "OUTPUT_UNKNOWN"
 	CodeOutputMissing        Code = "OUTPUT_MISSING"
 	CodeInputTypeMismatch    Code = "INPUT_TYPE_MISMATCH"
+	CodeOutputTypeMismatch   Code = "OUTPUT_TYPE_MISMATCH"
 	CodeSlotTypeMismatch     Code = "SLOT_TYPE_MISMATCH"
 	CodeTypeRegistrationFail Code = "TYPE_REGISTRATION_FAILED"
 	CodeInternalFailure      Code = "INTERNAL_FAILURE"
@@ -752,6 +753,21 @@ func (im InputTypeMismatch) Pos() token.Pos { return im.At }
 
 func (im InputTypeMismatch) Error() string {
 	return render(im.Code(), im.At, "input %s: expected %s, found %s", im.Name, im.Expected, im.Got)
+}
+
+type OutputTypeMismatch struct {
+	At       token.Pos
+	Name     string
+	Expected registry.TypeID
+	Got      registry.TypeID
+}
+
+func (om OutputTypeMismatch) Code() Code     { return CodeOutputTypeMismatch }
+func (om OutputTypeMismatch) Phase() Phase   { return PhaseRuntime }
+func (om OutputTypeMismatch) Pos() token.Pos { return om.At }
+
+func (om OutputTypeMismatch) Error() string {
+	return render(om.Code(), om.At, "output %s: sink accepts %s, port declares %s", om.Name, om.Got, om.Expected)
 }
 
 type SlotTypeMismatch struct {

@@ -91,7 +91,7 @@ func TestRegistry_ModuleShapeRejectedByRegisterType(t *testing.T) {
 	if _, err := reg.RegisterModule("realmod"); err != nil {
 		t.Fatalf("RegisterModule: %v", err)
 	}
-	if _, exists := reg.Modules["realmod"]; !exists {
+	if _, exists := reg.Module("realmod"); !exists {
 		t.Error("RegisterModule must record the module value")
 	}
 }

@@ -77,17 +77,20 @@ func evalRunBody(t *testing.T, body string) registry.Value {
 }
 
 type recorder struct {
-	values []registry.Value
+	accepts registry.TypeID
+	values  []registry.Value
 }
+
+func (r *recorder) TypeID() registry.TypeID { return r.accepts }
 
 func (r *recorder) Emit(value registry.Value) {
 	r.values = append(r.values, value)
 }
 
-func bindRecorder(t *testing.T, ev *evaluator.Evaluator, output string) *recorder {
+func bindRecorder(t *testing.T, ev *evaluator.Evaluator, output string, accepts registry.TypeID) *recorder {
 	t.Helper()
 
-	rec := &recorder{}
+	rec := &recorder{accepts: accepts}
 	if err := ev.BindOutput(output, rec); err != nil {
 		t.Fatalf("bind output %s: %v", output, err)
 	}

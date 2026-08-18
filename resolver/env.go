@@ -88,7 +88,7 @@ func (s *Env) Set(key Symbol, binding Binding) {
 // TODO: shape -> kind mapping probably belongs in the registry
 func EnvFromRegistry(reg *registry.Registry) *Env {
 	env := &Env{values: make(map[Symbol]Binding)}
-	for id, def := range reg.Types {
+	for id, def := range reg.Types() {
 		kind := KindType
 		if def.Shape == registry.ModuleShape {
 			kind = KindModule

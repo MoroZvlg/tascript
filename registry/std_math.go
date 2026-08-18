@@ -36,7 +36,7 @@ var numericTypePairs = []struct {
 
 func RegisterStdMath(reg *Registry) {
 	for _, id := range []TypeID{IntegerID, FloatID, StringID, BoolID} {
-		reg.Types[id] = TypeDef{Shape: ScalarShape}
+		reg.types[id] = TypeDef{Shape: ScalarShape}
 	}
 
 	for _, operator := range arithmeticOperators {

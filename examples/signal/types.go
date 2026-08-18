@@ -6,19 +6,25 @@ import (
 	"github.com/MoroZvlg/tascript/registry"
 )
 
+// A TypeID is derived from the registered name, so these match what registerHost registers.
+var (
+	candleID    = registry.NewTypeID("Candle")
+	seriesID    = registry.NewTypeID("CandleSeries")
+	indicatorID = registry.NewTypeID("Indicator")
+	sourceID    = registry.NewTypeID("Source")
+)
+
 type Candle struct {
-	T                      registry.TypeID
 	Open, High, Low, Close float64
 }
 
-func (c Candle) TypeID() registry.TypeID { return c.T }
+func (c Candle) TypeID() registry.TypeID { return candleID }
 
 type CandleSeries struct {
-	T    registry.TypeID
 	Bars []Candle
 }
 
-func (cs *CandleSeries) TypeID() registry.TypeID { return cs.T }
+func (cs *CandleSeries) TypeID() registry.TypeID { return seriesID }
 
 func (cs *CandleSeries) At(i int) (Candle, error) {
 	if i < 0 || i >= len(cs.Bars) {
@@ -28,20 +34,18 @@ func (cs *CandleSeries) At(i int) (Candle, error) {
 }
 
 type Source struct {
-	T      registry.TypeID
 	Select func(Candle) float64
 }
 
-func (s Source) TypeID() registry.TypeID { return s.T }
+func (s Source) TypeID() registry.TypeID { return sourceID }
 
 type Indicator struct {
-	T      registry.TypeID
 	Period int
 	Source Source
 	window []float64
 }
 
-func (ind *Indicator) TypeID() registry.TypeID { return ind.T }
+func (ind *Indicator) TypeID() registry.TypeID { return indicatorID }
 
 func (ind *Indicator) Next(c Candle) float64 {
 	ind.window = append(ind.window, ind.Source.Select(c))

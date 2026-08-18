@@ -9,7 +9,7 @@ type Env struct {
 
 func EnvFromRegistry(reg *registry.Registry) *Env {
 	env := &Env{values: make(map[string]registry.Value)}
-	for name, rule := range reg.Modules {
+	for name, rule := range reg.Modules() {
 		env.values[name] = rule
 	}
 	return env

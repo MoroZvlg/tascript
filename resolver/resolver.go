@@ -208,7 +208,7 @@ func (r *Resolver) resolveEmit(call *ast.CallExpr, env *Env) resolved.Statement 
 		r.addEmitOutsideRun(call.Tok())
 	}
 
-	args, valid := r.resolveArgs(call.Tok(), call.Args[1:], call.Kwargs, r.reg.EmitRule(binding.T), env)
+	args, valid := r.resolveArgs(call.Tok(), call.Args[1:], call.Kwargs, r.reg.EmitRule(binding.T), 1, env)
 	if !valid {
 		return &resolved.BadStmt{Token: call.Tok()}
 	}
@@ -612,7 +612,7 @@ func (r *Resolver) resolveExpr(expr ast.Expression, env *Env) resolved.Expressio
 				return &resolved.BadExpr{Token: typedExpr.Tok()}
 			}
 
-			args, valid := r.resolveArgs(typedExpr.Tok(), typedExpr.Args, typedExpr.Kwargs, rule, env)
+			args, valid := r.resolveArgs(typedExpr.Tok(), typedExpr.Args, typedExpr.Kwargs, rule, 0, env)
 			if valid {
 				return &resolved.MethodCallExpr{
 					Token:    typedExpr.Tok(),
@@ -654,9 +654,11 @@ func (r *Resolver) resolveReceiver(expr ast.Expression, env *Env) resolved.Expre
 	return &resolved.IdentExpr{Token: identExpr.Tok(), T: binding.T}
 }
 
-func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, env *Env) ([]*resolved.CallArgExpr, bool) {
+// leadingArgs are arguments the caller consumed before this point (emit's output name).
+// They count toward nothing but the diagnostic, which must match what the user typed.
+func (r *Resolver) resolveArgs(callToken token.Token, args []ast.Expression, kwargs []*ast.KwargsExpr, rule registry.CallRule, leadingArgs int, env *Env) ([]*resolved.CallArgExpr, bool) {
 	if len(args)+len(kwargs) != len(rule.Args) {
-		r.addArgCountMismatch(callToken, len(rule.Args), len(args)+len(kwargs))
+		r.addArgCountMismatch(callToken, len(rule.Args)+leadingArgs, len(args)+len(kwargs)+leadingArgs)
 		return nil, false
 	}
 	resolvedIdx := make([]bool, len(rule.Args))

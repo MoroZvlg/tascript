@@ -11,7 +11,7 @@ import (
 func TestMathModuleConstants(t *testing.T) {
 	reg := registry.DefaultRegistry()
 	stdlib.Register(reg)
-	mathModule := reg.Modules["math"]
+	mathModule, _ := reg.Module("math")
 
 	tests := []struct {
 		name string
@@ -44,7 +44,7 @@ func TestMathModuleConstants(t *testing.T) {
 func TestMathModuleFunctions(t *testing.T) {
 	reg := registry.DefaultRegistry()
 	stdlib.Register(reg)
-	mathModule := reg.Modules["math"]
+	mathModule, _ := reg.Module("math")
 
 	tests := []struct {
 		name string

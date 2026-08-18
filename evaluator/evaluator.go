@@ -122,10 +122,19 @@ func (e *Evaluator) BindInput(name string, value registry.Value) error {
 
 func (e *Evaluator) BindOutput(name string, sink registry.Sink) error {
 	for _, decl := range e.outputDecls {
-		if decl.Name == name {
-			e.outputs[name] = sink
-			return nil
+		if decl.Name != name {
+			continue
 		}
+		if sink.TypeID() != decl.T {
+			return diag.OutputTypeMismatch{
+				At:       decl.Token.Pos,
+				Name:     name,
+				Expected: decl.T,
+				Got:      sink.TypeID(),
+			}
+		}
+		e.outputs[name] = sink
+		return nil
 	}
 	return diag.OutputUnknown{Name: name}
 }

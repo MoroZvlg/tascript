@@ -36,7 +36,7 @@ emit(sig, dir="up", price=threshold + 0.2)
 	}
 
 	ev := evaluator.New(resolvedProg, reg)
-	alerts, sigs := bindRecorder(t, ev, "alert"), bindRecorder(t, ev, "sig")
+	alerts, sigs := bindRecorder(t, ev, "alert", registry.StringID), bindRecorder(t, ev, "sig", registry.NewTypeID("output.sig"))
 	if _, err := ev.EvalRun(); err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
@@ -279,7 +279,7 @@ if (state.n == 2) {
 emit(out, state.n)
 }`
 	ev := compileSrc(t, src, nil)
-	out := bindRecorder(t, ev, "out")
+	out := bindRecorder(t, ev, "out", registry.IntegerID)
 	if _, err := ev.EvalInit(); err != nil {
 		t.Fatalf("init error: %v", err)
 	}
@@ -421,7 +421,7 @@ emit(out, state.cooldown + state.seeded)
 	}
 
 	ev := evaluator.New(resolvedProg, reg)
-	out := bindRecorder(t, ev, "out")
+	out := bindRecorder(t, ev, "out", registry.IntegerID)
 	if _, err := ev.EvalInit(); err != nil {
 		t.Fatalf("init error: %v", err)
 	}
@@ -626,7 +626,10 @@ func TestEvaluator_SlotHandles(t *testing.T) {
 	t.Run("a sink calling back mid-tick is rejected", func(t *testing.T) {
 		ev := compileSrc(t, "output out: Integer\nstate x: Integer = 1\nfunction Run() {\nemit(out, state.x)\n}", nil)
 		var setErr error
-		ev.BindOutput("out", sinkFn(func(registry.Value) { setErr = ev.SlotSet(0, registry.Integer(9)) }))
+		ev.BindOutput("out", sinkFn{
+			accepts: registry.IntegerID,
+			emit:    func(registry.Value) { setErr = ev.SlotSet(0, registry.Integer(9)) },
+		})
 		if _, err := ev.EvalInit(); err != nil {
 			t.Fatalf("init error: %v", err)
 		}
@@ -637,9 +640,13 @@ func TestEvaluator_SlotHandles(t *testing.T) {
 	})
 }
 
-type sinkFn func(registry.Value)
+type sinkFn struct {
+	accepts registry.TypeID
+	emit    func(registry.Value)
+}
 
-func (f sinkFn) Emit(value registry.Value) { f(value) }
+func (f sinkFn) Emit(value registry.Value) { f.emit(value) }
+func (f sinkFn) TypeID() registry.TypeID   { return f.accepts }
 
 func TestEvaluator_InputBinding(t *testing.T) {
 	src := "input price: Float\nfunction Run() {\nprice\n}"

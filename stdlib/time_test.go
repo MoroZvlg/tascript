@@ -14,7 +14,7 @@ const refMs = 1784727930500
 func TestTimeModuleDurationConstants(t *testing.T) {
 	reg := registry.DefaultRegistry()
 	stdlib.Register(reg)
-	module := reg.Modules["time"]
+	module, _ := reg.Module("time")
 
 	tests := []struct {
 		name string
@@ -50,7 +50,7 @@ func TestTimeModuleDurationConstants(t *testing.T) {
 func TestTimeModuleWeekdayConstants(t *testing.T) {
 	reg := registry.DefaultRegistry()
 	stdlib.Register(reg)
-	module := reg.Modules["time"]
+	module, _ := reg.Module("time")
 
 	tests := []struct {
 		name string
@@ -161,7 +161,8 @@ func TestDurationAbs(t *testing.T) {
 func TestTimeFromUnixMs(t *testing.T) {
 	reg := registry.DefaultRegistry()
 	stdlib.Register(reg)
-	rule, ok := reg.LookupCall(reg.Modules["time"].TypeID(), "from_unix_ms")
+	timeModule, _ := reg.Module("time")
+	rule, ok := reg.LookupCall(timeModule.TypeID(), "from_unix_ms")
 	if !ok {
 		t.Fatal("from_unix_ms is not registered")
 	}

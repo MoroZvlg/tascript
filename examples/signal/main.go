@@ -38,8 +38,7 @@ function Run() {
 func main() {
 	builder := tascript.NewBuilder()
 
-	ids, err := registerHost(builder)
-	if err != nil {
+	if err := registerHost(builder); err != nil {
 		panic(err)
 	}
 
@@ -51,7 +50,7 @@ func main() {
 		showDiags(diags)
 		return
 	}
-	series := &CandleSeries{T: ids.Series}
+	series := &CandleSeries{}
 	if err := program.BindInput("candles", series); err != nil {
 		panic(err)
 	}
@@ -76,7 +75,7 @@ func main() {
 	showSlots(program)
 
 	for _, price := range []float64{10, 11, 12, 13, 12, 10, 8, 7, 9, 12, 15} {
-		series.Bars = append(series.Bars, Candle{T: ids.Candle, Close: price})
+		series.Bars = append(series.Bars, Candle{Close: price})
 
 		router.bar = price
 		if err := program.Run(); err != nil {
@@ -88,6 +87,8 @@ func main() {
 type orderRouter struct {
 	bar float64
 }
+
+func (r *orderRouter) TypeID() registry.TypeID { return registry.NewTypeID("output.signal") }
 
 func (r *orderRouter) Emit(value registry.Value) {
 	signal := value.(registry.Record)

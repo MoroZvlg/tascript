@@ -21,7 +21,8 @@ func settingsProgram(t *testing.T) (*tascript.Executable, *recorder) {
 	t.Helper()
 
 	builder := newBuilder(t)
-	err := builder.RegisterDeclKind(registry.DeclKind{
+	reg := builder.Registry()
+	err := reg.RegisterDeclKind(registry.DeclKind{
 		Word:        "setting",
 		Initializer: registry.InitializerOptional,
 		Namespaced:  true,
@@ -38,7 +39,7 @@ func settingsProgram(t *testing.T) (*tascript.Executable, *recorder) {
 		t.Fatalf("compile diagnostics: %v", diags)
 	}
 
-	out := &recorder{}
+	out := &recorder{accepts: registry.IntegerID}
 	if err := program.BindOutput("out", out); err != nil {
 		t.Fatalf("bind output: %v", err)
 	}
@@ -208,7 +209,8 @@ type callbackSink struct {
 	onEmit func()
 }
 
-func (s *callbackSink) Emit(registry.Value) { s.onEmit() }
+func (s *callbackSink) Emit(registry.Value)     { s.onEmit() }
+func (s *callbackSink) TypeID() registry.TypeID { return registry.IntegerID }
 
 func TestExecutable_SlotSetIsRejectedMidActivation(t *testing.T) {
 	program, _ := settingsProgram(t)
@@ -268,14 +270,15 @@ func TestExecutable_RunIsRejectedMidActivation(t *testing.T) {
 
 func TestExecutable_InitIsRejectedMidActivation(t *testing.T) {
 	builder := newBuilder(t)
-	host, err := builder.RegisterModule("host")
+	reg := builder.Registry()
+	host, err := reg.RegisterModule("host")
 	if err != nil {
 		t.Fatalf("register module: %v", err)
 	}
 
 	var program *tascript.Executable
 	var initErr error
-	err = builder.RegisterCall(host.TypeID(), "poke", registry.CallRule{
+	err = reg.RegisterCall(host.TypeID(), "poke", registry.CallRule{
 		EvalType: registry.IntegerID,
 		EvalFn: func(registry.Value, map[string]registry.Value) (registry.Value, error) {
 			initErr = program.Init()
@@ -294,7 +297,7 @@ func TestExecutable_InitIsRejectedMidActivation(t *testing.T) {
 		t.Fatalf("compile diagnostics: %v", diags)
 	}
 	program = prog
-	if err := program.BindOutput("out", &recorder{}); err != nil {
+	if err := program.BindOutput("out", &recorder{accepts: registry.IntegerID}); err != nil {
 		t.Fatalf("bind output: %v", err)
 	}
 
@@ -308,12 +311,13 @@ func TestExecutable_InitIsRejectedMidActivation(t *testing.T) {
 
 func TestBuilder_RegisterDeclKindAfterCompile(t *testing.T) {
 	builder := newBuilder(t)
+	reg := builder.Registry()
 	if _, _, err := builder.Compile(counterSrc); err != nil {
 		t.Fatalf("compile: %v", err)
 	}
 
-	err := builder.RegisterDeclKind(registry.DeclKind{Word: "setting"})
-	if !errors.Is(err, tascript.ErrBuilderSpent) {
-		t.Errorf("got %v, want ErrBuilderSpent", err)
+	err := reg.RegisterDeclKind(registry.DeclKind{Word: "setting"})
+	if !errors.Is(err, registry.ErrSealed) {
+		t.Errorf("got %v, want ErrSealed", err)
 	}
 }

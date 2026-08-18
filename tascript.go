@@ -12,8 +12,6 @@ import (
 	"github.com/MoroZvlg/tascript/parser"
 	"github.com/MoroZvlg/tascript/registry"
 	"github.com/MoroZvlg/tascript/resolver"
-	"github.com/MoroZvlg/tascript/stdlib"
-	"github.com/MoroZvlg/tascript/token"
 )
 
 var ErrBuilderSpent = errors.New("a builder compiles one script: build another to compile again")
@@ -23,13 +21,12 @@ type Builder struct {
 	spent bool
 }
 
-// TODO: make the stdlib modules opt-in (WithMath / WithTime) rather than always registered.
 func NewBuilder() *Builder {
-	reg := registry.DefaultRegistry()
-	stdlib.Register(reg)
-
-	return &Builder{reg: reg}
+	return &Builder{reg: registry.DefaultRegistry()}
 }
+
+// Compile seals the returned registry, so registration after that point is registry.ErrSealed.
+func (b *Builder) Registry() *registry.Registry { return b.reg }
 
 // Compile spends the builder whether or not the script compiles — a rejected script is retried on a fresh one.
 func (b *Builder) Compile(src string) (*Executable, []diag.Diagnostic, error) {
@@ -46,66 +43,10 @@ func (b *Builder) Compile(src string) (*Executable, []diag.Diagnostic, error) {
 
 	r := resolver.New(prog, b.reg)
 	resolvedProg := r.Resolve()
+	b.reg.Seal()
 	if len(r.Diagnostics()) > 0 {
 		return nil, r.Diagnostics(), nil
 	}
 
 	return &Executable{eval: evaluator.New(resolvedProg, b.reg)}, nil, nil
-}
-
-func (b *Builder) RegisterType(customType string) (registry.TypeID, error) {
-	id := registry.NewTypeID(customType)
-	if b.spent {
-		return id, ErrBuilderSpent
-	}
-	return id, b.reg.RegisterType(id, registry.ScalarShape)
-}
-
-func (b *Builder) RegisterBinary(tok token.TokenType, left, right registry.TypeID, rule registry.BinaryRule) error {
-	if b.spent {
-		return ErrBuilderSpent
-	}
-	return b.reg.RegisterBinary(tok, left, right, rule)
-}
-
-func (b *Builder) RegisterUnary(tok token.TokenType, right registry.TypeID, rule registry.UnaryRule) error {
-	if b.spent {
-		return ErrBuilderSpent
-	}
-	return b.reg.RegisterUnary(tok, right, rule)
-}
-
-func (b *Builder) RegisterMemberAccess(owner registry.TypeID, member string, rule registry.MemberAccessRule) error {
-	if b.spent {
-		return ErrBuilderSpent
-	}
-	return b.reg.RegisterMemberAccess(owner, member, rule)
-}
-
-func (b *Builder) RegisterCall(owner registry.TypeID, member string, rule registry.CallRule) error {
-	if b.spent {
-		return ErrBuilderSpent
-	}
-	return b.reg.RegisterCall(owner, member, rule)
-}
-
-func (b *Builder) RegisterDeclKind(kind registry.DeclKind) error {
-	if b.spent {
-		return ErrBuilderSpent
-	}
-	return b.reg.RegisterDeclKind(kind)
-}
-
-func (b *Builder) RegisterModule(name string) (registry.Value, error) {
-	if b.spent {
-		return nil, ErrBuilderSpent
-	}
-	return b.reg.RegisterModule(name)
-}
-
-func (b *Builder) RegisterCoercion(from, to registry.TypeID, rule registry.CoerceRule) error {
-	if b.spent {
-		return ErrBuilderSpent
-	}
-	return b.reg.RegisterCoercion(from, to, rule)
 }
