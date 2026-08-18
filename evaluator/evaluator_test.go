@@ -316,7 +316,7 @@ func TestEvaluator_PanicReportsInternalFailure(t *testing.T) {
 	src := "function Run() {\nboom.explode(number=1.0)\n}"
 	ev := compileSrc(t, src, func(reg *registry.Registry) {
 		module, _ := reg.RegisterModule("boom")
-		reg.RegisterCall(module.TypeID(), "explode", registry.CallRule{
+		_ = reg.RegisterCall(module.TypeID(), "explode", registry.CallRule{
 			Args:     []registry.ParamRule{{Type: registry.FloatID, Name: "number"}},
 			EvalType: registry.FloatID,
 			EvalFn: func(registry.Value, map[string]registry.Value) (registry.Value, error) {
@@ -343,7 +343,7 @@ func TestEvaluator_HostRuleErrorBecomesTrap(t *testing.T) {
 	src := "function Run() {\nhost.fail(number=1.0)\n}"
 	ev := compileSrc(t, src, func(reg *registry.Registry) {
 		module, _ := reg.RegisterModule("host")
-		reg.RegisterCall(module.TypeID(), "fail", registry.CallRule{
+		_ = reg.RegisterCall(module.TypeID(), "fail", registry.CallRule{
 			Args:     []registry.ParamRule{{Type: registry.FloatID, Name: "number"}},
 			EvalType: registry.FloatID,
 			EvalFn: func(registry.Value, map[string]registry.Value) (registry.Value, error) {
@@ -447,7 +447,7 @@ func TestEvaluator_LoadPhase(t *testing.T) {
 	var calls int
 	withCounter := func(reg *registry.Registry) {
 		module, _ := reg.RegisterModule("load")
-		reg.RegisterMemberAccess(module.TypeID(), "next", registry.MemberAccessRule{
+		_ = reg.RegisterMemberAccess(module.TypeID(), "next", registry.MemberAccessRule{
 			EvalType: registry.IntegerID,
 			EvalFn: func(registry.Value) (registry.Value, error) {
 				calls++
@@ -536,8 +536,8 @@ func TestEvaluator_UninitializedSlotFailsInit(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected Init to fail on the unfilled slot")
 			}
-			failure, ok := err.(diag.RuntimeFailure)
-			if !ok {
+			var failure diag.RuntimeFailure
+			if !errors.As(err, &failure) {
 				t.Fatalf("expected diag.RuntimeFailure, got %T: %v", err, err)
 			}
 			if failure.Kind != registry.UninitializedSlot {
@@ -605,7 +605,8 @@ func TestEvaluator_SlotHandles(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected a type error")
 		}
-		if _, ok := err.(diag.SlotTypeMismatch); !ok {
+		var mismatch diag.SlotTypeMismatch
+		if !errors.As(err, &mismatch) {
 			t.Fatalf("expected diag.SlotTypeMismatch, got %T: %v", err, err)
 		}
 	})
@@ -626,7 +627,7 @@ func TestEvaluator_SlotHandles(t *testing.T) {
 	t.Run("a sink calling back mid-tick is rejected", func(t *testing.T) {
 		ev := compileSrc(t, "output out: Integer\nstate x: Integer = 1\nfunction Run() {\nemit(out, state.x)\n}", nil)
 		var setErr error
-		ev.BindOutput("out", sinkFn{
+		_ = ev.BindOutput("out", sinkFn{
 			accepts: registry.IntegerID,
 			emit:    func(registry.Value) { setErr = ev.SlotSet(0, registry.Integer(9)) },
 		})

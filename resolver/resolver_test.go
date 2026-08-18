@@ -126,7 +126,7 @@ func TestResolver_ResolveInputOutputErrors(t *testing.T) {
 		{
 			"struct input field access resolves",
 			"input btc: {price: Float}\nfunction Run() {\nlet x = btc.price\nx + 1.5\n}",
-			func(ps []token.Pos) []diag.Diagnostic { return nil },
+			func(_ []token.Pos) []diag.Diagnostic { return nil },
 		},
 		{
 			"undefined input type",
@@ -336,7 +336,7 @@ func TestResolver_ResolveReservedTypeNames(t *testing.T) {
 			name:       "a host type is still usable in type position",
 			input:      "input price: Money\nfunction Run() {\nprice\n}",
 			setup:      registerResolverTestType,
-			buildDiags: func(ps []token.Pos) []diag.Diagnostic { return nil },
+			buildDiags: func(_ []token.Pos) []diag.Diagnostic { return nil },
 		},
 	}
 
@@ -599,7 +599,7 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 		{
 			"assign coerces int to float",
 			"function Run() {\nlet x = 1.5\nx = 1\n}",
-			func(ps []token.Pos) []diag.Diagnostic { return nil },
+			func(_ []token.Pos) []diag.Diagnostic { return nil },
 		},
 		{
 			"assign to non-ident target",
@@ -613,7 +613,7 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 		{
 			"reassign let is allowed",
 			"function Run() {\nlet x = 1\nx = 2\n}",
-			func(ps []token.Pos) []diag.Diagnostic { return nil },
+			func(_ []token.Pos) []diag.Diagnostic { return nil },
 		},
 		{
 			"let redeclared in the same scope",
@@ -654,7 +654,7 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 		{
 			"sibling blocks may reuse a name",
 			"function Run() {\nif (true) {\nlet t = 1\n}\nif (true) {\nlet t = 2\n}\n}",
-			func(ps []token.Pos) []diag.Diagnostic { return nil },
+			func(_ []token.Pos) []diag.Diagnostic { return nil },
 		},
 		{
 			"let over a module name",
@@ -771,7 +771,7 @@ func TestResolver_ResolveRunErrors(t *testing.T) {
 		{
 			"a module is still readable as a prefix",
 			"function Run() {\nlet x = math.sqrt(9.0) + math.PI\nx\n}",
-			func(ps []token.Pos) []diag.Diagnostic { return nil },
+			func(_ []token.Pos) []diag.Diagnostic { return nil },
 		},
 		{
 			"read emit",
@@ -1239,14 +1239,14 @@ func TestResolver_ResolveInitErrors(t *testing.T) {
 			// Rule B replaced definite assignment: an unfilled slot is caught at the end of Init
 			"no initializer and no Init resolves clean",
 			"state x: Integer" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
 		{
 			"seeded only under if resolves clean",
 			"state x: Integer\nfunction Init() {\nif (true) {\nstate.x = 1\n}\n}" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -1367,14 +1367,14 @@ func TestResolver_ResolveKindDeclErrors(t *testing.T) {
 		{
 			"const referencing a slot above",
 			"indicator fast = 1.0\nconst N = fast" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
 		{
 			"initializer referencing an earlier namespaced slot",
 			"setting period: Float = 3.0\nindicator fast = setting.period * 2.0" + runSuffix,
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -1441,7 +1441,7 @@ func TestResolver_ResolveKindDeclErrors(t *testing.T) {
 		{
 			"assignment to an assignable bare slot",
 			"marker m: Integer\nfunction Run() {\nm = 2\n}",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -1505,14 +1505,14 @@ func TestResolver_ResolveKindDeclErrors(t *testing.T) {
 		{
 			"assign coercion in Run",
 			"state f: Float = 0.0\nfunction Run() {\nstate.f = 1\n}",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
 		{
 			"namespaced slot read in expression",
 			"state c: Integer = 5\nfunction Run() {\nlet x = state.c + 1\n}",
-			func(ps []token.Pos) []diag.Diagnostic {
+			func(_ []token.Pos) []diag.Diagnostic {
 				return []diag.Diagnostic{}
 			},
 		},
@@ -1607,13 +1607,13 @@ func runDiagCasesWithRegistry(t *testing.T, input string, buildDiags func([]toke
 
 func newTestRegistry() *registry.Registry {
 	reg := registry.DefaultRegistry()
-	stdlib.Register(reg)
+	_ = stdlib.Register(reg)
 	registerStateKind(reg)
 	return reg
 }
 
 func registerStateKind(reg *registry.Registry) {
-	reg.RegisterDeclKind(registry.DeclKind{
+	_ = reg.RegisterDeclKind(registry.DeclKind{
 		Word:        "state",
 		Initializer: registry.InitializerOptional,
 		Assignable:  true,
@@ -1622,21 +1622,21 @@ func registerStateKind(reg *registry.Registry) {
 }
 
 func registerResolverTestType(reg *registry.Registry) {
-	reg.RegisterType(registry.NewTypeID("Money"), registry.ScalarShape)
+	_ = reg.RegisterType(registry.NewTypeID("Money"), registry.ScalarShape)
 }
 
 func registerResolverTestKinds(reg *registry.Registry) {
-	reg.RegisterDeclKind(registry.DeclKind{
+	_ = reg.RegisterDeclKind(registry.DeclKind{
 		Word:         "indicator",
 		Initializer:  registry.InitializerRequired,
 		AllowedTypes: []registry.TypeID{registry.FloatID},
 	})
-	reg.RegisterDeclKind(registry.DeclKind{
+	_ = reg.RegisterDeclKind(registry.DeclKind{
 		Word:        "setting",
 		Initializer: registry.InitializerOptional,
 		Namespaced:  true,
 	})
-	reg.RegisterDeclKind(registry.DeclKind{
+	_ = reg.RegisterDeclKind(registry.DeclKind{
 		Word:        "marker",
 		Initializer: registry.InitializerForbidden,
 		Assignable:  true,
@@ -1645,7 +1645,7 @@ func registerResolverTestKinds(reg *registry.Registry) {
 
 func registerResolverTestModule(reg *registry.Registry) {
 	testModule, _ := reg.RegisterModule("test")
-	reg.RegisterCall(testModule.TypeID(), "fn", registry.CallRule{
+	_ = reg.RegisterCall(testModule.TypeID(), "fn", registry.CallRule{
 		Args: []registry.ParamRule{
 			{Type: registry.FloatID, Name: "left"},
 			{Type: registry.FloatID, Name: "right"},

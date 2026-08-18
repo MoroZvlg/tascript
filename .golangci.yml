@@ -1,0 +1,71 @@
+version: "2"
+
+formatters:
+  enable:
+    - goimports
+    - gofmt
+
+linters:
+  enable:
+    - copyloopvar     # detects loop variable copy issues (Go 1.22+)
+    - errcheck        # unchecked errors
+    - errorlint       # proper error wrapping (Go 1.13+)
+    - exhaustive      # exhaustive enum switch/map checks
+    - gosec           # security problems
+    - gocritic        # bugs, performance, and style diagnostics
+    - govet           # suspicious constructs
+    - ineffassign     # unused assignments
+    - nakedret        # naked returns
+    - nilerr          # returning nil instead of error
+    - predeclared     # shadowing predeclared identifiers
+    - revive          # drop-in replacement for golint
+    - staticcheck     # advanced static analysis
+    - unconvert       # unnecessary type conversions
+    - unparam         # unused function parameters
+    - unused          # unused code
+    - wastedassign    # wasted assignments
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+
+    exhaustive:
+      check:
+        - switch
+        - map
+      ignore-enum-types: 'token\.TokenType'
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+
+    nakedret:
+      max-func-lines: 0
+
+    staticcheck:
+      checks:
+        - all
+        - -ST1000 # package comment
+        - -ST1016 # receiver name consistency
+        - -ST1020 # comment form on exported function
+        - -ST1021 # comment form on exported type
+        - -ST1022 # comment form on exported var
+
+  exclusions:
+    paths:
+      - examples
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      # doc comments are deferred until the API settles
+      - text: 'should have (a package )?comment'
+        linters: [ revive ]
+      - text: 'comment on exported \S+ \S+ should be of the form'
+        linters: [ revive ]
+      - path: '_test\.go'
+        linters:
+          - errcheck
+          - gosec

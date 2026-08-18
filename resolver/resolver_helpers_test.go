@@ -51,7 +51,7 @@ func dump(t *testing.T, resolvedExpr resolved.Expression) string {
 	case *resolved.BadExpr:
 		return "<bad expression>"
 	default:
-		return fmt.Sprint("<dump error>")
+		return "<dump error>"
 	}
 }
 
@@ -84,7 +84,7 @@ func dumpStmt(t *testing.T, resolvedStmt resolved.Statement) string {
 	case *resolved.BadStmt:
 		return "<bad statement>"
 	default:
-		return fmt.Sprint("<dump error>")
+		return "<dump error>"
 	}
 }
 

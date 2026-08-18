@@ -22,7 +22,7 @@ func runExpr(t *testing.T, expr string) (registry.Value, error) {
 		t.Fatalf("parser diagnostics: %v", p.Diagnostics())
 	}
 	reg := registry.DefaultRegistry()
-	stdlib.Register(reg)
+	_ = stdlib.Register(reg)
 	resolv := resolver.New(prog, reg)
 	resolvedProg := resolv.Resolve()
 	if len(resolv.Diagnostics()) > 0 {
@@ -60,6 +60,11 @@ func TestTime_Pipeline(t *testing.T) {
 		{"duration difference", `(time.HOUR - time.MINUTE).minutes`, registry.Float(59)},
 		{"duration over duration ratio", `time.HOUR / time.MINUTE`, registry.Float(60)},
 		{"duration over scalar", `(time.HOUR / 2).minutes`, registry.Float(30)},
+		{"duration over float scalar", `(time.HOUR / 1.5).minutes`, registry.Float(40)},
+		// rounding is half away from zero, in both directions
+		{"float scale rounds half up", `(time.SECOND * 0.0015).milliseconds`, registry.Integer(2)},
+		{"float scale rounds half down", `(time.SECOND * -0.0015).milliseconds`, registry.Integer(-2)},
+		{"float division rounds half away", `(time.SECOND / -0.0015).milliseconds`, registry.Integer(-666667)},
 		{"negate duration", `(-time.HOUR).hours`, registry.Float(-1)},
 		{"abs duration", `(-time.HOUR).abs.hours`, registry.Float(1)},
 		// comparisons
@@ -67,6 +72,12 @@ func TestTime_Pipeline(t *testing.T) {
 		{"duration equality", `time.HOUR == 60 * time.MINUTE`, registry.Bool(true)},
 		{"time compare", `time.from_unix_ms(1) < time.from_unix_ms(2)`, registry.Bool(true)},
 		{"time equality", `time.from_unix_ms(5) == time.from_unix_ms(5)`, registry.Bool(true)},
+		{"duration inequality", `time.HOUR != time.MINUTE`, registry.Bool(true)},
+		{"duration at most", `time.MINUTE <= time.MINUTE`, registry.Bool(true)},
+		{"duration at least", `time.HOUR >= time.MINUTE`, registry.Bool(true)},
+		{"time inequality", `time.from_unix_ms(1) != time.from_unix_ms(2)`, registry.Bool(true)},
+		{"time at most", `time.from_unix_ms(2) <= time.from_unix_ms(2)`, registry.Bool(true)},
+		{"time at least", `time.from_unix_ms(2) >= time.from_unix_ms(1)`, registry.Bool(true)},
 		// truncate floors to UTC midnight
 		{"truncate to day", `time.from_unix_ms(1784727930500).truncate(time.DAY).unix_ms`, registry.Integer(1784678400000)},
 	}

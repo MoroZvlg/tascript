@@ -46,7 +46,7 @@ func (l *Lexer) advance() {
 }
 
 func (l *Lexer) peek() byte {
-	if l.peekEof() {
+	if l.peekEOF() {
 		return 0
 	}
 	return l.src[l.peekCursor]
@@ -55,11 +55,7 @@ func (l *Lexer) peek() byte {
 func (l *Lexer) NextToken() token.Token {
 	var t token.Token
 
-	for {
-		if l.eof() {
-			break
-		}
-
+	for !l.eof() {
 		if l.isCommentStart() {
 			l.skipCommentLine()
 		}
@@ -298,10 +294,7 @@ func (l *Lexer) isCommentStart() bool {
 }
 
 func (l *Lexer) skipCommentLine() {
-	for {
-		if l.eof() || l.atNewline() {
-			break
-		}
+	for !l.eof() && !l.atNewline() {
 		l.advance()
 	}
 }
@@ -332,7 +325,7 @@ func isNewline(char byte) bool { return char == '\n' || char == '\r' }
 
 func (l *Lexer) eof() bool { return l.currCursor >= len(l.src) }
 
-func (l *Lexer) peekEof() bool { return l.peekCursor >= len(l.src) }
+func (l *Lexer) peekEOF() bool { return l.peekCursor >= len(l.src) }
 
 func isDigit(ch byte) bool {
 	return '0' <= ch && ch <= '9'

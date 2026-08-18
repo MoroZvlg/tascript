@@ -33,8 +33,9 @@ func newBuilder(t *testing.T) *tascript.Builder {
 
 	builder := tascript.NewBuilder()
 	reg := builder.Registry()
-	stdlib.RegisterMath(reg)
-	stdlib.RegisterTime(reg)
+	if err := stdlib.Register(reg); err != nil {
+		t.Fatalf("stdlib.Register: %v", err)
+	}
 
 	err := reg.RegisterDeclKind(registry.DeclKind{
 		Word:        "state",

@@ -6,8 +6,11 @@ import (
 	"github.com/MoroZvlg/tascript/registry"
 )
 
-func RegisterMath(reg *registry.Registry) {
-	mathModule, _ := reg.RegisterModule("math")
+func RegisterMath(reg *registry.Registry) error {
+	mathModule, err := reg.RegisterModule("math")
+	if err != nil {
+		return err
+	}
 	moduleType := mathModule.TypeID()
 
 	registerMathConst(reg, moduleType, "PI", math.Pi)
@@ -26,10 +29,12 @@ func RegisterMath(reg *registry.Registry) {
 	registerBinaryMathFunc(reg, moduleType, "max", "a", "b", math.Max)
 	registerBinaryMathFunc(reg, moduleType, "min", "a", "b", math.Min)
 	registerBinaryMathFunc(reg, moduleType, "pow", "base", "exponent", math.Pow)
+
+	return nil
 }
 
 func registerMathConst(reg *registry.Registry, mathModule registry.TypeID, name string, value float64) {
-	reg.RegisterMemberAccess(mathModule, name, registry.MemberAccessRule{
+	_ = reg.RegisterMemberAccess(mathModule, name, registry.MemberAccessRule{
 		EvalType: registry.FloatID,
 		EvalFn: func(_ registry.Value) (registry.Value, error) {
 			return registry.Float(value), nil
@@ -42,13 +47,13 @@ func registerUnaryMathFunc(reg *registry.Registry, mathModule registry.TypeID, n
 }
 
 func registerUnaryMathFuncInDomain(reg *registry.Registry, mathModule registry.TypeID, name string, fn func(float64) float64, domainCheckFn func(float64) bool, errMsg string) {
-	reg.RegisterCall(mathModule, name, registry.CallRule{
+	_ = reg.RegisterCall(mathModule, name, registry.CallRule{
 		Args: []registry.ParamRule{
 			{Type: registry.FloatID, Name: "number"},
 		},
 		EvalType: registry.FloatID,
 		EvalFn: func(_ registry.Value, args map[string]registry.Value) (registry.Value, error) {
-			number := float64(args["number"].(registry.Float))
+			number := asFloat(args["number"])
 			if domainCheckFn != nil && !domainCheckFn(number) {
 				return nil, registry.Error{Kind: registry.InvalidArgument, Message: errMsg}
 			}
@@ -62,15 +67,15 @@ func isNonNegative(number float64) bool { return number >= 0 }
 func isPositive(number float64) bool { return number > 0 }
 
 func registerBinaryMathFunc(reg *registry.Registry, mathModule registry.TypeID, name, leftName, rightName string, fn func(float64, float64) float64) {
-	reg.RegisterCall(mathModule, name, registry.CallRule{
+	_ = reg.RegisterCall(mathModule, name, registry.CallRule{
 		Args: []registry.ParamRule{
 			{Type: registry.FloatID, Name: leftName},
 			{Type: registry.FloatID, Name: rightName},
 		},
 		EvalType: registry.FloatID,
 		EvalFn: func(_ registry.Value, args map[string]registry.Value) (registry.Value, error) {
-			left := float64(args[leftName].(registry.Float))
-			right := float64(args[rightName].(registry.Float))
+			left := asFloat(args[leftName])
+			right := asFloat(args[rightName])
 			return registry.Float(fn(left, right)), nil
 		},
 	})

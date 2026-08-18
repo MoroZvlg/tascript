@@ -6,6 +6,7 @@ import (
 )
 
 func (p *Parser) syncToNewLine() {
+	//nolint:staticcheck // QF1006: the loop has a second break; lifting only the first reads worse
 	for {
 		if p.currTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) {
 			break

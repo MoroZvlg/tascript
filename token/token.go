@@ -5,6 +5,7 @@ import (
 	"slices"
 )
 
+//nolint:revive // TokenType is the established spelling in this codebase
 type TokenType string
 
 const (
